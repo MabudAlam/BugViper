@@ -5,13 +5,11 @@ import os
 
 from deepagent.config import config
 
-# Ensure OPENROUTER_API_KEY is in the process env so pydantic-ai's
-# OpenRouterProvider can pick it up (our config reads .env only).
 os.environ.setdefault("OPENROUTER_API_KEY", config.openrouter_api_key)
 
 from pydantic_ai import Agent  # noqa: E402
 from pydantic_ai.settings import ModelSettings  # noqa: E402
-from deepagent.models.agent_schemas import AgentFindings, Issue, ReviewResults
+from deepagent.models.agent_schemas import AgentFindings, ReviewResults
 from deepagent.prompts import REVIEWER_PROMPT
 
 CONFIDENCE_THRESHOLD = 7
@@ -20,9 +18,6 @@ logger = logging.getLogger(__name__)
 
 MODEL = f"openrouter:{config.review_model}"
 
-# Generous output token budget + 3-minute timeout guard.
-# GPT-4o-mini max output is 16,384 tokens; 15,000 leaves headroom for the
-# structured JSON wrapper while still capturing all realistic findings.
 _MODEL_SETTINGS = ModelSettings(max_tokens=15000, timeout=180)
 
 reviewer = Agent(
@@ -33,7 +28,6 @@ reviewer = Agent(
     name="reviewer",
 )
 
-# Logfire instrumentation
 try:
     import logfire
 
@@ -44,23 +38,8 @@ except ImportError:
     pass
 
 
-def _dedup_issues(issues: list[Issue]) -> list[Issue]:
-    """Remove duplicate issues by (file, line_start, normalized title prefix)."""
-    seen: set[tuple[str, int, str]] = set()
-    deduped: list[Issue] = []
-    for issue in issues:
-        # Normalize: first 5 words of lowercase title to catch near-duplicate wording
-        title_key = " ".join(issue.title.lower().split()[:5])
-        key = (issue.file, issue.line_start, title_key)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(issue)
-    return deduped
-
-
 async def run_review(prompt: str, repo_id: str, pr_number: int) -> ReviewResults:
     """Run the reviewer agent on a pre-built prompt and return structured results."""
-
     logger.info(f"Starting review for {repo_id}#{pr_number}")
 
     try:
@@ -70,33 +49,21 @@ async def run_review(prompt: str, repo_id: str, pr_number: int) -> ReviewResults
         logger.exception("Reviewer agent failed — returning empty findings")
         findings = AgentFindings(walk_through=[], issues=[], positive_findings=[])
 
-    logger.info(f"Reviewer returned {len(findings.issues)} raw issues")
+    issues = [i for i in findings.issues if i.confidence >= CONFIDENCE_THRESHOLD]
+    logger.info(f"Reviewer: {len(findings.issues)} raw → {len(issues)} after confidence filter (≥{CONFIDENCE_THRESHOLD})")
 
-    # Filter low-confidence findings
-    filtered = [i for i in findings.issues if i.confidence >= CONFIDENCE_THRESHOLD]
-    logger.info(
-        f"After confidence filter (≥{CONFIDENCE_THRESHOLD}): "
-        f"{len(filtered)}/{len(findings.issues)} issues remain"
+    critical = sum(1 for i in issues if i.severity == "critical")
+    high = sum(1 for i in issues if i.severity == "high")
+
+    summary = (
+        "No significant issues found. The code looks good."
+        if not issues
+        else f"Found {len(issues)} issue(s) ({critical} critical, {high} high). Review the details below."
     )
-
-    all_issues = _dedup_issues(filtered)
-
-    issue_count = len(all_issues)
-    critical = sum(1 for i in all_issues if i.severity == "critical")
-    high = sum(1 for i in all_issues if i.severity == "high")
-
-    if issue_count == 0:
-        summary = "No significant issues found. The code looks good."
-    else:
-        summary = (
-            f"Found {issue_count} issue(s) "
-            f"({critical} critical, {high} high). "
-            "Review the details below."
-        )
 
     return ReviewResults(
         summary=summary,
-        issues=all_issues,
+        issues=issues,
         positive_findings=findings.positive_findings,
         walk_through=findings.walk_through,
     )
