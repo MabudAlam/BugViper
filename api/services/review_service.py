@@ -160,9 +160,17 @@ def _extract_added_source_by_file(diff_text: str) -> Dict[str, str]:
 
 
 # Import & symbol extraction from diff (tree-sitter powered)
-def extract_imports_from_diff(diff_text: str) -> List[Dict]:
+def extract_imports_from_diff(
+    diff_text: str,
+    file_contents: Dict[str, str] | None = None,
+) -> List[Dict]:
     """
-    Extract imports from the added lines of a diff using tree-sitter.
+    Extract imports from changed files using tree-sitter.
+
+    Prefers full post-PR file content (``file_contents``) over just the
+    added diff lines so that imports declared outside a changed hunk are
+    still captured.  Falls back to added-lines-only when the full file
+    is unavailable.
 
     Uses the same language parsers as the ingestion service, so the import
     format matches what the graph stores:
@@ -170,27 +178,23 @@ def extract_imports_from_diff(diff_text: str) -> List[Dict]:
       JavaScript: {"name": "useState", "source": "react", ...}
     """
     all_imports: List[Dict] = []
-
-    # Group added source by file path
-
     added_source = _extract_added_source_by_file(diff_text)
 
-    for file_path, source in added_source.items():
-        # Determine language from file extension
+    for file_path, fallback_source in added_source.items():
         ext = Path(file_path).suffix.lower()
         lang = _EXT_TO_LANG.get(ext)
         if not lang:
             continue
 
-        # Load the language-specific parser
         parser = _get_lang_parser(lang)
         if not parser or not hasattr(parser, "_find_imports"):
             continue
 
+        # Full file gives accurate AST; diff-only fragment may be incomplete
+        source = (file_contents or {}).get(file_path) or fallback_source
+
         try:
-            # Parse the added source into a tree-sitter AST
             tree = parser.parser.parse(source.encode("utf-8"))
-            # Use the parser's own _find_imports to extract structured import data
             file_imports = parser._find_imports(tree.root_node)
             all_imports.extend(file_imports)
         except Exception as e:
@@ -199,9 +203,16 @@ def extract_imports_from_diff(diff_text: str) -> List[Dict]:
     return all_imports
 
 
-def extract_symbols_from_diff(diff_text: str) -> Tuple[Set[str], Set[str]]:
+def extract_symbols_from_diff(
+    diff_text: str,
+    file_contents: Dict[str, str] | None = None,
+) -> Tuple[Set[str], Set[str]]:
     """
-    Extract function and class names defined in the added lines of a diff.
+    Extract function and class names defined in changed files using tree-sitter.
+
+    Prefers full post-PR file content (``file_contents``) so that symbols
+    whose ``def``/``class`` header was outside the changed hunk are not
+    missed.  Falls back to added-lines-only when the full file is unavailable.
 
     Returns (function_names, class_names) as sets of strings.
     """
@@ -210,33 +221,26 @@ def extract_symbols_from_diff(diff_text: str) -> Tuple[Set[str], Set[str]]:
 
     added_source = _extract_added_source_by_file(diff_text)
 
-    logger.debug("Added source for diff: %s", added_source)
-
-    for file_path, source in added_source.items():
-        #get the file extension
+    for file_path, fallback_source in added_source.items():
         ext = Path(file_path).suffix.lower()
-
-        #get the language from the file extension
         lang = _EXT_TO_LANG.get(ext)
         if not lang:
             continue
 
-        #get the language-specific parser
         parser = _get_lang_parser(lang)
         if not parser:
             continue
 
+        source = (file_contents or {}).get(file_path) or fallback_source
+
         try:
-            #parse the added source into a tree-sitter AST
             tree = parser.parser.parse(source.encode("utf-8"))
             root = tree.root_node
 
-            # Extract function definitions
             if hasattr(parser, "_find_functions"):
                 for func in parser._find_functions(root):
                     functions.add(func.get("name", ""))
 
-            # Extract class definitions
             if hasattr(parser, "_find_classes"):
                 for cls in parser._find_classes(root):
                     classes.add(cls.get("name", ""))
@@ -250,18 +254,35 @@ def extract_symbols_from_diff(diff_text: str) -> Tuple[Set[str], Set[str]]:
 # Context formatting (for LLM agents)
 # ==========================================================================
 
-def _build_agent_context(diff_text: str, graph_section: str) -> str:
+def _build_agent_context(
+    diff_text: str,
+    graph_section: str,
+    pr_title: str = "",
+    pr_body: str = "",
+) -> str:
     """
     Build the markdown context string sent to LLM agents.
 
     The graph section already contains affected symbol source, callers,
     outbound dependencies, imports, and class hierarchy — all fetched in
     one query by get_diff_context_enhanced.  We just prefix it with the
-    diff so the agent sees exactly what changed before reading the context.
+    PR metadata and diff so the agent sees intent before reading the changes.
     """
     parts = []
 
-    # Section 0: THE DIFF (what's changing)
+    # Section 0: PR metadata (title + description)
+    if pr_title:
+        parts.append("## Pull Request")
+        parts.append(f"**Title:** {pr_title}")
+        if pr_body and pr_body.strip():
+            parts.append("")
+            parts.append("**Description:**")
+            parts.append(pr_body.strip())
+        parts.append("")
+        parts.append("---")
+        parts.append("")
+
+    # Section 1: THE DIFF (what's changing)
     parts.append("## Code Changes (Diff)")
     parts.append("*This is what the PR modifies:*")
     parts.append("")
@@ -276,7 +297,7 @@ def _build_agent_context(diff_text: str, graph_section: str) -> str:
     parts.append("---")
     parts.append("")
 
-    # Section 1: Full graph context (affected symbols, callers, imports, deps, hierarchy)
+    # Section 2: Full graph context (affected symbols, callers, imports, deps, hierarchy)
     if graph_section and graph_section != "No graph context available.":
         parts.append("## Repository Context (from dependency graph)")
         parts.append(graph_section)
@@ -330,23 +351,11 @@ def _parse_files_changed(
 
 def _build_review_prompt(
     agent_context: str,
-    full_file_snapshots: Dict[str, str],
     repo_id: str,
     pr_number: int,
 ) -> str:
     """Assemble the final prompt string that is sent verbatim to the LLM agents."""
-    snapshots_section = ""
-    if full_file_snapshots:
-        parts = ["\n\n### Full File Snapshots (post-PR state)\n"]
-        for path, content in full_file_snapshots.items():
-            parts.append(f"#### `{path}`\n```\n{content}\n```\n")
-        snapshots_section = "".join(parts)
-
-    return (
-        f"## PR #{pr_number} in {repo_id}\n\n"
-        f"{agent_context}"
-        f"{snapshots_section}"
-    )
+    return f"## PR #{pr_number} in {repo_id}\n\n{agent_context}"
 
 
 # ==========================================================================
@@ -464,18 +473,28 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
         # Create a timestamped folder for this review run
         review_dir = make_review_dir(owner, repo, pr_number)
 
-        # ── Step 1: Fetch diff from GitHub ──────────────────────────────
+        # ── Step 1: Fetch diff, PR metadata, and head SHA (all in parallel) ─
         gh = GitHubClient()
-        diff_text = await gh.get_pr_diff(owner, repo, pr_number)
+        diff_text, pr_info, head_sha = await asyncio.gather(
+            gh.get_pr_diff(owner, repo, pr_number),
+            gh.get_pr_info(owner, repo, pr_number),
+            gh.get_pr_head_ref(owner, repo, pr_number),
+        )
         if not diff_text:
             logger.warning("Empty diff, skipping review")
             return
-        logger.info(f"Fetched diff ({len(diff_text)} chars)")
+        pr_title = pr_info.get("title", "")
+        pr_body = pr_info.get("body", "")
+        logger.info(f"Fetched diff ({len(diff_text)} chars), PR title: {pr_title!r}, head: {head_sha[:7]}")
 
         write_step(review_dir, "01_diff.md", "\n".join([
             f"# Step 1 — Raw Diff",
             f"**PR:** {owner}/{repo}#{pr_number}",
+            f"**Title:** {pr_title}",
             f"**Chars:** {len(diff_text)}",
+            "",
+            f"**Description:**",
+            pr_body or "*(no description)*",
             "",
             "```diff",
             diff_text,
@@ -501,9 +520,25 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
             ],
         ]))
 
-        # ── Step 3: Extract imports & symbols from added lines ──────────
-        diff_imports = extract_imports_from_diff(diff_text)
-        diff_functions, diff_classes = extract_symbols_from_diff(diff_text)
+        # ── Step 2.5: Fetch full post-PR file contents at head SHA ──────
+        # Fetched here (before symbol extraction) so tree-sitter can parse
+        # the complete file rather than just the added diff lines.
+        _raw = await asyncio.gather(
+            *[gh.get_file_content(owner, repo, f, ref=head_sha) for f in files_changed],
+            return_exceptions=True,
+        )
+        full_file_contents: Dict[str, str] = {
+            fp: content
+            for fp, content in zip(files_changed, _raw)
+            if not isinstance(content, Exception) and content
+        }
+        logger.info(
+            f"Fetched full content for {len(full_file_contents)}/{len(files_changed)} files"
+        )
+
+        # ── Step 3: Extract imports & symbols (full file preferred) ─────
+        diff_imports = extract_imports_from_diff(diff_text, full_file_contents)
+        diff_functions, diff_classes = extract_symbols_from_diff(diff_text, full_file_contents)
         all_diff_symbols = diff_functions | diff_classes
         logger.info(
             f"Diff extraction: {len(diff_imports)} imports, "
@@ -587,7 +622,7 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
         ]))
 
         # ── Step 6: Build context for LLM agents ───────────────────────
-        agent_context = _build_agent_context(diff_text, graph_section)
+        agent_context = _build_agent_context(diff_text, graph_section, pr_title, pr_body)
 
         write_step(review_dir, "06_agent_context.md", "\n".join([
             "# Step 6 — Agent Context (graph + imports + callers)",
@@ -618,31 +653,8 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
             if prev_section:
                 agent_context = agent_context + "\n\n" + prev_section
 
-        # ── Step 7.5: Fetch full post-PR file snapshots (≤300 lines) ────
-        full_file_snapshots: Dict[str, str] = {}
-        try:
-            head_sha = await gh.get_pr_head_ref(owner, repo, pr_number)
-            fetch_tasks = [
-                gh.get_file_content(owner, repo, f, ref=head_sha)
-                for f in files_changed
-            ]
-            file_contents = await asyncio.gather(*fetch_tasks, return_exceptions=True)
-            for file_path, content in zip(files_changed, file_contents):
-                if isinstance(content, Exception) or not content:
-                    continue
-                line_count = content.count("\n") + 1
-                if line_count <= 300:
-                    full_file_snapshots[file_path] = content
-            logger.info(
-                f"Fetched {len(full_file_snapshots)}/{len(files_changed)} full file snapshots"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to fetch file snapshots: {e}")
-
         # ── Step 8: Assemble final prompt + run multi-agent review ───────
-        review_prompt = _build_review_prompt(
-            agent_context, full_file_snapshots, repo_id, pr_number
-        )
+        review_prompt = _build_review_prompt(agent_context, repo_id, pr_number)
 
         write_step(review_dir, "06b_review_prompt.md", "\n".join([
             "# Step 6b — Final Review Prompt (sent to LLM agents)",

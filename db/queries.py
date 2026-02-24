@@ -1084,7 +1084,8 @@ class CodeQueryService:
             # Method nodes are stored under Class via CONTAINS — we surface them
             # here so the agent sees both the class body and individual methods.
             affected_query = """
-            MATCH (f:File {repo: $repo_id, path: $file_path})
+            MATCH (f:File {repo: $repo_id})
+            WHERE f.path ENDS WITH $file_path
             MATCH (f)-[:CONTAINS]->(n)
             WHERE (n:Function OR n:Class OR n:Method)
               AND n.line_number IS NOT NULL
@@ -1225,7 +1226,8 @@ class CodeQueryService:
 
             # ── 5. Imports: resolve imported names to in-repo source ──────────
             import_query = """
-            MATCH (f:File {repo: $repo_id, path: $file_path})
+            MATCH (f:File {repo: $repo_id})
+            WHERE f.path ENDS WITH $file_path
             MATCH (f)-[r:IMPORTS]->(m)
             RETURN
                 r.alias          AS alias,

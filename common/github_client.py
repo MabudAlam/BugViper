@@ -5,7 +5,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
 
 from github import Github, GithubIntegration, Auth, GithubException
 
@@ -260,6 +259,24 @@ class GitHubClient:
             }
 
         return await asyncio.to_thread(_get_repo_info)
+
+    async def get_pr_info(self, owner: str, repo: str, pr_number: int) -> Dict[str, str]:
+        """
+        Get title and body of a pull request.
+
+        Returns:
+            Dict with keys 'title' and 'body' (body may be empty string).
+        """
+        def _get_info():
+            github = self._get_github_instance(owner, repo)
+            repository = github.get_repo(f"{owner}/{repo}")
+            pr = repository.get_pull(pr_number)
+            return {
+                "title": pr.title or "",
+                "body": pr.body or "",
+            }
+
+        return await asyncio.to_thread(_get_info)
 
     async def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """
