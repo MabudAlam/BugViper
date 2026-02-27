@@ -4,10 +4,8 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Request
 
 from api.services.cloud_tasks_service import CloudTasksService
-from ingestion_service.core.incremental_updater import ingest_direct_push, ingest_merged_pr
 from api.services.review_service import execute_pr_review
 from common.job_models import IncrementalPRPayload, IncrementalPushPayload
-from db.client import get_neo4j_client
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +64,9 @@ async def _handle_push(payload: dict, background_tasks: BackgroundTasks) -> dict
         )
         cloud_tasks.dispatch_incremental_push(task_payload)
     else:
+        # Local dev only — ingestion_service code is not present in the Cloud Run image
+        from db.client import get_neo4j_client
+        from ingestion_service.core.incremental_updater import ingest_direct_push
         background_tasks.add_task(
             ingest_direct_push, owner, repo_name, before_sha, after_sha, get_neo4j_client()
         )
@@ -104,6 +105,9 @@ async def _handle_pr_merged(payload: dict, background_tasks: BackgroundTasks) ->
         )
         cloud_tasks.dispatch_incremental_pr(task_payload)
     else:
+        # Local dev only — ingestion_service code is not present in the Cloud Run image
+        from db.client import get_neo4j_client
+        from ingestion_service.core.incremental_updater import ingest_merged_pr
         background_tasks.add_task(
             ingest_merged_pr, owner, repo_name, pr_number, get_neo4j_client()
         )

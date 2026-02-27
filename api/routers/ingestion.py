@@ -14,7 +14,6 @@ from api.models.schemas import (
 from api.services.firebase_service import firebase_service
 from common.github_client import GitHubClient
 
-from ingestion_service.core.repo_ingestion_engine import AdvancedIngestionEngine
 from api.services.cloud_tasks_service import CloudTasksService
 from common.firebase_models import RepoIngestionError, RepoIngestionUpdate, RepoMetadata
 from common.job_models import (
@@ -101,7 +100,8 @@ async def ingest_github_repository(
     )
 
     if os.getenv("dev") == "true":
-        # Dev mode: run ingestion locally in-process
+        # Local dev only — ingestion_service code is not present in the Cloud Run image
+        from ingestion_service.core.repo_ingestion_engine import AdvancedIngestionEngine
         job_tracker.create_job(payload)
         job_tracker.update_status(job_id, JobStatus.RUNNING)
 
