@@ -24,7 +24,7 @@ from common.debug_writer import make_review_dir, write_step
 from api.services.firebase_service import firebase_service
 from common.firebase_models import PRMetadata, ReviewRunData
 from db.client import Neo4jClient, get_neo4j_client
-from db.queries import CodeQueryService
+from db.code_serarch_layer import CodeSearchService
 from deepagent.models.agent_schemas import ContextData, FileSummary, Issue, ReconciledReview
 from deepagent.agent.review_pipeline import run_review
 from common.github_client import GitHubClient
@@ -565,7 +565,7 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
         # ── Step 4: Connect to Neo4j and resolve context ────────────────
         if neo4j is None:
             neo4j = get_neo4j_client()
-        query_service = CodeQueryService(neo4j)
+        query_service = CodeSearchService(neo4j)
 
         # Single comprehensive graph query: affected symbols (with full source),
         # callers, outbound dependencies, imports, and class hierarchy.

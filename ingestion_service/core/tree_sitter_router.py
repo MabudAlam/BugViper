@@ -9,10 +9,11 @@ from datetime import datetime
 from common.debug_log import debug_log, error_logger, info_logger, warning_logger
 from common.tree_sitter_manager import get_tree_sitter_manager
 from db import Neo4jClient
-from .jobs import JobManager, JobStatus
+from .jobs import JobManager
+from common.job_models import JobStatus
 
 from tree_sitter import Language, Parser
-from ..config.config_manager import get_config_value
+from common.config_manager import get_config_value
 
 
 class TreeSitterParser:
@@ -179,16 +180,21 @@ class GraphBuilder:
                 warning_logger(f"Schema creation warning: {e}")
 
 
-    def _pre_scan_for_imports(self, files: list[Path], repo_path: Path) -> dict:
+    def _pre_scan_for_imports(self, files: list[Path], repo_path: Optional[Path] = None) -> dict:
         """Dispatches pre-scan to the correct language-specific implementation.
-        
+
         Args:
             files: List of file paths to scan
-            repo_path: Repository root path for calculating relative paths
-            
+            repo_path: Repository root path for calculating relative paths.
+                       If None, falls back to self.project_root (set by callers
+                       that already know the repo root).
+
         Returns:
             Dictionary mapping symbol names to relative file paths
         """
+        if repo_path is None:
+            repo_path = getattr(self, 'project_root', None)
+
         imports_map = {}
         
         # Group files by language/extension

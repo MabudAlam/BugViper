@@ -26,9 +26,6 @@ COPY common/ common/
 COPY db/ db/
 COPY deepagent/ deepagent/
 
-# Language parsers (reused by review pipeline for diff analysis)
-COPY ingestion_service/__init__.py ingestion_service/__init__.py
-COPY ingestion_service/languages/ ingestion_service/languages/
 
 EXPOSE 8080
 

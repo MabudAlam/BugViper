@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends, Path
 from typing import List, Dict, Any, Optional
 
 from db.client import Neo4jClient
-from db.queries import CodeQueryService
+from db.code_serarch_layer import CodeSearchService
 from db.schema import CodeGraphSchema
 from api.dependencies import get_neo4j_client, get_current_user
 from api.services.firebase_service import firebase_service
@@ -27,9 +27,9 @@ def _cleanup_firestore_repo(uid: str, owner: str, repo_name: str) -> None:
         )
 
 
-def get_query_service(db: Neo4jClient = Depends(get_neo4j_client)) -> CodeQueryService:
+def get_query_service(db: Neo4jClient = Depends(get_neo4j_client)) -> CodeSearchService:
     """Dependency to get query service."""
-    return CodeQueryService(db)
+    return CodeSearchService(db)
 
 
 def get_schema_service(db: Neo4jClient = Depends(get_neo4j_client)) -> CodeGraphSchema:
@@ -39,7 +39,7 @@ def get_schema_service(db: Neo4jClient = Depends(get_neo4j_client)) -> CodeGraph
 
 @router.get("/")
 async def list_repositories(
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     List all repositories in the database.
@@ -57,7 +57,7 @@ async def list_repositories(
 @router.get("/getAllRepositories")
 async def get_all_repositories(
     userName: str = Query(..., description="Username to filter repositories (legacy parameter)"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get all repositories (legacy endpoint for frontend compatibility).
@@ -87,7 +87,7 @@ async def get_all_repositories(
 async def get_repository(
     username: str = Path(..., description="Repository owner/username"),
     repo_name: str = Path(..., description="Repository name"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get repository details by username and repository name.
@@ -118,7 +118,7 @@ async def get_repository(
 @router.get("/{repo_id}")
 async def get_repository_by_id(
     repo_id: str = Path(..., description="Repository ID"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get repository details by repository ID.
@@ -147,7 +147,7 @@ async def get_repository_by_id(
 async def delete_repository_by_name(
     username: str = Path(..., description="Repository owner/username"),
     repo_name: str = Path(..., description="Repository name"),
-    query_service: CodeQueryService = Depends(get_query_service),
+    query_service: CodeSearchService = Depends(get_query_service),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
@@ -178,7 +178,7 @@ async def delete_repository_by_name(
 @router.delete("/{repo_id}")
 async def delete_repository(
     repo_id: str = Path(..., description="Repository ID to delete (owner/repo format)"),
-    query_service: CodeQueryService = Depends(get_query_service),
+    query_service: CodeSearchService = Depends(get_query_service),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
@@ -220,7 +220,7 @@ async def delete_repository(
 async def get_repository_stats(
     username: str = Path(..., description="Repository owner/username"),
     repo_name: str = Path(..., description="Repository name"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get repository statistics by username and repo name.
@@ -245,7 +245,7 @@ async def get_repository_stats(
 @router.get("/{repo_id}/stats")
 async def get_repository_stats_by_id(
     repo_id: str = Path(..., description="Repository ID"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get repository statistics by repository ID.
@@ -271,7 +271,7 @@ async def list_repository_files_by_name(
     username: str = Path(..., description="Repository owner/username"),
     repo_name: str = Path(..., description="Repository name"),
     path: str = Query(None, description="Optional path filter"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     List files in a repository by username and repo name.
@@ -302,7 +302,7 @@ async def list_repository_files_by_name(
 async def list_repository_files_by_id(
     repo_id: str = Path(..., description="Repository ID"),
     path: str = Query(None, description="Optional path filter"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     List files in a repository by repository ID.
@@ -333,7 +333,7 @@ async def get_file_content_by_name(
     username: str = Path(..., description="Repository owner/username"),
     repo_name: str = Path(..., description="Repository name"),
     path: str = Query(..., description="File path to get content for"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get file content by username, repo name, and file path.
@@ -371,7 +371,7 @@ async def get_file_content_by_name(
 async def reconstruct_file_content(
     repo_id: str = Path(..., description="Repository ID"),
     file_path: str = Path(..., description="File path to reconstruct"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Reconstruct file content by repository ID and file path.
@@ -427,7 +427,7 @@ async def update_repository(
 @router.get("/{repo_id}/verify")
 async def verify_repository_reconstruction(
     repo_id: str = Path(..., description="Repository ID to verify"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Verify that all files in a repository can be reconstructed.
@@ -442,7 +442,7 @@ async def verify_repository_reconstruction(
 @router.get("/{repo_id}/dependencies")
 async def get_repository_dependencies(
     repo_id: str = Path(..., description="Repository ID"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get repository dependencies.
@@ -461,7 +461,7 @@ async def get_repository_dependencies(
 @router.get("/{repo_id}/config-files")
 async def get_repository_config_files(
     repo_id: str = Path(..., description="Repository ID"),
-    query_service: CodeQueryService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get repository configuration files.

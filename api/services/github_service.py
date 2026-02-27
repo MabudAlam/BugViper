@@ -1,4 +1,3 @@
-"""GitHubService - GitHub API interactions using PyGithub for BugViper."""
 
 import logging
 

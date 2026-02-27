@@ -401,6 +401,7 @@ class IncrementalGraphUpdater:
         loop = asyncio.get_event_loop()
         job_manager = JobManager()
         graph_builder = GraphBuilder(self.neo4j_client, job_manager, loop)
+        graph_builder.project_root = local_path_obj
 
         # ========== PHASE 1: CATEGORIZE FILES ==========
         info_logger("PHASE 1: Categorizing changed files by status...")
@@ -584,7 +585,7 @@ class IncrementalGraphUpdater:
         return stats
 
 
-async def handleCodePush(
+async def ingest_merged_pr(
     owner: str,
     repo: str,
     pr_number: int,
@@ -605,18 +606,14 @@ async def handleCodePush(
         IncrementalUpdateStats with update results
     """
     info_logger("=" * 70)
-    info_logger(">>>>>>>>>> handleCodePush STARTED <<<<<<<<<<")
+    info_logger(">>>>>>>>>> ingest_merged_pr STARTED <<<<<<<<<<")
     info_logger(f"Input: owner='{owner}', repo='{repo}', pr_number={pr_number}")
     info_logger(f"repo_local_path={repo_local_path}")
     info_logger("=" * 70)
 
     gh = GitHubClient()
 
-    # ==========
-    # API CALL: GitHub API - Get PR files
-    # ENDPOINT: GET /repos/{owner}/{repo}/pulls/{pr_number}/files
-    # RETURNS: List of file objects with filename, status, additions, deletions, patch
-    # =================================
+
     info_logger(f"Calling GitHub API: gh.get_pr_files('{owner}', '{repo}', {pr_number})")
     pr_files_payload = await gh.get_pr_files(owner, repo, pr_number)
 
@@ -640,7 +637,7 @@ async def handleCodePush(
     )
 
     info_logger("=" * 70)
-    info_logger(">>>>>>>>>> handleCodePush COMPLETED <<<<<<<<<<")
+    info_logger(">>>>>>>>>> ingest_merged_pr COMPLETED <<<<<<<<<<")
     info_logger(
         f"Final stats: added={stats.files_added}, modified={stats.files_modified}, "
         f"deleted={stats.files_deleted}, renamed={stats.files_renamed}, "
@@ -651,7 +648,7 @@ async def handleCodePush(
     return stats
 
 
-async def handleDirectPush(
+async def ingest_direct_push(
     owner: str,
     repo: str,
     before_sha: str,
@@ -674,7 +671,7 @@ async def handleDirectPush(
         IncrementalUpdateStats with update results
     """
     info_logger("=" * 70)
-    info_logger(">>>>>>>>>> handleDirectPush STARTED <<<<<<<<<<")
+    info_logger(">>>>>>>>>> ingest_direct_push STARTED <<<<<<<<<<")
     info_logger(f"Input: owner='{owner}', repo='{repo}'")
     info_logger(f"Commit range: {before_sha[:7]}..{after_sha[:7]}")
     info_logger(f"repo_local_path={repo_local_path}")
@@ -730,7 +727,7 @@ async def handleDirectPush(
     )
 
     info_logger("=" * 70)
-    info_logger(">>>>>>>>>> handleDirectPush COMPLETED <<<<<<<<<<")
+    info_logger(">>>>>>>>>> ingest_direct_push COMPLETED <<<<<<<<<<")
     info_logger(
         f"Final stats: added={stats.files_added}, modified={stats.files_modified}, "
         f"deleted={stats.files_deleted}, renamed={stats.files_renamed}, "

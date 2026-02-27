@@ -1,15 +1,9 @@
 """
 Job management for the ingestion system
 """
-from enum import Enum
-from typing import Optional, Any
-import asyncio
+from typing import Optional
 
-class JobStatus(Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
+from common.job_models import JobStatus
 
 class JobManager:
     """Simple job manager for tracking ingestion progress."""

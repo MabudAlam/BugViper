@@ -8,7 +8,8 @@ from dataclasses import dataclass
 
 from common.github_client import GitHubAuthError, GitHubClient
 from db import Neo4jClient, CodeGraphSchema, GraphIngestionService
-from .jobs import JobManager, JobStatus
+from .jobs import JobManager
+from common.job_models import JobStatus
 from .tree_sitter_router import GraphBuilder
 
 
