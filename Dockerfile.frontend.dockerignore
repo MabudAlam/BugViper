@@ -1,0 +1,47 @@
+# ── Unrelated services ───────────────────────────────────────────────────────
+api/
+ingestion_service/
+deepagent/
+common/
+db/
+
+# ── Node / Next.js build artefacts ───────────────────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/.env*
+
+# ── Dev / build artefacts ────────────────────────────────────────────────────
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Secrets & credentials ─────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+service.json
+
+# ── Logs & runtime output ────────────────────────────────────────────────────
+*.log
+logs/
+output/
+
+# ── Docs, assets & repo metadata ─────────────────────────────────────────────
+.git/
+.github/
+.claude/
+docs/
+screenshots/
+README.md
+CLAUDE.md
+CYPHER_GUIDE.md
+LICENSE
+
+# ── CI / local tooling ───────────────────────────────────────────────────────
+cloudbuild.*.yaml
+start.sh

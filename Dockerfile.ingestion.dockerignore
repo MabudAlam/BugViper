@@ -1,0 +1,42 @@
+# ── Unrelated services ───────────────────────────────────────────────────────
+api/
+deepagent/
+frontend/
+node_modules/
+
+# ── Dev / build artefacts ────────────────────────────────────────────────────
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# ── Secrets & credentials ────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+service.json
+
+# ── Logs & runtime output ────────────────────────────────────────────────────
+*.log
+logs/
+output/
+
+# ── Docs, assets & repo metadata ─────────────────────────────────────────────
+.git/
+.github/
+.claude/
+docs/
+screenshots/
+README.md
+CLAUDE.md
+CYPHER_GUIDE.md
+LICENSE
+
+# ── CI / local tooling ───────────────────────────────────────────────────────
+cloudbuild.*.yaml
+start.sh
