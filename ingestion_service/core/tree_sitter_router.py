@@ -7,6 +7,7 @@ from typing import Any, Coroutine, Dict, Optional, Tuple
 from datetime import datetime
 
 from common.debug_log import debug_log, error_logger, info_logger, warning_logger
+from common.languages import EXT_TO_LANG
 from common.tree_sitter_manager import get_tree_sitter_manager
 from db import Neo4jClient
 from .jobs import JobManager
@@ -107,34 +108,10 @@ class GraphBuilder:
         self.job_manager = job_manager
         self.loop = loop
         self.driver = self.neo4j_client.driver
-        self.parsers = {
-            '.py': TreeSitterParser('python'),
-            '.ipynb': TreeSitterParser('python'),
-            '.js': TreeSitterParser('javascript'),
-            '.jsx': TreeSitterParser('javascript'),
-            '.mjs': TreeSitterParser('javascript'),
-            '.cjs': TreeSitterParser('javascript'),
-            '.go': TreeSitterParser('go'),
-            '.ts': TreeSitterParser('typescript'),
-            '.tsx': TreeSitterParser('typescript'),
-            '.cpp': TreeSitterParser('cpp'),
-            '.h': TreeSitterParser('cpp'),
-            '.hpp': TreeSitterParser('cpp'),
-            '.rs': TreeSitterParser('rust'),
-            '.c': TreeSitterParser('c'),
-            # '.h': TreeSitterParser('c'), # Need to write an algo for distinguishing C vs C++ headers
-            '.java': TreeSitterParser('java'),
-            '.rb': TreeSitterParser('ruby'),
-            '.java': TreeSitterParser('java'),
-            '.rb': TreeSitterParser('ruby'),
-            '.cs': TreeSitterParser('c_sharp'),
-            '.php': TreeSitterParser('php'),
-            '.kt': TreeSitterParser('kotlin'),
-            '.scala': TreeSitterParser('scala'),
-            '.sc': TreeSitterParser('scala'),
-            '.swift': TreeSitterParser('swift'),
-            '.hs': TreeSitterParser('haskell'),
-        }
+        # Build one TreeSitterParser per unique language, then share instances
+        # across extensions (e.g. .js / .jsx / .mjs all reuse the same parser).
+        _lang_instances = {lang: TreeSitterParser(lang) for lang in set(EXT_TO_LANG.values())}
+        self.parsers = {ext: _lang_instances[lang] for ext, lang in EXT_TO_LANG.items()}
         self.create_schema()
 
     # A general schema creation based on common features across languages
@@ -443,15 +420,7 @@ class GraphBuilder:
             warning_logger(f"Could not read source for {file_path_abs}: {e}")
 
         # Detect language from extension
-        ext_to_lang = {
-            '.py': 'python', '.js': 'javascript', '.jsx': 'javascript',
-            '.ts': 'typescript', '.tsx': 'typescript', '.go': 'go',
-            '.rs': 'rust', '.java': 'java', '.rb': 'ruby', '.c': 'c',
-            '.cpp': 'cpp', '.h': 'c', '.hpp': 'cpp', '.cs': 'csharp',
-            '.php': 'php', '.kt': 'kotlin', '.scala': 'scala',
-            '.swift': 'swift', '.hs': 'haskell', '.ipynb': 'python',
-        }
-        language = ext_to_lang.get(Path(file_path_abs).suffix, 'unknown')
+        language = EXT_TO_LANG.get(Path(file_path_abs).suffix, 'unknown')
 
         with self.driver.session() as session:
             # Create/update File node with repo + relative path as unique key

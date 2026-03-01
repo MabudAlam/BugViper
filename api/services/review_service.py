@@ -20,6 +20,7 @@ from typing import Dict, List, Set, Tuple
 
 from api.utils.comment_formatter import format_github_comment
 from api.utils.graph_context import build_graph_context_section
+from common.languages import EXT_TO_LANG, LANG_PARSER_REGISTRY
 from common.debug_writer import make_review_dir, write_step
 from api.services.firebase_service import firebase_service
 from common.firebase_models import PRMetadata, ReviewRunData
@@ -33,49 +34,7 @@ from common.diff_parser import parse_unified_diff
 logger = logging.getLogger(__name__)
 
 
-# ==========================================================================
-# File extension → tree-sitter language name mapping (all 17 supported)
-# ==========================================================================
-_EXT_TO_LANG = {
-    ".py": "python",
-    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
-    ".ts": "typescript", ".tsx": "typescript",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".rb": "ruby",
-    ".c": "c",
-    ".cpp": "cpp", ".h": "cpp", ".hpp": "cpp",
-    ".cs": "c_sharp",
-    ".kt": "kotlin",
-    ".scala": "scala", ".sc": "scala",
-    ".swift": "swift",
-    ".php": "php",
-    ".hs": "haskell",
-}
-
-# ==========================================================================
-# Language parser registry
-# Maps language name → (module path, class name) for lazy import.
-# These are the SAME parsers used by the ingestion service to build the graph.
-# ==========================================================================
-_LANG_PARSER_REGISTRY = {
-    "python":     ("ingestion_service.languages.python",     "PythonLangTreeSitterParser"),
-    "javascript": ("ingestion_service.languages.javascript", "JavascriptLangTreeSitterParser"),
-    "typescript": ("ingestion_service.languages.typescript", "TypescriptLangTreeSitterParser"),
-    "go":         ("ingestion_service.languages.go",         "GoLangTreeSitterParser"),
-    "java":       ("ingestion_service.languages.java",       "JavaLangTreeSitterParser"),
-    "rust":       ("ingestion_service.languages.rust",       "RustLangTreeSitterParser"),
-    "c":          ("ingestion_service.languages.c",          "CLangTreeSitterParser"),
-    "cpp":        ("ingestion_service.languages.cpp",        "CppLangTreeSitterParser"),
-    "ruby":       ("ingestion_service.languages.ruby",       "RubyLangTreeSitterParser"),
-    "c_sharp":    ("ingestion_service.languages.csharp",     "CSharpLangTreeSitterParser"),
-    "php":        ("ingestion_service.languages.php",        "PhpLangTreeSitterParser"),
-    "kotlin":     ("ingestion_service.languages.kotlin",     "KotlinLangTreeSitterParser"),
-    "scala":      ("ingestion_service.languages.scala",      "ScalaLangTreeSitterParser"),
-    "swift":      ("ingestion_service.languages.swift",      "SwiftLangTreeSitterParser"),
-    "haskell":    ("ingestion_service.languages.haskell",    "HaskellLangTreeSitterParser"),
-}
+# EXT_TO_LANG and LANG_PARSER_REGISTRY imported from common.languages
 
 # Cache so we only instantiate each language parser once
 _parser_cache: Dict[str, object] = {}
@@ -99,10 +58,10 @@ def _get_lang_parser(lang: str):
         return _parser_cache[lang]
 
     # Unknown language → skip
-    if lang not in _LANG_PARSER_REGISTRY:
+    if lang not in LANG_PARSER_REGISTRY:
         return None
 
-    module_path, class_name = _LANG_PARSER_REGISTRY[lang]
+    module_path, class_name = LANG_PARSER_REGISTRY[lang]
     try:
         from common.tree_sitter_manager import get_language_safe, create_parser
 
@@ -182,7 +141,7 @@ def extract_imports_from_diff(
 
     for file_path, fallback_source in added_source.items():
         ext = Path(file_path).suffix.lower()
-        lang = _EXT_TO_LANG.get(ext)
+        lang = EXT_TO_LANG.get(ext)
         if not lang:
             continue
 
@@ -223,7 +182,7 @@ def extract_symbols_from_diff(
 
     for file_path, fallback_source in added_source.items():
         ext = Path(file_path).suffix.lower()
-        lang = _EXT_TO_LANG.get(ext)
+        lang = EXT_TO_LANG.get(ext)
         if not lang:
             continue
 

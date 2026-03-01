@@ -3,17 +3,11 @@
 from pathlib import Path
 from typing import Any
 
-_EXT_TO_LANG_HINT: dict[str, str] = {
-    ".py": "python", ".js": "javascript", ".jsx": "javascript",
-    ".ts": "typescript", ".tsx": "typescript", ".go": "go",
-    ".rs": "rust", ".java": "java", ".rb": "ruby",
-    ".c": "c", ".cpp": "cpp", ".cs": "csharp",
-    ".kt": "kotlin", ".scala": "scala", ".swift": "swift", ".php": "php",
-}
+from common.languages import EXT_TO_LANG
 
 
 def _lang_hint(file_path: str) -> str:
-    return _EXT_TO_LANG_HINT.get(Path(file_path).suffix.lower(), "")
+    return EXT_TO_LANG.get(Path(file_path).suffix.lower(), "")
 
 
 def build_graph_context_section(graph_context: dict[str, Any]) -> str:

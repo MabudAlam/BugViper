@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 
 from common.github_client import GitHubClient
+from common.languages import SUPPORTED_EXTENSIONS
 from db import Neo4jClient
 from ingestion_service.core.tree_sitter_router import GraphBuilder
 from ingestion_service.core.jobs import JobManager
@@ -40,13 +41,6 @@ class IncrementalGraphUpdater:
     4. Rebuilds relationships (CALLS, INHERITS) for affected files
     """
 
-    # Supported file extensions (must match GraphBuilder.parsers)
-    SUPPORTED_EXTENSIONS = {
-        '.py', '.ipynb', '.js', '.jsx', '.mjs', '.cjs', '.go', '.ts', '.tsx',
-        '.cpp', '.h', '.hpp', '.rs', '.c', '.java', '.rb', '.cs', '.php',
-        '.kt', '.scala', '.sc', '.swift', '.hs'
-    }
-
     def __init__(self, neo4j_client: Neo4jClient, github_client: GitHubClient):
         self.neo4j_client = neo4j_client
         self.github_client = github_client
@@ -54,7 +48,7 @@ class IncrementalGraphUpdater:
 
     def _is_supported_file(self, filename: str) -> bool:
         """Check if file extension is supported for parsing."""
-        return Path(filename).suffix in self.SUPPORTED_EXTENSIONS
+        return Path(filename).suffix in SUPPORTED_EXTENSIONS
 
     async def _sync_repository(
         self,
