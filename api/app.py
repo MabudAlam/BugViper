@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 # Load environment variables BEFORE any imports that use them (e.g. Firebase)
 load_dotenv()
 
+import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +12,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routers import auth, ingestion, query, repository, webhook
 from api.services.firebase_service import firebase_service  # noqa: F401 — init on import
 import uvicorn
+
+logger = logging.getLogger(__name__)
+
+
+def _load_allowed_origins() -> list[str]:
+  
+    raw = os.getenv("API_ALLOWED_ORIGINS", "").strip()
+    if not raw:
+        logger.warning(
+            "API_ALLOWED_ORIGINS is not set — defaulting to localhost only. "
+            "Set this variable in .env for production."
+        )
+        return ["http://localhost:3000", "http://localhost:8000"]
+    origins = [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+    logger.info("CORS allowed origins: %s", origins)
+    return origins
 
 
 @asynccontextmanager
@@ -52,7 +70,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=_load_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
