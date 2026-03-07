@@ -18,7 +18,7 @@ import {
   type User,
 } from "firebase/auth";
 import { getAuth, getGithubProvider } from "@/lib/firebase";
-import { setTokenGetter, loginUser, ensureUser } from "@/lib/api";
+import { loginUser, ensureUser } from "@/lib/api";
 
 interface AuthContextValue {
   user: User | null;
@@ -54,8 +54,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const auth = getFirebaseAuth();
-
-    setTokenGetter(() => getIdToken());
 
     // Restore GitHub token from sessionStorage
     const stored = sessionStorage.getItem(GH_TOKEN_KEY);

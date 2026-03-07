@@ -12,7 +12,7 @@ import { CodeBlock } from "@/components/ui/code-block";
 import { toast } from "sonner";
 import {
   Search, GitBranch, Code2, BarChart2, GitPullRequest,
-  X, Loader2,
+  X, Loader2, Sparkles, ChevronDown,
 } from "lucide-react";
 import * as api from "@/lib/api";
 
@@ -1182,6 +1182,138 @@ function GenericQueryTab({ queries }: { queries: QueryDef[] }) {
   );
 }
 
+// ─── Semantic Result Card ─────────────────────────────────────────────────────
+
+function SemanticResultCard({ hit }: { hit: api.SemanticHit }) {
+  const [expanded, setExpanded] = useState(true);
+  const filename = hit.path ? hit.path.split("/").pop() : null;
+  const dirPath  = hit.path && filename ? hit.path.slice(0, hit.path.length - filename.length - 1) : null;
+  const hasLine  = hit.line_number != null && hit.line_number > 0;
+  const pct      = Math.round(hit.score * 100);
+
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden hover:border-primary/40 transition-colors">
+      {/* Header */}
+      <div
+        className="flex items-center gap-2 px-4 py-3 cursor-pointer select-none"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <TypeBadge type={hit.type} />
+        <span className="font-mono font-semibold text-sm leading-tight break-all flex-1">
+          {hit.name ?? filename ?? hit.type}
+        </span>
+        <span className="shrink-0 text-xs font-medium tabular-nums text-emerald-500/80">{pct}%</span>
+        <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </div>
+
+      {/* Path */}
+      {hit.path && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground font-mono px-4 pb-2 -mt-1">
+          {dirPath && <span className="opacity-60 truncate">{dirPath}/</span>}
+          {filename && <span className="text-foreground/80 font-medium">{filename}</span>}
+          {hasLine && (
+            <span className="shrink-0 px-1 rounded bg-muted text-foreground/70">:{hit.line_number}</span>
+          )}
+        </div>
+      )}
+
+      {/* Docstring */}
+      {expanded && hit.docstring && (
+        <p className="px-4 pb-2 text-xs text-muted-foreground italic">{hit.docstring}</p>
+      )}
+
+      {/* Source code */}
+      {expanded && hit.source_code ? (
+        <CodeBlock code={hit.source_code} startLine={hit.line_number ?? 1} maxHeight="max-h-72" />
+      ) : expanded && hit.path && hasLine ? (
+        <div className="px-4 pb-3">
+          <PeekViewer path={hit.path} anchorLine={hit.line_number!} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ─── Semantic Search Tab ──────────────────────────────────────────────────────
+
+function SemanticTab() {
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<api.SemanticHit[] | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const run = async (q = query) => {
+    const question = q.trim();
+    if (!question) { inputRef.current?.focus(); return; }
+    setLoading(true);
+    setResults(null);
+    try {
+      const res = await api.askCode({ question });
+      setResults(res.results);
+    } catch (e) {
+      toast.error(`Search failed: ${e instanceof Error ? e.message : "Unknown error"}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 pt-4">
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Input
+            ref={inputRef}
+            placeholder="Describe what you're looking for — e.g. authentication handler, database connection"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") run(); }}
+            className="text-sm pr-8"
+            autoFocus
+          />
+          {query && (
+            <button
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => { setQuery(""); setResults(null); inputRef.current?.focus(); }}
+              aria-label="Clear"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        <Button onClick={() => run()} disabled={loading} className="shrink-0">
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Search"}
+        </Button>
+      </div>
+
+      {results === null && !loading && (
+        <p className="text-xs text-muted-foreground">
+          Searches by meaning, not keyword — uses vector embeddings to find semantically similar functions, classes, and files.
+        </p>
+      )}
+
+      {loading && (
+        <div className="py-10 flex items-center justify-center gap-2 text-muted-foreground text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Searching…</span>
+        </div>
+      )}
+
+      {!loading && results !== null && (
+        results.length === 0 ? (
+          <div className="py-12 text-center text-muted-foreground text-sm">No results found.</div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{results.length} semantic matches</p>
+            {results.map((r, i) => (
+              <SemanticResultCard key={`${r.path}-${r.name}-${i}`} hit={r} />
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function QueryPage() {
@@ -1222,8 +1354,11 @@ export default function QueryPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="Search">
+      <Tabs defaultValue="Ask">
         <TabsList>
+          <TabsTrigger value="Ask" className="gap-1.5">
+            <Sparkles className="w-3.5 h-3.5" />Ask
+          </TabsTrigger>
           <TabsTrigger value="Search" className="gap-1.5">
             <Search className="w-3.5 h-3.5" />Search
           </TabsTrigger>
@@ -1240,6 +1375,10 @@ export default function QueryPage() {
             <GitPullRequest className="w-3.5 h-3.5" />Code Review
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="Ask">
+          <SemanticTab />
+        </TabsContent>
 
         <TabsContent value="Search">
           <SearchTab />
