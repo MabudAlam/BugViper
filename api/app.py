@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers import auth, ingestion, query, repository, webhook
 from api.services.firebase_service import firebase_service  # noqa: F401 — init on import
+from api.middleware.firebase_auth import FirebaseAuthMiddleware
 import uvicorn
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Firebase auth — runs on every request except OPTIONS + PUBLIC_PREFIXES.
+# Note: Starlette middleware is LIFO — this runs BEFORE CORSMiddleware.
+# OPTIONS preflight is bypassed inside the middleware so CORS can respond.
+app.add_middleware(FirebaseAuthMiddleware)
+
 # Include routers
 app.include_router(
     ingestion.router,
@@ -106,6 +112,7 @@ app.include_router(
     prefix="/api/v1/auth",
     tags=["Auth"]
 )
+
 
 
 
