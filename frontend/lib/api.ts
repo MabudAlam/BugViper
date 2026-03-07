@@ -1,10 +1,18 @@
+import { getAuth } from "@/lib/firebase";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// Auth token injection
-let tokenGetter: (() => Promise<string | null>) | null = null;
-
-export function setTokenGetter(getter: () => Promise<string | null>) {
-  tokenGetter = getter;
+// Always fetches the freshest token directly from Firebase.
+// Firebase caches the token and auto-refreshes it before expiry — no manual
+// refresh needed. Returns null if no user is signed in.
+async function getFirebaseToken(): Promise<string | null> {
+  try {
+    const auth = getAuth();
+    if (!auth.currentUser) return null;
+    return await auth.currentUser.getIdToken();
+  } catch {
+    return null;
+  }
 }
 
 // Type definitions for repository statistics
@@ -40,11 +48,9 @@ async function apiFetch(path: string, options?: RequestInit) {
     ...(options?.headers as Record<string, string>),
   };
 
-  if (tokenGetter) {
-    const token = await tokenGetter();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+  const token = await getFirebaseToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const res = await fetch(`${API_BASE}${path}`, {
@@ -165,6 +171,27 @@ export const getDiffContext = (data: {
 
 export const getFileSource = (repoId: string, filePath: string) =>
   apiFetch(`/api/v1/query/file-source?repo_id=${encodeURIComponent(repoId)}&file_path=${encodeURIComponent(filePath)}`);
+
+// Semantic search
+export interface SemanticHit {
+  name?: string;
+  type: string;
+  path?: string;
+  line_number?: number;
+  source_code?: string;
+  docstring?: string;
+  score: number;
+}
+export interface SemanticSearchResponse {
+  results: SemanticHit[];
+  total: number;
+}
+export const askCode = (data: {
+  question: string;
+  repoName?: string;
+  repoOwner?: string;
+}): Promise<SemanticSearchResponse> =>
+  apiFetch("/api/v1/query/semantic", { method: "POST", body: JSON.stringify(data) });
 
 // Auth
 export const loginUser = (data: { github_access_token: string }) =>

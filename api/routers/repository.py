@@ -39,16 +39,20 @@ def get_schema_service(db: Neo4jClient = Depends(get_neo4j_client)) -> CodeGraph
 
 @router.get("/")
 async def list_repositories(
-    query_service: CodeSearchService = Depends(get_query_service)
+    user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
-    List all repositories in the database.
+    List all repositories ingested by the current user (read from Firestore).
     """
+    uid = user.get("uid")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authenticated user has no UID")
+
     try:
-        repositories = query_service.list_repositories()
+        repositories = firebase_service.list_repos(uid)
         return {
             "repositories": repositories,
-            "total": len(repositories)
+            "total": len(repositories),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list repositories: {str(e)}")

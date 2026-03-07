@@ -18,10 +18,7 @@ class AgentConfig(BaseSettings):
 
     openrouter_api_key: str = Field(default="sk-or-v1-placeholder")
     openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1")
-    context_model: str = Field(default="openai/gpt-4o-mini")
     review_model: str = Field(default="openai/gpt-4o-mini")
-    max_recursion_depth: int = Field(default=3)
-    llm_temperature: float = Field(default=0.3)
     enable_logfire: bool = Field(default=False)
     logfire_token: Optional[str] = Field(default=None)
 

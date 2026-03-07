@@ -4,11 +4,12 @@ Code query endpoints - Advanced implementation with Neo4j integration.
 
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from db.client import Neo4jClient
 from db.code_serarch_layer import CodeSearchService
 from api.dependencies import get_neo4j_client
+from api.models.chat import RagInput, SemanticHit, SemanticSearchResponse
 
 router = APIRouter()
 
@@ -537,3 +538,78 @@ async def get_file_source(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File source retrieval failed: {str(e)}")
+
+
+_SEMANTIC_INDEXES: list[tuple[str, str]] = [
+    ("function_semantic", "function"),
+    ("class_semantic",    "class"),
+    ("method_semantic",   "method"),
+    ("file_semantic",     "file"),
+]
+
+
+@router.post("/semantic")
+async def semantic_search(
+    body: RagInput,
+    neo4j: Neo4jClient = Depends(get_neo4j_client),
+) -> SemanticSearchResponse:
+    """
+    Semantic / natural-language code search via vector embeddings.
+    Embeds the question, queries Neo4j vector indexes, returns ranked code chunks.
+    No LLM involved — pure vector similarity.
+    """
+    import asyncio
+    from common.embedder import embed_texts
+
+    vectors: list[list[float]] = await asyncio.to_thread(embed_texts, [body.question])
+    embedding = vectors[0]
+    repo_id = f"{body.repoOwner}/{body.repoName}" if body.repoOwner and body.repoName else None
+
+    all_results: list[dict] = []
+    for index_name, node_type in _SEMANTIC_INDEXES:
+        try:
+            records, _, _ = neo4j.run_query(
+                f"""
+                CALL db.index.vector.queryNodes('{index_name}', $k, $embedding)
+                YIELD node, score
+                OPTIONAL MATCH (f:File)-[:CONTAINS]->(node)
+                RETURN node.name                                AS name,
+                       '{node_type}'                            AS type,
+                       coalesce(f.path, node.path)              AS path,
+                       coalesce(node.line_number, 0)            AS line_number,
+                       coalesce(node.source_code, node.source)  AS source_code,
+                       node.docstring                           AS docstring,
+                       score
+                """,
+                {"k": 5, "embedding": embedding},
+            )
+            all_results.extend([dict(r) for r in records])
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Vector index '%s' failed: %s", index_name, exc)
+
+    if repo_id:
+        all_results = [r for r in all_results if (r.get("path") or "").startswith(repo_id)]
+
+    all_results.sort(key=lambda r: r.get("score") or 0.0, reverse=True)
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    for r in all_results:
+        key = (r.get("name"), r.get("path"))
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+
+    hits = [
+        SemanticHit(
+            name=r.get("name"),
+            type=r.get("type", "unknown"),
+            path=r.get("path"),
+            line_number=r.get("line_number") or None,
+            source_code=r.get("source_code"),
+            docstring=r.get("docstring"),
+            score=float(r.get("score") or 0.0),
+        )
+        for r in deduped[:10]
+    ]
+    return SemanticSearchResponse(results=hits, total=len(hits))

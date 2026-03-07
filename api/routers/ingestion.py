@@ -1,5 +1,5 @@
+import asyncio
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 
@@ -41,15 +41,33 @@ async def ingest_github_repository(
     if not uid:
         raise HTTPException(status_code=401, detail="Authenticated user has no UID")
 
-    # Prevent duplicate active jobs for the same repo
+    # Prevent duplicate active jobs for the same repo.
+    # PENDING/DISPATCHED jobs older than 10 min are considered stale (e.g. the
+    # worker crashed before it could start) — mark them failed and proceed.
     existing = job_tracker.find_active_job(request.owner, request.repo_name)
     if existing:
-        return IngestionJobResponse(
-            job_id=existing.job_id,
-            status=existing.status.value,
-            message=f"Ingestion already in progress for {request.owner}/{request.repo_name}",
-            poll_url=f"/api/v1/ingest/jobs/{existing.job_id}",
-        )
+        stale = False
+        if existing.status in (JobStatus.PENDING, JobStatus.DISPATCHED):
+            try:
+                created_dt = datetime.fromisoformat(existing.created_at)
+                age_minutes = (datetime.now(timezone.utc) - created_dt).total_seconds() / 60
+                if age_minutes > 10:
+                    job_tracker.update_status(
+                        existing.job_id, JobStatus.FAILED,
+                        error_message="Job timed out waiting to start (stale)",
+                    )
+                    stale = True
+                    logger.warning("Stale job %s marked FAILED (age=%.1f min)", existing.job_id, age_minutes)
+            except Exception:
+                pass
+
+        if not stale:
+            return IngestionJobResponse(
+                job_id=existing.job_id,
+                status=existing.status.value,
+                message=f"Ingestion already in progress for {request.owner}/{request.repo_name}",
+                poll_url=f"/api/v1/ingest/jobs/{existing.job_id}",
+            )
 
     # ── Fetch GitHub repo metadata ─────────────────────────────────────────
     gh_meta: dict = {}
@@ -99,87 +117,72 @@ async def ingest_github_repository(
         uid=uid,
     )
 
-    if os.getenv("dev") == "true":
-        # Local dev only — ingestion_service code is not present in the Cloud Run image
+    if not cloud_tasks.is_enabled:
+        # Local dev — INGESTION_SERVICE_URL is unset so run in-process.
+        # Uses BackgroundTasks so 200 is returned immediately and the frontend
+        # can poll /jobs/{job_id} for progress — same UX as Cloud Tasks.
         from ingestion_service.core.repo_ingestion_engine import AdvancedIngestionEngine
+
         job_tracker.create_job(payload)
-        job_tracker.update_status(job_id, JobStatus.RUNNING)
 
-        try:
-            engine = AdvancedIngestionEngine(neo4j_client)
-            engine.setup()
-
-            stats = await engine.ingest_github_repository(
-                owner=request.owner,
-                repo_name=request.repo_name,
-                branch=request.branch,
-                clear_existing=request.clear_existing,
-            )
-
-            engine.close()
-
-            job_stats = IngestionJobStats(
-                files_processed=stats.files_processed,
-                files_skipped=stats.files_skipped,
-                classes_found=stats.classes_found,
-                functions_found=stats.functions_found,
-                imports_found=stats.imports_found,
-                total_lines=stats.total_lines,
-                errors=stats.errors or [],
-            )
-            job_tracker.update_status(job_id, JobStatus.COMPLETED, stats=job_stats)
-
-            # ── Update Firestore with ingestion stats ──────────────────────
+        async def _run_ingestion():
+            job_tracker.update_status(job_id, JobStatus.RUNNING)
             try:
-                firebase_service.upsert_repo_metadata(
-                    uid,
-                    request.owner,
-                    request.repo_name,
-                    RepoIngestionUpdate(
-                        ingestion_status="ingested",
-                        ingested_at=datetime.now(timezone.utc).isoformat(),
-                        files_processed=stats.files_processed,
-                        files_skipped=stats.files_skipped,
-                        classes_found=stats.classes_found,
-                        functions_found=stats.functions_found,
-                        imports_found=stats.imports_found,
-                        total_lines=stats.total_lines,
-                    ),
+                engine = AdvancedIngestionEngine(neo4j_client)
+                engine.setup()
+                stats = await engine.ingest_github_repository(
+                    owner=request.owner,
+                    repo_name=request.repo_name,
+                    branch=request.branch,
+                    clear_existing=request.clear_existing,
                 )
-            except Exception as fb_exc:
-                logger.warning(
-                    "Firestore stats update failed after successful ingestion "
-                    "(uid=%s owner=%s repo=%s): %s",
-                    uid, request.owner, request.repo_name, fb_exc,
-                )
-            logger.info("Dev-mode ingestion completed for %s/%s", request.owner, request.repo_name)
+                engine.close()
 
-        except Exception as exc:
-            logger.exception("Dev-mode ingestion failed for %s/%s", request.owner, request.repo_name)
-            job_tracker.update_status(
-                job_id,
-                JobStatus.FAILED,
-                error_message=f"{type(exc).__name__}: {exc}",
-            )
-            try:
-                firebase_service.upsert_repo_metadata(
-                    uid,
-                    request.owner,
-                    request.repo_name,
-                    RepoIngestionError(ingestion_status="failed", error_message=str(exc)),
+                job_stats = IngestionJobStats(
+                    files_processed=stats.files_processed,
+                    files_skipped=stats.files_skipped,
+                    classes_found=stats.classes_found,
+                    functions_found=stats.functions_found,
+                    imports_found=stats.imports_found,
+                    total_lines=stats.total_lines,
+                    errors=stats.errors or [],
                 )
-            except Exception as fb_exc:
-                logger.warning(
-                    "Firestore error update failed after ingestion failure "
-                    "(uid=%s owner=%s repo=%s): %s",
-                    uid, request.owner, request.repo_name, fb_exc,
-                )
-            raise HTTPException(status_code=500, detail=str(exc))
+                job_tracker.update_status(job_id, JobStatus.COMPLETED, stats=job_stats)
+                try:
+                    firebase_service.upsert_repo_metadata(
+                        uid, request.owner, request.repo_name,
+                        RepoIngestionUpdate(
+                            ingestion_status="ingested",
+                            ingested_at=datetime.now(timezone.utc).isoformat(),
+                            files_processed=stats.files_processed,
+                            files_skipped=stats.files_skipped,
+                            classes_found=stats.classes_found,
+                            functions_found=stats.functions_found,
+                            imports_found=stats.imports_found,
+                            total_lines=stats.total_lines,
+                        ),
+                    )
+                except Exception as fb_exc:
+                    logger.warning("Firestore stats update failed: %s", fb_exc)
+                logger.info("Local ingestion completed for %s/%s", request.owner, request.repo_name)
+
+            except Exception as exc:
+                logger.exception("Local ingestion failed for %s/%s", request.owner, request.repo_name)
+                job_tracker.update_status(job_id, JobStatus.FAILED, error_message=f"{type(exc).__name__}: {exc}")
+                try:
+                    firebase_service.upsert_repo_metadata(
+                        uid, request.owner, request.repo_name,
+                        RepoIngestionError(ingestion_status="failed", error_message=str(exc)),
+                    )
+                except Exception as fb_exc:
+                    logger.warning("Firestore error update failed: %s", fb_exc)
+
+        asyncio.create_task(_run_ingestion())
 
         return IngestionJobResponse(
             job_id=job_id,
-            status=JobStatus.COMPLETED.value,
-            message=f"Ingestion completed for {request.owner}/{request.repo_name} (dev mode)",
+            status=JobStatus.PENDING.value,
+            message=f"Ingestion started for {request.owner}/{request.repo_name}",
             poll_url=f"/api/v1/ingest/jobs/{job_id}",
         )
 
