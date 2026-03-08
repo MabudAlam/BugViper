@@ -20,9 +20,19 @@ class CodeSearchService:
     - Diff context for the AI review pipeline
     """
 
+    # Properties that are internal/large and must never appear in API responses.
+    _EXCLUDED_NODE_PROPS = frozenset({"embedding", "embeddings", "vector"})
+
     def __init__(self, client: Neo4jClient):
         self.db = client
         self.driver = client.driver
+
+    @classmethod
+    def _safe_node(cls, node) -> Dict[str, Any]:
+        """Convert a Neo4j node to a plain dict, stripping embedding/vector properties."""
+        if node is None:
+            return {}
+        return {k: v for k, v in dict(node).items() if k not in cls._EXCLUDED_NODE_PROPS}
 
     # =========================================================================
     # Graph Statistics
@@ -225,28 +235,38 @@ class CodeSearchService:
     # Method / Function Queries
     # =========================================================================
 
-    def find_method_usages(self, method_name: str) -> Dict[str, Any]:
+    def find_method_usages(self, method_name: str, repo_id: Optional[str] = None) -> Dict[str, Any]:
         """Find all usages of a method by name."""
-        records, _, _ = self.db.run_query(CYPHER_QUERIES["find_method_usages"], {"method_name": method_name})
+        records, _, _ = self.db.run_query(CYPHER_QUERIES["find_method_usages"], {"method_name": method_name, "repo_id": repo_id})
         results = []
         for record in records:
             callers = [
-                {"caller": dict(c["caller"]), "line": c.get("line"), "file": c.get("file")}
+                {"caller": c.get("caller_name"), "type": c.get("caller_type"), "line": c.get("line"), "file": c.get("file")}
                 for c in (record["callers"] or [])
-                if c and c.get("caller")
+                if c and c.get("caller_name")
             ]
-            results.append({"method": dict(record["m"]) if record["m"] else None, "file": record.get("file_path"), "callers": callers})
+            results.append({
+                "method": {
+                    "name": record.get("method_name"),
+                    "line_number": record.get("line_number"),
+                    "docstring": record.get("docstring"),
+                    "source_code": record.get("source_code"),
+                    "complexity": record.get("complexity"),
+                },
+                "file": record.get("file_path"),
+                "callers": callers,
+            })
         return {"usages": results}
 
-    def find_callers(self, symbol_name: str) -> Dict[str, Any]:
+    def find_callers(self, symbol_name: str, repo_id: Optional[str] = None) -> Dict[str, Any]:
         """Find all functions/methods that call a specific symbol.
 
         Falls back to source_code text search when no CALLS edges exist.
         """
-        def_records, _, _ = self.db.run_query(CYPHER_QUERIES["find_function_definition"], {"name": symbol_name})
+        def_records, _, _ = self.db.run_query(CYPHER_QUERIES["find_function_definition"], {"name": symbol_name, "repo_id": repo_id})
         definitions = [dict(r) for r in def_records]
 
-        call_records, _, _ = self.db.run_query(CYPHER_QUERIES["find_callers"], {"name": symbol_name})
+        call_records, _, _ = self.db.run_query(CYPHER_QUERIES["find_callers"], {"name": symbol_name, "repo_id": repo_id})
         callers: List[Dict[str, Any]] = [
             {
                 "caller": r["caller_name"], "type": r["caller_type"],
@@ -259,12 +279,12 @@ class CodeSearchService:
         fallback_used = False
         if not callers:
             def_files = {d["file_path"] for d in definitions if d.get("file_path")}
-            callers = self._find_callers_by_file_content(symbol_name, def_files)
+            callers = self._find_callers_by_file_content(symbol_name, def_files, repo_id=repo_id)
             fallback_used = bool(callers)
 
         return {"callers": callers, "symbol": symbol_name, "total": len(callers), "definitions": definitions, "fallback_used": fallback_used}
 
-    def _find_callers_by_file_content(self, symbol_name: str, exclude_file_paths: set) -> List[Dict[str, Any]]:
+    def _find_callers_by_file_content(self, symbol_name: str, exclude_file_paths: set, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Find callers by scanning File.source_code content when no CALLS edges exist."""
         call_pattern = f"{symbol_name}("
         file_records, _, _ = self.db.run_query(
@@ -273,10 +293,11 @@ class CodeSearchService:
             WHERE f.source_code CONTAINS $call_pattern
               AND NOT f.path IN $exclude_paths
               AND (f.is_dependency IS NULL OR f.is_dependency = false)
+              AND ($repo_id IS NULL OR f.repo = $repo_id)
             RETURN f.path AS file_path, f.source_code AS source_code
             LIMIT 10
             """,
-            {"call_pattern": call_pattern, "exclude_paths": list(exclude_file_paths)},
+            {"call_pattern": call_pattern, "exclude_paths": list(exclude_file_paths), "repo_id": repo_id},
         )
 
         callers: List[Dict[str, Any]] = []
@@ -337,9 +358,9 @@ class CodeSearchService:
     # Class Queries
     # =========================================================================
 
-    def get_class_hierarchy(self, class_name: str) -> Dict[str, Any]:
+    def get_class_hierarchy(self, class_name: str, repo_id: Optional[str] = None) -> Dict[str, Any]:
         """Get the inheritance hierarchy of a class (ancestors + descendants)."""
-        records, _, _ = self.db.run_query(CYPHER_QUERIES["get_class_hierarchy"], {"class_name": class_name})
+        records, _, _ = self.db.run_query(CYPHER_QUERIES["get_class_hierarchy"], {"class_name": class_name, "repo_id": repo_id})
         if not records:
             return {"class_name": class_name, "found": False, "ancestors": [], "descendants": []}
 
@@ -412,20 +433,42 @@ class CodeSearchService:
     # Matches queries that look like code patterns: method calls, paths, indexing
     _CODE_PATTERN_RE = re.compile(r'[.()\[\]{}/<>]')
 
-    def search_code(self, search_term: str) -> List[Dict[str, Any]]:
+    def search_code(self, search_term: str, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Three-tier code search: fulltext index → name CONTAINS → file content.
 
         When the query contains code-pattern characters (dots, parens, slashes)
         it likely refers to a specific call site or route, not just a symbol
         declaration.  In that case file-content results are appended even when
         symbol results were already found, so the actual call line is visible.
+
+        If repo_id is provided, results are filtered to that repository only.
         """
         escaped = self._escape_lucene_query(search_term)
         is_code_pattern = bool(self._CODE_PATTERN_RE.search(search_term))
         results: List[Dict[str, Any]] = []
 
         try:
-            records, _, _ = self.db.run_query(CYPHER_QUERIES["search_code"], {"search_term": escaped})
+            if repo_id:
+                # Scoped search: filter by repo_id on the File node
+                query = """
+                    CALL db.index.fulltext.queryNodes('code_search', $search_term)
+                    YIELD node, score
+                    WHERE $repo_id IS NULL OR node.repo = $repo_id
+                    OPTIONAL MATCH (f:File)-[:CONTAINS]->(node)
+                    RETURN
+                        CASE WHEN node:Function THEN 'function'
+                             WHEN node:Class THEN 'class'
+                             ELSE 'variable' END as type,
+                        node.name as name,
+                        coalesce(f.path, node.path) as path,
+                        coalesce(node.line_number, 0) as line_number,
+                        score
+                    ORDER BY score DESC
+                    LIMIT 20
+                """
+                records, _, _ = self.db.run_query(query, {"search_term": escaped, "repo_id": repo_id})
+            else:
+                records, _, _ = self.db.run_query(CYPHER_QUERIES["search_code"], {"search_term": escaped})
             results = [{"type": r["type"], "name": r["name"], "path": r["path"], "line_number": r["line_number"], "score": r["score"]} for r in records]
         except Exception as e:
             logger.warning("code_search fulltext failed: %s", e)
@@ -452,7 +495,7 @@ class CodeSearchService:
 
     _MAX_FILE_BYTES = 500_000
 
-    def search_file_content(self, search_term: str, limit: int = 50) -> List[Dict[str, Any]]:
+    def search_file_content(self, search_term: str, limit: int = 50, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search file source code line by line, server-side in Cypher."""
         escaped = self._escape_lucene_query(search_term)
         limit = min(limit, 200)
@@ -462,6 +505,7 @@ class CodeSearchService:
                 """
                 CALL db.index.fulltext.queryNodes('file_content_search', $search_term) YIELD node, score
                 WHERE node.source_code IS NOT NULL AND size(node.source_code) < $max_bytes
+                  AND ($repo_id IS NULL OR node.repo = $repo_id)
                 WITH node, score, split(node.source_code, '\n') as lines
                 LIMIT 10
                 UNWIND range(0, size(lines) - 1) AS idx
@@ -471,7 +515,7 @@ class CodeSearchService:
                 ORDER BY score DESC, path, line_number
                 LIMIT $limit
                 """,
-                {"search_term": escaped, "raw_term": search_term, "max_bytes": self._MAX_FILE_BYTES, "limit": limit},
+                {"search_term": escaped, "raw_term": search_term, "max_bytes": self._MAX_FILE_BYTES, "limit": limit, "repo_id": repo_id},
             )
             results = [{"path": r["path"], "line_number": r["line_number"], "match_line": (r["match_line"] or "").rstrip()} for r in records]
             if results:
@@ -484,6 +528,7 @@ class CodeSearchService:
             MATCH (f:File)
             WHERE f.source_code IS NOT NULL AND f.source_code CONTAINS $raw_term
               AND size(f.source_code) < $max_bytes
+              AND ($repo_id IS NULL OR f.repo = $repo_id)
             WITH f, split(f.source_code, '\n') AS lines
             LIMIT 5
             UNWIND range(0, size(lines) - 1) AS idx
@@ -493,7 +538,7 @@ class CodeSearchService:
             ORDER BY path, line_number
             LIMIT $limit
             """,
-            {"raw_term": search_term, "max_bytes": self._MAX_FILE_BYTES, "limit": limit},
+            {"raw_term": search_term, "max_bytes": self._MAX_FILE_BYTES, "limit": limit, "repo_id": repo_id},
         )
         return [{"path": r["path"], "line_number": r["line_number"], "match_line": (r["match_line"] or "").rstrip()} for r in records]
 
@@ -528,92 +573,97 @@ class CodeSearchService:
     # Symbol Lookup (CodeFinder)
     # =========================================================================
 
-    def _fulltext_query(self, find_by: Literal["Class", "Function"], fuzzy_search: bool) -> str:
+    def _fulltext_query(self, find_by: Literal["Class", "Function"], fuzzy_search: bool, repo_id: Optional[str] = None) -> str:
+        repo_filter = "AND ($repo_id IS NULL OR node.repo = $repo_id)" if repo_id is not None else ""
         return f"""
             CALL db.index.fulltext.queryNodes("code_search_index", $search_term) YIELD node, score
             WITH node, score
             WHERE node:{find_by} {'AND node.name CONTAINS $search_term' if not fuzzy_search else ''}
+              {repo_filter}
             RETURN node.name as name, node.path as path, node.line_number as line_number,
                 node.source as source, node.docstring as docstring, node.is_dependency as is_dependency
             ORDER BY score DESC LIMIT 20
         """
 
-    def find_by_function_name(self, search_term: str, fuzzy_search: bool = False) -> List[Dict]:
+    def find_by_function_name(self, search_term: str, fuzzy_search: bool = False, repo_id: Optional[str] = None) -> List[Dict]:
         """Find functions by exact or fuzzy name match."""
         with self.driver.session() as session:
             if not fuzzy_search:
                 return session.run(
-                    "MATCH (n:Function {name: $name}) RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
-                    name=search_term,
+                    "MATCH (n:Function {name: $name}) WHERE $repo_id IS NULL OR n.repo = $repo_id RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
+                    name=search_term, repo_id=repo_id,
                 ).data()
-            return session.run(self._fulltext_query("Function", fuzzy_search), search_term=f"name:{search_term}").data()
+            return session.run(self._fulltext_query("Function", fuzzy_search, repo_id), search_term=f"name:{search_term}", repo_id=repo_id).data()
 
-    def find_by_class_name(self, search_term: str, fuzzy_search: bool = False) -> List[Dict]:
+    def find_by_class_name(self, search_term: str, fuzzy_search: bool = False, repo_id: Optional[str] = None) -> List[Dict]:
         """Find classes by exact or fuzzy name match."""
         with self.driver.session() as session:
             if not fuzzy_search:
                 return session.run(
-                    "MATCH (n:Class {name: $name}) RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
-                    name=search_term,
+                    "MATCH (n:Class {name: $name}) WHERE $repo_id IS NULL OR n.repo = $repo_id RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
+                    name=search_term, repo_id=repo_id,
                 ).data()
-            return session.run(self._fulltext_query("Class", fuzzy_search), search_term=f"name:{search_term}").data()
+            return session.run(self._fulltext_query("Class", fuzzy_search, repo_id), search_term=f"name:{search_term}", repo_id=repo_id).data()
 
-    def find_by_variable_name(self, search_term: str) -> List[Dict]:
+    def find_by_variable_name(self, search_term: str, repo_id: Optional[str] = None) -> List[Dict]:
         """Find variables by name substring."""
         with self.driver.session() as session:
             return session.run(
-                "MATCH (v:Variable) WHERE v.name CONTAINS $search_term RETURN v.name as name, v.path as path, v.line_number as line_number, v.value as value, v.context as context, v.is_dependency as is_dependency ORDER BY v.is_dependency ASC, v.name LIMIT 20",
-                search_term=search_term,
+                "MATCH (v:Variable) WHERE v.name CONTAINS $search_term AND ($repo_id IS NULL OR v.repo = $repo_id) RETURN v.name as name, v.path as path, v.line_number as line_number, v.value as value, v.context as context, v.is_dependency as is_dependency ORDER BY v.is_dependency ASC, v.name LIMIT 20",
+                search_term=search_term, repo_id=repo_id,
             ).data()
 
-    def find_by_content(self, search_term: str) -> List[Dict]:
+    def find_by_content(self, search_term: str, repo_id: Optional[str] = None) -> List[Dict]:
         """Find code by content matching in source or docstrings."""
         with self.driver.session() as session:
             try:
                 return session.run(
                     """
                     CALL db.index.fulltext.queryNodes("code_search_index", $search_term) YIELD node, score
-                    WITH node, score WHERE node:Function OR node:Class OR node:Variable
+                    WITH node, score WHERE (node:Function OR node:Class OR node:Variable)
+                      AND ($repo_id IS NULL OR node.repo = $repo_id)
                     RETURN CASE WHEN node:Function THEN 'function' WHEN node:Class THEN 'class' ELSE 'variable' END as type,
                         node.name as name, node.path as path, node.line_number as line_number,
                         node.source as source, node.docstring as docstring, node.is_dependency as is_dependency
                     ORDER BY score DESC LIMIT 20
                     """,
-                    search_term=search_term,
+                    search_term=search_term, repo_id=repo_id,
                 ).data()
             except Exception:
                 return session.run(
                     """
                     MATCH (node) WHERE (node:Function OR node:Class OR node:Variable)
                       AND (node.name CONTAINS $search_term OR node.source CONTAINS $search_term OR node.docstring CONTAINS $search_term)
+                      AND ($repo_id IS NULL OR node.repo = $repo_id)
                     RETURN CASE WHEN node:Function THEN 'function' WHEN node:Class THEN 'class' ELSE 'variable' END as type,
                         node.name as name, node.path as path, node.line_number as line_number,
                         node.source as source, node.docstring as docstring, node.is_dependency as is_dependency
                     LIMIT 20
                     """,
-                    search_term=search_term,
+                    search_term=search_term, repo_id=repo_id,
                 ).data()
 
     def find_by_module_name(self, search_term: str) -> List[Dict]:
-        """Find modules by name substring."""
+        """Find modules by name substring. Module nodes are global — no repo filtering."""
         with self.driver.session() as session:
             return session.run(
                 "MATCH (m:Module) WHERE m.name CONTAINS $search_term RETURN m.name as name, m.lang as lang ORDER BY m.name LIMIT 20",
                 search_term=search_term,
             ).data()
 
-    def find_imports(self, search_term: str) -> List[Dict]:
+    def find_imports(self, search_term: str, repo_id: Optional[str] = None) -> List[Dict]:
         """Find import statements by alias or imported name."""
         with self.driver.session() as session:
             return session.run(
                 """
                 MATCH (f:File)-[r:IMPORTS]->(m:Module)
-                WHERE r.alias = $search_term OR r.imported_name = $search_term
+                WHERE (r.alias = $search_term OR r.imported_name = $search_term)
+                  AND ($repo_id IS NULL OR f.repo = $repo_id)
                 RETURN r.alias as alias, r.imported_name as imported_name,
                        m.name as module_name, f.path as path, r.line_number as line_number
                 ORDER BY f.path LIMIT 20
                 """,
-                search_term=search_term,
+                search_term=search_term, repo_id=repo_id,
             ).data()
 
     def find_class_hierarchy(self, class_name: str, path: str = None) -> Dict[str, Any]:
@@ -626,21 +676,34 @@ class CodeSearchService:
             methods = session.run(f"{match} MATCH (child)-[:CONTAINS]->(method:Function) RETURN DISTINCT method.name as method_name, method.path as method_file_path, method.line_number as method_line_number, method.args as method_args, method.docstring as method_docstring, method.is_dependency as method_is_dependency ORDER BY method.is_dependency ASC, method.line_number", **params).data()
         return {"class_name": class_name, "parent_classes": parents, "child_classes": children, "methods": methods}
 
-    def get_cyclomatic_complexity(self, function_name: str, path: str = None) -> Optional[Dict]:
+    def get_cyclomatic_complexity(self, function_name: str, path: str = None, repo_id: Optional[str] = None) -> Optional[Dict]:
         """Get the cyclomatic complexity score for a function."""
         with self.driver.session() as session:
             if path:
-                results = session.run("MATCH (f:Function {name: $name}) WHERE f.path ENDS WITH $path OR f.path = $path RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number", name=function_name, path=path).data()
+                results = session.run(
+                    "MATCH (f:Function {name: $name}) WHERE (f.path ENDS WITH $path OR f.path = $path) AND ($repo_id IS NULL OR f.repo = $repo_id) RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number",
+                    name=function_name, path=path, repo_id=repo_id,
+                ).data()
             else:
-                results = session.run("MATCH (f:Function {name: $name}) RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number", name=function_name).data()
+                results = session.run(
+                    "MATCH (f:Function {name: $name}) WHERE $repo_id IS NULL OR f.repo = $repo_id RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number",
+                    name=function_name, repo_id=repo_id,
+                ).data()
         return results[0] if results else None
 
-    def find_most_complex_functions(self, limit: int = 10) -> List[Dict]:
+    def find_most_complex_functions(self, limit: int = 10, repo_id: Optional[str] = None) -> List[Dict]:
         """Find the top N most complex functions in the codebase (excluding dependencies)."""
         with self.driver.session() as session:
             return session.run(
-                "MATCH (f:Function) WHERE f.cyclomatic_complexity IS NOT NULL AND f.is_dependency = false RETURN f.name as function_name, f.path as path, f.cyclomatic_complexity as complexity, f.line_number as line_number ORDER BY f.cyclomatic_complexity DESC LIMIT $limit",
-                limit=limit,
+                """
+                MATCH (file:File)-[:CONTAINS]->(f:Function)
+                WHERE f.cyclomatic_complexity IS NOT NULL
+                  AND (f.is_dependency = false OR f.is_dependency IS NULL)
+                  AND ($repo_id IS NULL OR file.repo = $repo_id)
+                RETURN f.name as function_name, f.path as path, f.cyclomatic_complexity as complexity, f.line_number as line_number
+                ORDER BY f.cyclomatic_complexity DESC LIMIT $limit
+                """,
+                limit=limit, repo_id=repo_id,
             ).data()
 
     # =========================================================================
@@ -652,7 +715,7 @@ class CodeSearchService:
         records, _, _ = self.db.run_query(
             """
             MATCH (f:File)
-            WHERE f.relative_path = $relative_path AND f.path CONTAINS $repo_id
+            WHERE f.relative_path = $relative_path AND f.repo = $repo_id
             MATCH (f)-[:CONTAINS]->(n)
             WHERE (n:Function OR n:Class OR n:Variable)
               AND n.line_number IS NOT NULL
@@ -668,6 +731,145 @@ class CodeSearchService:
             {"repo_id": repo_id, "relative_path": relative_path, "start_line": start_line, "end_line": end_line},
         )
         return [dict(r) for r in records]
+
+    # =========================================================================
+    # Language Statistics
+    # =========================================================================
+
+    def get_language_stats(self, language: Optional[str] = None, repo_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get per-language file/function/class/variable counts.
+
+        If language is provided, returns stats for that language only.
+        Otherwise returns a breakdown across all languages.
+        If repo_id is provided, scopes results to that repository.
+        """
+        if language:
+            records, _, _ = self.db.run_query(
+                """
+                MATCH (f:File)
+                WHERE f.language = $language
+                  AND ($repo_id IS NULL OR f.repo = $repo_id)
+                OPTIONAL MATCH (f)-[:CONTAINS]->(func:Function)
+                OPTIONAL MATCH (f)-[:CONTAINS]->(cls:Class)
+                OPTIONAL MATCH (f)-[:CONTAINS]->(var:Variable)
+                RETURN count(DISTINCT f)    AS file_count,
+                       count(DISTINCT func) AS function_count,
+                       count(DISTINCT cls)  AS class_count,
+                       count(DISTINCT var)  AS variable_count
+                """,
+                {"language": language, "repo_id": repo_id},
+            )
+            result = dict(records[0]) if records else {}
+            result["language"] = language
+            return result
+        else:
+            records, _, _ = self.db.run_query(
+                """
+                MATCH (f:File)
+                WHERE f.language IS NOT NULL
+                  AND ($repo_id IS NULL OR f.repo = $repo_id)
+                OPTIONAL MATCH (f)-[:CONTAINS]->(func:Function)
+                OPTIONAL MATCH (f)-[:CONTAINS]->(cls:Class)
+                OPTIONAL MATCH (f)-[:CONTAINS]->(var:Variable)
+                RETURN f.language              AS language,
+                       count(DISTINCT f)       AS file_count,
+                       count(DISTINCT func)    AS function_count,
+                       count(DISTINCT cls)     AS class_count,
+                       count(DISTINCT var)     AS variable_count
+                ORDER BY file_count DESC
+                """,
+                {"repo_id": repo_id},
+            )
+            return {
+                "languages": [dict(r) for r in records],
+                "total_languages": len(records),
+            }
+
+    # =========================================================================
+    # File Source
+    # =========================================================================
+
+    def get_file_source(self, repo_id: str, file_path: str) -> Optional[Dict[str, Any]]:
+        """Fetch source code for a file by repo-relative path."""
+        records, _, _ = self.db.run_query(
+            """
+            MATCH (f:File)
+            WHERE f.relative_path = $relative_path AND f.repo = $repo_id
+            RETURN f.source_code AS source_code,
+                   f.relative_path AS path,
+                   f.language AS language,
+                   f.lines_count AS lines_count
+            LIMIT 1
+            """,
+            {"relative_path": file_path, "repo_id": repo_id},
+        )
+        if not records:
+            return None
+        r = records[0]
+        return {
+            "file_path": r.get("path"),
+            "language": r.get("language"),
+            "lines_count": r.get("lines_count"),
+            "source_code": r.get("source_code"),
+        }
+
+    # =========================================================================
+    # Semantic Search (vector similarity)
+    # =========================================================================
+
+    _SEMANTIC_INDEXES: List[tuple] = [
+        ("function_semantic", "function"),
+        ("class_semantic",    "class"),
+        ("method_semantic",   "method"),
+        ("file_semantic",     "file"),
+    ]
+
+    def semantic_search(
+        self,
+        embedding: List[float],
+        repo_id: Optional[str] = None,
+        k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Query all vector indexes and return ranked, deduplicated results.
+
+        The caller is responsible for producing the embedding vector.
+        If repo_id is given, results are filtered via node.repo = $repo_id in Cypher.
+        """
+        all_results: List[Dict[str, Any]] = []
+
+        for index_name, node_type in self._SEMANTIC_INDEXES:
+            try:
+                records, _, _ = self.db.run_query(
+                    f"""
+                    CALL db.index.vector.queryNodes('{index_name}', $k, $embedding)
+                    YIELD node, score
+                    WHERE $repo_id IS NULL OR node.repo = $repo_id
+                    OPTIONAL MATCH (f:File)-[:CONTAINS]->(node)
+                    RETURN node.name                               AS name,
+                           '{node_type}'                           AS type,
+                           coalesce(f.path, node.path)             AS path,
+                           coalesce(node.line_number, 0)           AS line_number,
+                           coalesce(node.source_code, node.source) AS source_code,
+                           node.docstring                          AS docstring,
+                           score
+                    """,
+                    {"k": k, "embedding": embedding, "repo_id": repo_id},
+                )
+                all_results.extend([dict(r) for r in records])
+            except Exception as exc:
+                logger.warning("Vector index '%s' unavailable: %s", index_name, exc)
+
+        all_results.sort(key=lambda r: r.get("score") or 0.0, reverse=True)
+
+        seen: set = set()
+        deduped: List[Dict[str, Any]] = []
+        for r in all_results:
+            key = (r.get("name"), r.get("path"))
+            if key not in seen:
+                seen.add(key)
+                deduped.append(r)
+
+        return deduped
 
     # =========================================================================
     # Diff Context (Review Pipeline)
@@ -691,7 +893,7 @@ class CodeSearchService:
                 records, _, _ = self.db.run_query(
                     """
                     MATCH (caller)-[:CALLS]->(target)
-                    WHERE target.name = $name AND target.path CONTAINS $repo_id
+                    WHERE target.name = $name AND target.repo = $repo_id
                     RETURN CASE WHEN caller:Function THEN 'function' WHEN caller:Class THEN 'class' ELSE 'other' END as type,
                         caller.name as name, caller.path as path,
                         caller.line_number as line_number, caller.source as source
@@ -704,14 +906,14 @@ class CodeSearchService:
 
             for cls in [s for s in symbols if s["type"] == "class"]:
                 records, _, _ = self.db.run_query(
-                    "MATCH (c:Class {name: $name})-[:INHERITS*0..5]->(parent:Class) WHERE c.path CONTAINS $repo_id RETURN parent.name as name, parent.path as path, parent.source as source, parent.docstring as docstring",
+                    "MATCH (c:Class {name: $name})-[:INHERITS*0..5]->(parent:Class) WHERE c.repo = $repo_id RETURN parent.name as name, parent.path as path, parent.source as source, parent.docstring as docstring",
                     {"name": cls["name"], "repo_id": repo_id},
                 )
                 if records:
                     all_hierarchy.append({"class": cls["name"], "hierarchy": [dict(r) for r in records]})
 
             records, _, _ = self.db.run_query(
-                "MATCH (f:File) WHERE f.relative_path = $relative_path AND f.path CONTAINS $repo_id RETURN f.source_code as source_code LIMIT 1",
+                "MATCH (f:File) WHERE f.relative_path = $relative_path AND f.repo = $repo_id RETURN f.source_code as source_code LIMIT 1",
                 {"relative_path": file_path, "repo_id": repo_id},
             )
             if records and records[0].get("source_code"):

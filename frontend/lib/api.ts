@@ -97,6 +97,9 @@ export interface JobStatusResponse {
     imports_found: number;
     total_lines: number;
     errors: string[];
+    embedding_status: "skipped" | "completed" | "failed";
+    nodes_embedded: number;
+    embedding_error: string | null;
   } | null;
   error_message: string | null;
 }
@@ -115,6 +118,9 @@ export const getIngestionJobStatus = (jobId: string): Promise<JobStatusResponse>
 export const listIngestionJobs = (): Promise<JobStatusResponse[]> =>
   apiFetch("/api/v1/ingest/jobs");
 
+export const embedRepository = (owner: string, repoName: string) =>
+  apiFetch(`/api/v1/ingest/${owner}/${repoName}/embed`, { method: "POST" });
+
 export const ingestRepository = (data: {
   repo_url: string;
   username: string;
@@ -122,43 +128,96 @@ export const ingestRepository = (data: {
   clear_existing?: boolean;
 }) => apiFetch("/api/v1/ingest/repository", { method: "POST", body: JSON.stringify(data) });
 
+// Helper to append optional repo filter params to a URLSearchParams
+function appendRepoParams(params: URLSearchParams, repoOwner?: string, repoName?: string): void {
+  if (repoOwner) params.set("repo_owner", repoOwner);
+  if (repoName) params.set("repo_name", repoName);
+}
+
+export interface RepoFilter {
+  repoOwner?: string;
+  repoName?: string;
+}
+
 // Query - Search (unified)
-export const searchCode = (query: string, limit = 30) =>
-  apiFetch(`/api/v1/query/search?query=${encodeURIComponent(query)}&limit=${limit}`);
+export const searchCode = (query: string, limit = 30, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ query, limit: String(limit) });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/search?${params}`);
+};
 
 // Query - Analysis
-export const getMethodUsages = (name: string) =>
-  apiFetch(`/api/v1/query/method-usages?method_name=${encodeURIComponent(name)}`);
-export const findCallers = (name: string) =>
-  apiFetch(`/api/v1/query/find_callers?symbol_name=${encodeURIComponent(name)}`);
-export const getClassHierarchy = (name: string) =>
-  apiFetch(`/api/v1/query/class_hierarchy?class_name=${encodeURIComponent(name)}`);
-export const getChangeImpact = (name: string) =>
-  apiFetch(`/api/v1/query/change_impact?symbol_name=${encodeURIComponent(name)}`);
+export const getMethodUsages = (name: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ method_name: name });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/method-usages?${params}`);
+};
+export const findCallers = (name: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ symbol_name: name });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/find_callers?${params}`);
+};
+export const getClassHierarchy = (name: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ class_name: name });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/class_hierarchy?${params}`);
+};
+export const getChangeImpact = (name: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ symbol_name: name });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/change_impact?${params}`);
+};
 
 // Query - CodeFinder
-export const findFunction = (name: string) =>
-  apiFetch(`/api/v1/query/code-finder/function?name=${encodeURIComponent(name)}`);
-export const findClass = (name: string) =>
-  apiFetch(`/api/v1/query/code-finder/class?name=${encodeURIComponent(name)}`);
-export const findVariable = (name: string) =>
-  apiFetch(`/api/v1/query/code-finder/variable?name=${encodeURIComponent(name)}`);
-export const findContent = (query: string) =>
-  apiFetch(`/api/v1/query/code-finder/content?query=${encodeURIComponent(query)}`);
+export const findFunction = (name: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ name });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/code-finder/function?${params}`);
+};
+export const findClass = (name: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ name });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/code-finder/class?${params}`);
+};
+export const findVariable = (name: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ name });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/code-finder/variable?${params}`);
+};
+export const findContent = (query: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ query });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/code-finder/content?${params}`);
+};
 export const findModule = (name: string) =>
   apiFetch(`/api/v1/query/code-finder/module?name=${encodeURIComponent(name)}`);
-export const findImports = (name: string) =>
-  apiFetch(`/api/v1/query/code-finder/imports?name=${encodeURIComponent(name)}`);
-export const findByLine = (query: string) =>
-  apiFetch(`/api/v1/query/code-finder/line?query=${encodeURIComponent(query)}`);
+export const findImports = (name: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ name });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/code-finder/imports?${params}`);
+};
+export const findByLine = (query: string, filter?: RepoFilter) => {
+  const params = new URLSearchParams({ query });
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  return apiFetch(`/api/v1/query/code-finder/line?${params}`);
+};
 export const peekFileLines = (path: string, line: number, above: number, below: number) =>
   apiFetch(`/api/v1/query/code-finder/peek?path=${encodeURIComponent(path)}&line=${line}&above=${above}&below=${below}`);
 
 // Query - Metrics
 export const getGraphStats = () => apiFetch("/api/v1/query/stats");
-export const getLanguageStats = () => apiFetch("/api/v1/query/language/stats");
-export const getTopComplexFunctions = () =>
-  apiFetch("/api/v1/query/code-finder/complexity/top");
+export const getLanguageStats = (filter?: RepoFilter) => {
+  const params = new URLSearchParams();
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  const qs = params.toString();
+  return apiFetch(`/api/v1/query/language/stats${qs ? `?${qs}` : ""}`);
+};
+export const getTopComplexFunctions = (filter?: RepoFilter) => {
+  const params = new URLSearchParams();
+  appendRepoParams(params, filter?.repoOwner, filter?.repoName);
+  const qs = params.toString();
+  return apiFetch(`/api/v1/query/code-finder/complexity/top${qs ? `?${qs}` : ""}`);
+};
 
 // Query - Code Review / Diff Context
 export const getSymbolsAtLines = (repoId: string, filePath: string, startLine: number, endLine: number) =>
@@ -192,6 +251,20 @@ export const askCode = (data: {
   repoOwner?: string;
 }): Promise<SemanticSearchResponse> =>
   apiFetch("/api/v1/query/semantic", { method: "POST", body: JSON.stringify(data) });
+
+// Agent chat
+export interface AgentSource {
+  path: string;
+  line_number: number | null;
+  name: string | null;
+  type: string | null;
+}
+export interface AgentResponse {
+  answer: string;
+  sources: AgentSource[];
+}
+export const askAgent = (data: { question: string; repo_id?: string }): Promise<AgentResponse> =>
+  apiFetch("/api/v1/rag/answer", { method: "POST", body: JSON.stringify(data) });
 
 // Auth
 export const loginUser = (data: { github_access_token: string }) =>

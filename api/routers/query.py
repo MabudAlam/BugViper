@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 from db.client import Neo4jClient
 from db.code_serarch_layer import CodeSearchService
 from api.dependencies import get_neo4j_client
-from api.models.chat import RagInput, SemanticHit, SemanticSearchResponse
+from api.models.semantic import SemanticInput, SemanticHit, SemanticSearchResponse
 
 router = APIRouter()
 
@@ -23,6 +23,8 @@ def get_query_service(db: Neo4jClient = Depends(get_neo4j_client)) -> CodeSearch
 async def search_code(
     query: str = Query(..., description="Search term — any identifier, snippet, or keyword"),
     limit: int = Query(30, description="Maximum results to return"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
@@ -39,8 +41,9 @@ async def search_code(
     """
     if len(query) > 500:
         raise HTTPException(status_code=400, detail="Query too long (max 500 characters)")
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        results = query_service.search_code(query)
+        results = query_service.search_code(query, repo_id=repo_id)
         if limit:
             results = results[:limit]
         return {
@@ -55,13 +58,16 @@ async def search_code(
 @router.get("/method-usages")
 async def find_method_usages(
     method_name: str = Query(..., description="Name of the method to find usages for"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Find all usages of a specific method.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        usages = query_service.find_method_usages(method_name)
+        usages = query_service.find_method_usages(method_name, repo_id=repo_id)
         return usages
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to find method usages: {str(e)}")
@@ -70,13 +76,16 @@ async def find_method_usages(
 @router.get("/find_callers")
 async def find_callers(
     symbol_name: str = Query(..., description="Symbol name to find callers for"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Find all methods/functions that call a specific symbol.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        return query_service.find_callers(symbol_name)
+        return query_service.find_callers(symbol_name, repo_id=repo_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to find callers: {str(e)}")
 
@@ -84,13 +93,16 @@ async def find_callers(
 @router.get("/class_hierarchy")
 async def get_class_hierarchy(
     class_name: str = Query(..., description="Name of the class to analyze"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get class hierarchy (inheritance tree).
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        hierarchy = query_service.get_class_hierarchy(class_name)
+        hierarchy = query_service.get_class_hierarchy(class_name, repo_id=repo_id)
         return hierarchy
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get class hierarchy: {str(e)}")
@@ -99,15 +111,18 @@ async def get_class_hierarchy(
 @router.get("/change_impact")
 async def analyze_change_impact(
     symbol_name: str = Query(..., description="Symbol to analyze impact for"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Analyze the impact of changing a specific symbol.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
         # Get all usages of the symbol to understand impact
-        usages = query_service.find_method_usages(symbol_name)
-        callers_result = query_service.find_callers(symbol_name)
+        usages = query_service.find_method_usages(symbol_name, repo_id=repo_id)
+        callers_result = query_service.find_callers(symbol_name, repo_id=repo_id)
         callers_list = callers_result.get("callers", [])
 
         return {
@@ -169,13 +184,16 @@ async def get_graph_stats(
 async def find_function_by_name(
     name: str = Query(..., description="Function name to search for"),
     fuzzy: bool = Query(False, description="Enable fuzzy search"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Find functions by name using the CodeFinder tool.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        results = query_service.find_by_function_name(name, fuzzy)
+        results = query_service.find_by_function_name(name, fuzzy, repo_id=repo_id)
         return {
             "function_name": name,
             "fuzzy_search": fuzzy,
@@ -190,13 +208,16 @@ async def find_function_by_name(
 async def find_class_by_name(
     name: str = Query(..., description="Class name to search for"),
     fuzzy: bool = Query(False, description="Enable fuzzy search"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Find classes by name using the CodeFinder tool.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        results = query_service.find_by_class_name(name, fuzzy)
+        results = query_service.find_by_class_name(name, fuzzy, repo_id=repo_id)
         return {
             "class_name": name,
             "fuzzy_search": fuzzy,
@@ -210,13 +231,16 @@ async def find_class_by_name(
 @router.get("/code-finder/variable")
 async def find_variable_by_name(
     name: str = Query(..., description="Variable name to search for"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Find variables by name using the CodeFinder tool.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        results = query_service.find_by_variable_name(name)
+        results = query_service.find_by_variable_name(name, repo_id=repo_id)
         return {
             "variable_name": name,
             "results": results,
@@ -229,13 +253,16 @@ async def find_variable_by_name(
 @router.get("/code-finder/content")
 async def find_by_content(
     query: str = Query(..., description="Content search term"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Find code by content matching using the CodeFinder tool.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        results = query_service.find_by_content(query)
+        results = query_service.find_by_content(query, repo_id=repo_id)
         return {
             "search_query": query,
             "results": results,
@@ -267,13 +294,16 @@ async def find_module_by_name(
 @router.get("/code-finder/imports")
 async def find_imports(
     name: str = Query(..., description="Import name to search for"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Find import statements using the CodeFinder tool.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        results = query_service.find_imports(name)
+        results = query_service.find_imports(name, repo_id=repo_id)
         return {
             "import_name": name,
             "results": results,
@@ -287,13 +317,16 @@ async def find_imports(
 async def get_cyclomatic_complexity(
     function_name: str = Query(..., description="Function name to analyze"),
     path: str = Query(None, description="Optional file path to filter by"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get cyclomatic complexity of a function.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        result = query_service.get_cyclomatic_complexity(function_name, path)
+        result = query_service.get_cyclomatic_complexity(function_name, path, repo_id=repo_id)
         if not result:
             raise HTTPException(status_code=404, detail="Function not found")
         return {
@@ -310,13 +343,16 @@ async def get_cyclomatic_complexity(
 @router.get("/code-finder/complexity/top")
 async def find_most_complex_functions(
     limit: int = Query(10, description="Number of results to return"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Find the most complex functions by cyclomatic complexity.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        results = query_service.find_most_complex_functions(limit)
+        results = query_service.find_most_complex_functions(limit, repo_id=repo_id)
         return {
             "limit": limit,
             "results": results,
@@ -330,6 +366,8 @@ async def find_most_complex_functions(
 async def find_by_line(
     query: str = Query(..., description="Search term to find in file content"),
     limit: int = Query(50, description="Maximum number of line matches to return"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
@@ -341,8 +379,9 @@ async def find_by_line(
     if len(query) > 500:
         raise HTTPException(status_code=400, detail="Query too long (max 500 characters)")
     limit = min(limit, 100)  # hard cap
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        results = query_service.search_file_content(query, limit)
+        results = query_service.search_file_content(query, limit, repo_id=repo_id)
         return {
             "query": query,
             "results": results,
@@ -383,51 +422,16 @@ async def peek_file_lines(
 @router.get("/language/stats")
 async def get_language_statistics(
     language: str = Query(None, description="Optional language filter"),
+    repo_owner: str = Query(None, description="Repository owner to filter results"),
+    repo_name: str = Query(None, description="Repository name to filter results"),
     query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Get statistics about programming languages in the codebase.
     """
+    repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
-        if language:
-            # Get stats for specific language
-            query = """
-                MATCH (f:File)
-                WHERE f.language = $language OR f.extension IN ['.{}'.format($language.lower()), '.{}'.format($language[:2].lower())]
-                OPTIONAL MATCH (f)-[:CONTAINS]->(func:Function)
-                OPTIONAL MATCH (f)-[:CONTAINS]->(cls:Class)
-                OPTIONAL MATCH (f)-[:CONTAINS]->(var:Variable)
-                RETURN 
-                    count(DISTINCT f) as file_count,
-                    count(DISTINCT func) as function_count,
-                    count(DISTINCT cls) as class_count,
-                    count(DISTINCT var) as variable_count
-            """
-            records, _, _ = query_service.db.run_query(query, {"language": language})
-            result = dict(records[0]) if records else {}
-            result["language"] = language
-            return result
-        else:
-            # Get stats for all languages
-            query = """
-                MATCH (f:File)
-                WHERE f.language IS NOT NULL
-                OPTIONAL MATCH (f)-[:CONTAINS]->(func:Function)
-                OPTIONAL MATCH (f)-[:CONTAINS]->(cls:Class)
-                OPTIONAL MATCH (f)-[:CONTAINS]->(var:Variable)
-                RETURN 
-                    f.language as language,
-                    count(DISTINCT f) as file_count,
-                    count(DISTINCT func) as function_count,
-                    count(DISTINCT cls) as class_count,
-                    count(DISTINCT var) as variable_count
-                ORDER BY file_count DESC
-            """
-            records, _, _ = query_service.db.run_query(query)
-            return {
-                "languages": [dict(record) for record in records],
-                "total_languages": len(records)
-            }
+        return query_service.get_language_stats(language, repo_id=repo_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Language statistics query failed: {str(e)}")
 
@@ -514,44 +518,20 @@ async def get_file_source(
     Get the full source code of a file from the graph.
     """
     try:
-        query = """
-        MATCH (f:File)
-        WHERE f.relative_path = $relative_path AND f.path CONTAINS $repo_id
-        RETURN f.source_code as source_code, f.relative_path as path,
-               f.language as language, f.lines_count as lines_count
-        LIMIT 1
-        """
-        records, _, _ = query_service.db.run_query(query, {
-            "relative_path": file_path,
-            "repo_id": repo_id,
-        })
-        if not records:
+        result = query_service.get_file_source(repo_id, file_path)
+        if not result:
             raise HTTPException(status_code=404, detail="File not found")
-        record = records[0]
-        return {
-            "file_path": record.get("path"),
-            "language": record.get("language"),
-            "lines_count": record.get("lines_count"),
-            "source_code": record.get("source_code"),
-        }
+        return result
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File source retrieval failed: {str(e)}")
 
 
-_SEMANTIC_INDEXES: list[tuple[str, str]] = [
-    ("function_semantic", "function"),
-    ("class_semantic",    "class"),
-    ("method_semantic",   "method"),
-    ("file_semantic",     "file"),
-]
-
-
 @router.post("/semantic")
 async def semantic_search(
-    body: RagInput,
-    neo4j: Neo4jClient = Depends(get_neo4j_client),
+    body: SemanticInput,
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> SemanticSearchResponse:
     """
     Semantic / natural-language code search via vector embeddings.
@@ -565,40 +545,7 @@ async def semantic_search(
     embedding = vectors[0]
     repo_id = f"{body.repoOwner}/{body.repoName}" if body.repoOwner and body.repoName else None
 
-    all_results: list[dict] = []
-    for index_name, node_type in _SEMANTIC_INDEXES:
-        try:
-            records, _, _ = neo4j.run_query(
-                f"""
-                CALL db.index.vector.queryNodes('{index_name}', $k, $embedding)
-                YIELD node, score
-                OPTIONAL MATCH (f:File)-[:CONTAINS]->(node)
-                RETURN node.name                                AS name,
-                       '{node_type}'                            AS type,
-                       coalesce(f.path, node.path)              AS path,
-                       coalesce(node.line_number, 0)            AS line_number,
-                       coalesce(node.source_code, node.source)  AS source_code,
-                       node.docstring                           AS docstring,
-                       score
-                """,
-                {"k": 5, "embedding": embedding},
-            )
-            all_results.extend([dict(r) for r in records])
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("Vector index '%s' failed: %s", index_name, exc)
-
-    if repo_id:
-        all_results = [r for r in all_results if (r.get("path") or "").startswith(repo_id)]
-
-    all_results.sort(key=lambda r: r.get("score") or 0.0, reverse=True)
-    seen: set[tuple] = set()
-    deduped: list[dict] = []
-    for r in all_results:
-        key = (r.get("name"), r.get("path"))
-        if key not in seen:
-            seen.add(key)
-            deduped.append(r)
+    results = query_service.semantic_search(embedding, repo_id=repo_id)
 
     hits = [
         SemanticHit(
@@ -610,6 +557,6 @@ async def semantic_search(
             docstring=r.get("docstring"),
             score=float(r.get("score") or 0.0),
         )
-        for r in deduped[:10]
+        for r in results[:10]
     ]
     return SemanticSearchResponse(results=hits, total=len(hits))

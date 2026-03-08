@@ -23,6 +23,10 @@ class IngestionJobStats(BaseModel):
     imports_found: int = 0
     total_lines: int = 0
     errors: list[str] = Field(default_factory=list)
+    # Embedding fields — "skipped" means OPENROUTER_API_KEY not set
+    embedding_status: str = "skipped"   # "skipped" | "completed" | "failed"
+    nodes_embedded: int = 0
+    embedding_error: Optional[str] = None
 
 
 class IngestionJob(BaseModel):

@@ -630,17 +630,29 @@ CYPHER_QUERIES = {
     # -------------------------------------------------------------------------
     "find_method_usages": """
         MATCH (m:Function {name: $method_name})
+        WHERE $repo_id IS NULL OR m.repo = $repo_id
         OPTIONAL MATCH (f:File)-[:CONTAINS]->(m)
         OPTIONAL MATCH (caller:Function)-[call:CALLS]->(m)
+        WHERE $repo_id IS NULL OR caller.repo = $repo_id
         OPTIONAL MATCH (caller_file:File)-[:CONTAINS]->(caller)
-        RETURN m, f.path as file_path,
-               collect(DISTINCT {caller: caller, line: call.line_number, file: caller_file.path}) as callers,
-               [] as references
+        RETURN m.name                              AS method_name,
+               coalesce(m.line_number, m.line_start) AS line_number,
+               m.docstring                         AS docstring,
+               coalesce(m.source_code, m.source)   AS source_code,
+               m.cyclomatic_complexity             AS complexity,
+               f.path                              AS file_path,
+               collect(DISTINCT {
+                   caller_name: caller.name,
+                   caller_type: labels(caller)[0],
+                   line: call.line_number,
+                   file: caller_file.path
+               }) AS callers
     """,
     
     "find_function_definition": """
         MATCH (m)
         WHERE (m:Function OR m:Class) AND m.name = $name
+          AND ($repo_id IS NULL OR m.repo = $repo_id)
         OPTIONAL MATCH (f:File)-[:CONTAINS]->(m)
         OPTIONAL MATCH (f2:File)-[:DEFINES]->(m)
         OPTIONAL MATCH (cls:Class)-[:CONTAINS]->(m)
@@ -662,6 +674,7 @@ CYPHER_QUERIES = {
         MATCH (m {name: $name})
         WHERE m:Function OR m:Class
         MATCH (caller)-[c:CALLS]->(m)
+        WHERE $repo_id IS NULL OR caller.repo = $repo_id
         OPTIONAL MATCH (f:File)-[:CONTAINS]->(caller)
         RETURN caller.name as caller_name, labels(caller)[0] as caller_type,
                f.path as file_path, c.line_number as call_line,
@@ -672,6 +685,7 @@ CYPHER_QUERIES = {
     
     "get_class_hierarchy": """
         MATCH (c:Class {name: $class_name})
+        WHERE $repo_id IS NULL OR c.repo = $repo_id
         OPTIONAL MATCH (self_file:File)-[:CONTAINS]->(c)
         OPTIONAL MATCH (self_file2:File)-[:DEFINES]->(c)
         OPTIONAL MATCH (c)-[:INHERITS*]->(ancestor:Class)
