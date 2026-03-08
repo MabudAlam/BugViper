@@ -2,8 +2,9 @@
 
 import logging
 import os
+import time
 
-from openai import OpenAI
+from openai import OpenAI, APIStatusError
 
 from db.client import Neo4jClient
 
@@ -13,7 +14,8 @@ logger = logging.getLogger(__name__)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 EMBEDDING_MODEL     = "openai/text-embedding-3-small"
 EMBEDDING_DIMS      = 1536   # fixed output size for text-embedding-3-small
-BATCH_SIZE          = 2048   # max texts per API call
+BATCH_SIZE          = 200    # texts per API call — keeps total token count manageable
+MAX_CHARS_PER_TEXT  = 6000   # ~1500 tokens; text-embedding-3-small max is 8191 tokens
 
 # Nodes we embed and the text we build from each one.
 # Format: (node_label, text_expression_in_cypher)
@@ -53,23 +55,60 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     for batch_start in range(0, len(texts), BATCH_SIZE):
         batch = texts[batch_start : batch_start + BATCH_SIZE]
 
+        # Truncate long texts — text-embedding-3-small has an 8191-token limit.
+        # 6000 chars ≈ 1500 tokens, well within limit. We keep the start of the
+        # text (name + docstring + beginning of source) which is most semantic.
+        batch = [t[:MAX_CHARS_PER_TEXT] if t else t for t in batch]
+
+        # Filter out blank texts — OpenRouter returns empty data for whitespace-only inputs.
+        # Preserve a mapping so we can re-insert zero vectors at the right positions.
+        non_empty_indices = [i for i, t in enumerate(batch) if t and t.strip()]
+        texts_to_embed = [batch[i] for i in non_empty_indices]
+
+        total_chars = sum(len(t) for t in texts_to_embed)
         logger.info(
-            "Embedding batch %d-%d of %d texts",
-            batch_start, batch_start + len(batch), len(texts),
+            "Embedding batch %d-%d of %d texts (%d non-empty, ~%d chars total)",
+            batch_start, batch_start + len(batch), len(texts), len(texts_to_embed), total_chars,
         )
 
-        response = client.embeddings.create(model=EMBEDDING_MODEL, input=batch)
+        if not texts_to_embed:
+            # All texts in this batch are blank — return zero vectors
+            logger.warning("Batch %d-%d has no non-empty texts; using zero vectors", batch_start, batch_start + len(batch))
+            all_embeddings.extend([[0.0] * EMBEDDING_DIMS] * len(batch))
+            continue
 
-        # The API returns embeddings in the same order as the input.
-        # openai 2.x raises ValueError("No embedding data received") if data=[],
-        # but guard against it here too to produce a clearer message.
-        if not response.data:
-            raise ValueError(
-                f"OpenRouter returned empty data for batch of {len(batch)} texts "
-                f"(batch_start={batch_start}). Likely the request was too large."
-            )
+        # Retry up to 3 times on transient errors (rate limits, empty responses)
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts_to_embed)
+                if not response.data:
+                    raise ValueError(
+                        f"OpenRouter returned empty data for batch of {len(texts_to_embed)} texts "
+                        f"(batch_start={batch_start}, attempt={attempt + 1})"
+                    )
+                break
+            except Exception as exc:
+                last_err = exc
+                if isinstance(exc, APIStatusError):
+                    logger.warning(
+                        "Embedding attempt %d/3 failed — HTTP %d: %s",
+                        attempt + 1, exc.status_code, exc.message,
+                    )
+                else:
+                    logger.warning(
+                        "Embedding attempt %d/3 failed — %s: %s",
+                        attempt + 1, type(exc).__name__, exc,
+                    )
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                time.sleep(wait)
+        else:
+            raise RuntimeError(f"Embedding failed after 3 attempts: {last_err}") from last_err
 
-        batch_vectors = [item.embedding for item in response.data]
+        # Re-insert results at correct positions; blank slots get zero vectors
+        batch_vectors: list[list[float]] = [[0.0] * EMBEDDING_DIMS] * len(batch)
+        for out_idx, in_idx in enumerate(non_empty_indices):
+            batch_vectors[in_idx] = response.data[out_idx].embedding
         all_embeddings.extend(batch_vectors)
 
     return all_embeddings

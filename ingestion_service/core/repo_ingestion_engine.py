@@ -25,6 +25,9 @@ class IngestionStats:
     imports_found: int = 0
     total_lines: int = 0
     errors: List[str] = None
+    embedding_status: str = "skipped"   # "skipped" | "completed" | "failed"
+    nodes_embedded: int = 0
+    embedding_error: Optional[str] = None
 
     def __post_init__(self):
         if self.errors is None:
@@ -161,14 +164,25 @@ class AdvancedIngestionEngine:
                 # Generate and store embeddings for semantic search via OpenRouter.
                 # Reads source_code from Neo4j nodes — does NOT need the cloned files.
                 # Safe to skip if OPENROUTER_API_KEY is not set.
+                embedding_status = "skipped"
+                nodes_embedded = 0
+                embedding_error_msg: Optional[str] = None
+
                 if os.getenv("OPENROUTER_API_KEY"):
                     print("\nGenerating embeddings for semantic search...")
                     try:
                         embed_stats = embed_nodes_in_neo4j(self.neo4j_client)
+                        nodes_embedded = sum(embed_stats.values())
+                        embedding_status = "completed"
                         for label, count in embed_stats.items():
-                            print(f"  ✓ Embedded {count} {label} nodes")
+                            if count:
+                                print(f"  ✓ Embedded {count} {label} nodes")
+                        print(f"  ✓ Total: {nodes_embedded} nodes embedded")
                     except Exception as embed_err:
-                        print(f"  ⚠ Embedding skipped: {embed_err}")
+                        embedding_status = "failed"
+                        embedding_error_msg = str(embed_err)
+                        print(f"  ⚠ Embedding failed: {embed_err}")
+                        print(f"  ℹ Retry via: POST /api/v1/ingest/{owner}/{repo_name}/embed")
                 else:
                     print("\n⚠ OPENROUTER_API_KEY not set — skipping semantic embeddings")
 
@@ -189,7 +203,10 @@ class AdvancedIngestionEngine:
                     functions_found=result.get('functions_found', 0),
                     imports_found=result.get('imports_found', 0),
                     total_lines=result.get('total_lines', 0),
-                    errors=result.get('errors', [])
+                    errors=result.get('errors', []),
+                    embedding_status=embedding_status,
+                    nodes_embedded=nodes_embedded,
+                    embedding_error=embedding_error_msg,
                 )
 
                 print(f"\n✅ GitHub repository ingestion completed!")
