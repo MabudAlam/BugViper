@@ -146,6 +146,9 @@ async def ingest_github_repository(
                     imports_found=stats.imports_found,
                     total_lines=stats.total_lines,
                     errors=stats.errors or [],
+                    embedding_status=stats.embedding_status,
+                    nodes_embedded=stats.nodes_embedded,
+                    embedding_error=stats.embedding_error,
                 )
                 job_tracker.update_status(job_id, JobStatus.COMPLETED, stats=job_stats)
                 try:
@@ -239,6 +242,38 @@ async def get_job_status(job_id: str):
         stats=job.stats.model_dump() if job.stats else None,
         error_message=job.error_message,
     )
+
+
+@router.post("/{owner}/{repo_name}/embed")
+async def embed_repository(
+    owner: str,
+    repo_name: str,
+    neo4j_client: Neo4jClient = Depends(get_neo4j_client),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Re-run semantic embedding for an already-ingested repository without re-cloning.
+    Safe to call multiple times — skips nodes that already have embeddings.
+    Use this to recover from a failed embedding step after ingestion.
+    """
+    import os
+    from common.embedder import embed_nodes_in_neo4j
+
+    if not os.getenv("OPENROUTER_API_KEY"):
+        raise HTTPException(status_code=400, detail="OPENROUTER_API_KEY is not set")
+
+    try:
+        embed_stats = embed_nodes_in_neo4j(neo4j_client)
+        nodes_embedded = sum(embed_stats.values())
+        return {
+            "repo_id": f"{owner}/{repo_name}",
+            "nodes_embedded": nodes_embedded,
+            "breakdown": {label: count for label, count in embed_stats.items() if count},
+            "message": f"Embedded {nodes_embedded} nodes successfully" if nodes_embedded else "All nodes already had embeddings",
+        }
+    except Exception as exc:
+        logger.exception("Re-embedding failed for %s/%s", owner, repo_name)
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {exc}")
 
 
 @router.get("/jobs", response_model=list[JobStatusResponse])
