@@ -16,3 +16,17 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     sources: list[Source] = []
+
+
+# ── History fetch (GET /sessions/{id}) ──────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str  # "human" | "ai"
+    content: str
+    sources: list[Source] = []
+
+
+class SessionHistory(BaseModel):
+    session_id: str
+    repo_id: str | None = None
+    messages: list[ChatMessage] = []

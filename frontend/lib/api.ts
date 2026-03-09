@@ -263,8 +263,34 @@ export interface AgentResponse {
   answer: string;
   sources: AgentSource[];
 }
-export const askAgent = (data: { question: string; repo_id?: string }): Promise<AgentResponse> =>
+export interface AgentChatMessage {
+  role: "human" | "ai";
+  content: string;
+  sources: AgentSource[];
+}
+export interface SessionHistoryResponse {
+  session_id: string;
+  repo_id: string | null;
+  messages: AgentChatMessage[];
+}
+
+export const askAgent = (data: {
+  question: string;
+  repo_id?: string;
+}): Promise<AgentResponse> =>
   apiFetch("/api/v1/rag/answer", { method: "POST", body: JSON.stringify(data) });
+
+/** Load the current user's history for a repo (or all-repos if omitted). */
+export const getMySession = (repoId?: string): Promise<SessionHistoryResponse> => {
+  const qs = repoId ? `?repo_id=${encodeURIComponent(repoId)}` : "";
+  return apiFetch(`/api/v1/rag/my-session${qs}`);
+};
+
+/** Delete the current user's session for a repo (or all-repos if omitted). */
+export const clearMySession = (repoId?: string): Promise<void> => {
+  const qs = repoId ? `?repo_id=${encodeURIComponent(repoId)}` : "";
+  return apiFetch(`/api/v1/rag/my-session${qs}`, { method: "DELETE" });
+};
 
 // Auth
 export const loginUser = (data: { github_access_token: string }) =>
@@ -295,7 +321,7 @@ export const getLanguageSymbols = (language: string, symbolType: string, limit =
     `/api/v1/query/language/symbols?language=${encodeURIComponent(language)}&symbol_type=${encodeURIComponent(symbolType)}&limit=${limit}`
   );
 
-export const findDefinition = (symbolName: string, _repoId?: string) =>
+export const findDefinition = (symbolName: string) =>
   apiFetch(`/api/v1/query/search?query=${encodeURIComponent(symbolName)}`);
 
 export const findMethodUsages = (methodName: string) =>

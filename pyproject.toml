@@ -49,6 +49,8 @@ dependencies = [
     "langgraph>=1.0.10",
     "langchain>=1.2.10",
     "langchain-openai>=1.1.10",
+    # pydantic-ai imports from griffe; v2.0 renamed the module — pin to 1.x
+    "griffe>=0.38.0,<2.0.0",
 ]
 
 [project.optional-dependencies]
