@@ -321,8 +321,10 @@ export const getLanguageSymbols = (language: string, symbolType: string, limit =
     `/api/v1/query/language/symbols?language=${encodeURIComponent(language)}&symbol_type=${encodeURIComponent(symbolType)}&limit=${limit}`
   );
 
-export const findDefinition = (symbolName: string) =>
-  apiFetch(`/api/v1/query/search?query=${encodeURIComponent(symbolName)}`);
+export const findDefinition = (symbolName: string, repoId?: string) =>
+  apiFetch(
+    `/api/v1/query/search?query=${encodeURIComponent(symbolName)}${repoId ? `&repo_id=${encodeURIComponent(repoId)}` : ''}`
+  );
 
 export const findMethodUsages = (methodName: string) =>
   apiFetch(`/api/v1/query/method-usages?method_name=${encodeURIComponent(methodName)}`);
