@@ -69,6 +69,15 @@ async def handle_direct_push(payload: IncrementalPushPayload):
         job_id, payload.owner, payload.repo_name, payload.before_sha[:7], payload.after_sha[:7],
     )
 
+    if not job_tracker.get_job(job_id):
+        job_tracker.create_job(IngestionTaskPayload(
+            job_id=payload.job_id,
+            owner=payload.owner,
+            repo_name=payload.repo_name,
+            branch=None,
+            clear_existing=False,
+        ))
+
     try:
         job_tracker.update_status(job_id, JobStatus.RUNNING)
 

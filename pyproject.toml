@@ -36,6 +36,7 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "python-multipart>=0.0.21",
     "pygithub>=2.8.1",
+    "pyjwt[cryptography]>=2.8.0",
     # Agent dependencies
     "openai>=2.15.0",
     "logfire>=4.19.0",

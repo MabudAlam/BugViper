@@ -28,7 +28,7 @@ from db.client import Neo4jClient, get_neo4j_client
 from db.code_serarch_layer import CodeSearchService
 from code_review_agent.models.agent_schemas import ContextData, FileSummary, Issue, ReconciledReview
 from code_review_agent.agent.runner import run_review
-from common.github_client import GitHubClient
+from common.github_client import get_github_client
 from common.diff_parser import parse_unified_diff
 
 logger = logging.getLogger(__name__)
@@ -510,7 +510,7 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
         review_dir = make_review_dir(owner, repo, pr_number)
 
         # ── Step 1: Fetch diff, PR metadata, and head SHA (all in parallel) ─
-        gh = GitHubClient()
+        gh = get_github_client()
         diff_text, pr_info, head_sha = await asyncio.gather(
             gh.get_pr_diff(owner, repo, pr_number),
             gh.get_pr_info(owner, repo, pr_number),

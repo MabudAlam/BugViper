@@ -12,7 +12,7 @@ from api.models.schemas import (
     JobStatusResponse,
 )
 from api.services.firebase_service import firebase_service
-from common.github_client import GitHubClient
+from common.github_client import get_github_client
 
 from api.services.cloud_tasks_service import CloudTasksService
 from common.firebase_models import RepoIngestionError, RepoIngestionUpdate, RepoMetadata
@@ -72,7 +72,7 @@ async def ingest_github_repository(
     # ── Fetch GitHub repo metadata ─────────────────────────────────────────
     gh_meta: dict = {}
     try:
-        gh = GitHubClient()
+        gh = get_github_client()
         gh_meta = await gh.get_repository_info(request.owner, request.repo_name)
     except Exception:
         logger.warning("Could not fetch GitHub metadata for %s/%s", request.owner, request.repo_name)

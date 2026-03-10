@@ -183,18 +183,11 @@ class IncrementalGraphUpdater:
         ref: str = "HEAD"
     ) -> Optional[str]:
         """Fetch file content from GitHub."""
-        def _fetch():
-            github = self.github_client._get_github_instance(owner, repo)
-            repository = github.get_repo(f"{owner}/{repo}")
-            try:
-                content = repository.get_contents(filepath, ref=ref)
-                if hasattr(content, 'decoded_content'):
-                    return content.decoded_content.decode('utf-8')
-            except Exception as e:
-                warning_logger(f"Could not fetch {filepath}: {e}")
+        try:
+            return await self.github_client.get_file_content(owner, repo, filepath, ref=ref)
+        except Exception as e:
+            warning_logger(f"Could not fetch {filepath}: {e}")
             return None
-
-        return await asyncio.to_thread(_fetch)
 
     def _delete_file_nodes_and_relationships(self, repo_identifier: str, relative_path: str) -> None:
         """
