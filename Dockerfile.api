@@ -25,6 +25,10 @@ COPY api/ api/
 COPY common/ common/
 COPY db/ db/
 COPY code_review_agent/ code_review_agent/
+# Language parsers live in ingestion_service/languages/ but are imported by
+# review_service.py via common/languages.py::LANG_PARSER_REGISTRY
+COPY ingestion_service/__init__.py ingestion_service/__init__.py
+COPY ingestion_service/languages/ ingestion_service/languages/
 
 
 EXPOSE 8080

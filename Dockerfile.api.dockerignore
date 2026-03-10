@@ -1,5 +1,8 @@
 # ── Unrelated services ───────────────────────────────────────────────────────
+# Exclude ingestion_service/ except the language parsers (needed by review_service)
 ingestion_service/
+!ingestion_service/__init__.py
+!ingestion_service/languages/
 frontend/
 node_modules/
 
