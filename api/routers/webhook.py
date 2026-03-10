@@ -1,7 +1,11 @@
+import hashlib
+import hmac
+import json
 import logging
+import os
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, Request, Response
 
 from api.services.cloud_tasks_service import CloudTasksService
 from api.services.review_service import execute_pr_review
@@ -11,6 +15,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 cloud_tasks = CloudTasksService()
+
+
+def _verify_github_signature(secret: str, body: bytes, sig_header: str) -> bool:
+    """Return True if the X-Hub-Signature-256 header matches the HMAC-SHA256 of the body."""
+    if not sig_header.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(f"sha256={expected}", sig_header)
 
 
 @router.post("/onComment")
@@ -148,3 +160,76 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
         background_tasks.add_task(execute_pr_review, owner, repo_name, pr_number)
 
     return {"status": "processing", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
+
+
+# ---------------------------------------------------------------------------
+# GitHub Marketplace webhook
+# ---------------------------------------------------------------------------
+
+_MARKETPLACE_ACTIONS = {
+    "purchased",
+    "cancelled",
+    "changed",
+    "pending_change",
+    "pending_change_cancelled",
+}
+
+
+@router.post("/marketplace")
+async def on_marketplace(request: Request):
+    """
+    GitHub Marketplace webhook.
+
+    Receives purchase lifecycle events and verifies the payload signature
+    using HMAC-SHA256 (X-Hub-Signature-256 header).
+
+    Supported actions: purchased, cancelled, changed,
+                       pending_change, pending_change_cancelled.
+    """
+    body = await request.body()
+
+    # ── Signature verification ───────────────────────────────────────────────
+    secret = os.getenv("GITHUB_MARKETPLACE_WEBHOOK_SECRET", "")
+    if secret:
+        sig_header = request.headers.get("X-Hub-Signature-256", "")
+        if not _verify_github_signature(secret, body, sig_header):
+            logger.warning("Marketplace webhook: invalid signature")
+            return Response(
+                content=json.dumps({"detail": "Invalid signature"}),
+                status_code=401,
+                media_type="application/json",
+            )
+
+    # ── Parse payload (JSON or form-encoded) ────────────────────────────────
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        payload = json.loads(body)
+    else:
+        # application/x-www-form-urlencoded — GitHub sends `payload=<json>`
+        form = await request.form()
+        raw = form.get("payload", "")
+        payload = json.loads(raw) if raw else {}
+
+    action = payload.get("action", "")
+    if action not in _MARKETPLACE_ACTIONS:
+        return {"status": "ignored", "reason": f"unhandled action '{action}'"}
+
+    purchase = payload.get("marketplace_purchase", {})
+    account = purchase.get("account", {})
+    plan = purchase.get("plan", {})
+    sender = payload.get("sender", {})
+
+    logger.info(
+        "Marketplace %s: account=%s plan=%s sender=%s",
+        action,
+        account.get("login"),
+        plan.get("name"),
+        sender.get("login"),
+    )
+
+    return {
+        "status": "received",
+        "action": action,
+        "account": account.get("login"),
+        "plan": plan.get("name"),
+    }
