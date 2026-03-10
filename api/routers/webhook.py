@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Request
 
 from api.services.cloud_tasks_service import CloudTasksService
 from api.services.review_service import execute_pr_review
-from common.job_models import IncrementalPRPayload, IncrementalPushPayload
+from common.job_models import IncrementalPRPayload, IncrementalPushPayload, PRReviewPayload
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,11 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
 
     logger.info("Review triggered: %s/%s#%s", owner, repo_name, pr_number)
 
-    background_tasks.add_task(execute_pr_review, owner, repo_name, pr_number)
+    if cloud_tasks.review_is_enabled:
+        review_payload = PRReviewPayload(owner=owner, repo=repo_name, pr_number=pr_number)
+        cloud_tasks.dispatch_pr_review(review_payload)
+    else:
+        # Local dev fallback — runs in-process after response is sent
+        background_tasks.add_task(execute_pr_review, owner, repo_name, pr_number)
 
     return {"status": "processing", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}

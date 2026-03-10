@@ -1,0 +1,37 @@
+steps:
+  # Step 1: Build the Docker image with BuildKit enabled
+  - name: "gcr.io/cloud-builders/docker"
+    env:
+      - 'DOCKER_BUILDKIT=1'
+    args: ["build", "-t", "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/review-service:latest", "-f", "Dockerfile.review", "."]
+  # Step 2: Push the Docker image to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/review-service:latest"]
+  # Step 3: Deploy to Cloud Run (no-cpu-throttling keeps the instance alive during long LLM calls)
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args: [
+        "run",
+        "deploy",
+        "review-service",
+        "--image",
+        "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/review-service:latest",
+        "--region",
+        "us-central1",
+        "--platform",
+        "managed",
+        "--no-allow-unauthenticated",
+        "--timeout",
+        "1800",
+        "--concurrency",
+        "4",
+        "--cpu",
+        "2",
+        "--memory",
+        "2Gi",
+      ]
+images:
+  - "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/review-service:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

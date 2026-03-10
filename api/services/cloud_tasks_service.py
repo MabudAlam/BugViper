@@ -11,6 +11,7 @@ from common.job_models import (
     IncrementalPRPayload,
     IncrementalPushPayload,
     IngestionTaskPayload,
+    PRReviewPayload,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,30 +28,46 @@ class CloudTasksService:
         self._project = os.environ.get("GCP_PROJECT_ID", "")
         self._location = os.environ.get("GCP_LOCATION", "us-central1")
         self._queue = os.environ.get("CLOUD_TASKS_QUEUE", "ingestion-queue")
+        self._review_queue = os.environ.get("CLOUD_TASKS_REVIEW_QUEUE", "codeReview")
         self._service_url = os.environ.get("INGESTION_SERVICE_URL", "")
+        self._review_url = os.environ.get("REVIEW_SERVICE_URL", "")
         self._sa_email = os.environ.get("CLOUD_TASKS_SA_EMAIL", "")
 
     @property
     def is_enabled(self) -> bool:
         return bool(self._service_url)
 
-    def _dispatch(self, path: str, payload: BaseModel) -> Optional[str]:
-        """Create a Cloud Task that POSTs to the ingestion service at *path*.
+    @property
+    def review_is_enabled(self) -> bool:
+        return bool(self._review_url)
+
+    def _dispatch(
+        self,
+        path: str,
+        payload: BaseModel,
+        service_url: str | None = None,
+        queue: str | None = None,
+    ) -> Optional[str]:
+        """Create a Cloud Task that POSTs to a Cloud Run service at *path*.
+
+        ``service_url`` overrides the default ingestion service URL.
+        ``queue`` overrides the default ingestion queue name.
 
         Returns the Cloud Task resource name, or ``None`` on failure.
         """
-        if not self.is_enabled:
-            logger.warning("Cloud Tasks not enabled — INGESTION_SERVICE_URL is unset")
+        target_url = (service_url or self._service_url).rstrip("/")
+        if not target_url:
+            logger.warning("Cloud Tasks not enabled — target service URL is unset")
             return None
 
         # Lazy import so the dependency is only required when Cloud Tasks is active
         from google.cloud import tasks_v2
 
         client = tasks_v2.CloudTasksClient()
-        parent = client.queue_path(self._project, self._location, self._queue)
+        parent = client.queue_path(self._project, self._location, queue or self._queue)
 
         task_body = json.dumps(payload.model_dump()).encode()
-        url = f"{self._service_url.rstrip('/')}{path}"
+        url = f"{target_url}{path}"
 
         task: dict = {
             "http_request": {
@@ -66,11 +83,11 @@ class CloudTasksService:
         if self._sa_email:
             task["http_request"]["oidc_token"] = {
                 "service_account_email": self._sa_email,
-                "audience": self._service_url,
+                "audience": target_url,
             }
 
         response = client.create_task(parent=parent, task=task)
-        logger.info("Dispatched Cloud Task: %s", response.name)
+        logger.info("Dispatched Cloud Task to %s: %s", url, response.name)
         return response.name
 
     def dispatch_ingestion(self, payload: IngestionTaskPayload) -> Optional[str]:
@@ -84,3 +101,12 @@ class CloudTasksService:
     def dispatch_incremental_push(self, payload: IncrementalPushPayload) -> Optional[str]:
         """Dispatch an incremental direct-push graph-update task."""
         return self._dispatch("/tasks/incremental-push", payload)
+
+    def dispatch_pr_review(self, payload: PRReviewPayload) -> Optional[str]:
+        """Dispatch a PR review task to the dedicated review-service via the codeReview queue."""
+        return self._dispatch(
+            "/tasks/review",
+            payload,
+            service_url=self._review_url,
+            queue=self._review_queue,
+        )

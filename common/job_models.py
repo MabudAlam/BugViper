@@ -74,3 +74,11 @@ class IncrementalPushPayload(BaseModel):
     repo_name: str
     before_sha: str
     after_sha: str
+
+
+class PRReviewPayload(BaseModel):
+    """Payload dispatched to the review-service via Cloud Tasks."""
+
+    owner: str
+    repo: str
+    pr_number: int

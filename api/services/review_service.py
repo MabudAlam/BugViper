@@ -573,6 +573,7 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
         )
 
         # ── Step 3: Extract imports, defined symbols, and call sites ────
+        logger.info("Step 3: extracting symbols from diff (tree-sitter)")
         diff_imports = extract_imports_from_diff(diff_text, full_file_contents)
         diff_functions, diff_classes = extract_symbols_from_diff(diff_text, full_file_contents)
         all_diff_symbols = diff_functions | diff_classes
@@ -610,6 +611,7 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
         ]))
 
         # ── Step 4: Connect to Neo4j and resolve context ────────────────
+        logger.info("Step 4: querying Neo4j graph context for %s", repo_id)
         if neo4j is None:
             neo4j = get_neo4j_client()
         query_service = CodeSearchService(neo4j)
@@ -750,6 +752,7 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
                 agent_context = agent_context + "\n\n" + prev_section
 
         # ── Step 8: Assemble final prompt + run multi-agent review ───────
+        logger.info("Step 8: running LangGraph review agents (this may take several minutes)")
         review_prompt = _build_review_prompt(agent_context, repo_id, pr_number)
 
         write_step(review_dir, "06b_review_prompt.md", "\n".join([
