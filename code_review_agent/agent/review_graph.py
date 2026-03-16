@@ -19,7 +19,7 @@ from code_review_agent.agent.tools import get_tools
 from code_review_agent.agent.utils import load_chat_model
 from db.code_serarch_layer import CodeSearchService
 
-MAX_TOOL_ROUNDS = 6
+MAX_TOOL_ROUNDS = 10
 
 
 class ReviewExplorerState(TypedDict):

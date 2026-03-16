@@ -182,6 +182,9 @@ def format_review_summary(
     parts.append(f"**PR**: #{pr_number} | **Model**: `{config.review_model}`")
     parts.append("")
 
+    high_conf_actionable = [i for i in open_issues + new_issues if i.confidence >= 7]
+    nitpicks = [i for i in open_issues + new_issues if i.confidence < 7]
+
     badges = []
     if fixed_issues:
         badges.append(f"✅ {len(fixed_issues)} fixed")
@@ -193,7 +196,8 @@ def format_review_summary(
         parts.append("  ".join(badges))
         parts.append("")
 
-    parts.append(f"**Actionable comments: {actionable}**")
+    nitpick_note = f" + {len(nitpicks)} nitpicks below" if nitpicks else ""
+    parts.append(f"**Actionable: {len(high_conf_actionable)}**{nitpick_note}")
     if inline_posted:
         skipped_note = f" ({inline_skipped} outside diff)" if inline_skipped else ""
         parts.append(f"*{inline_posted} inline comment(s) posted directly on the diff{skipped_note}*")
@@ -244,6 +248,18 @@ def format_review_summary(
             parts.append(
                 f"- ~~**{issue.title}**~~ `{issue.file}:{issue.line_start}` — resolved"
             )
+        parts.append("")
+
+    # ── Nitpicks toggle (all <7 confidence actionable issues) ─────────────────
+    if nitpicks:
+        parts.append("<details>")
+        parts.append(f"<summary>🔍 Nitpicks & Low-confidence ({len(nitpicks)} issues, confidence &lt; 7)</summary>")
+        parts.append("")
+        parts.append("*These findings have lower confidence and may be false positives. Review at your discretion.*")
+        parts.append("")
+        for line in _render_issues_by_file(nitpicks):
+            parts.append(line)
+        parts.append("</details>")
         parts.append("")
 
     # ── Positive findings ─────────────────────────────────────────────────────
@@ -362,22 +378,29 @@ def format_github_comment(
             )
         parts.append("")
 
-    # ── Still open ────────────────────────────────────────────────────────────
-    if open_issues:
-        parts.append(f"### 🔁 Still Open ({len(open_issues)})")
+    # Split all actionable issues by confidence
+    open_high   = [i for i in open_issues if i.confidence >= 7]
+    open_nitty  = [i for i in open_issues if i.confidence < 7]
+    new_high    = [i for i in new_issues if i.confidence >= 7]
+    new_nitty   = [i for i in new_issues if i.confidence < 7]
+    all_nitpicks = open_nitty + new_nitty
+
+    # ── Still open (high confidence) ──────────────────────────────────────────
+    if open_high:
+        parts.append(f"### 🔁 Still Open ({len(open_high)})")
         parts.append("")
-        for line in _render_issues_by_file(open_issues):
+        for line in _render_issues_by_file(open_high):
             parts.append(line)
 
-    # ── New issues — grouped by severity, then by file ────────────────────────
-    if new_issues:
-        parts.append(f"### 🆕 New Issues ({len(new_issues)})")
+    # ── New issues (high confidence) — grouped by severity ────────────────────
+    if new_high:
+        parts.append(f"### 🆕 New Issues ({len(new_high)})")
         parts.append("")
 
-        critical = [i for i in new_issues if i.severity == "critical"]
-        high     = [i for i in new_issues if i.severity == "high"]
-        medium   = [i for i in new_issues if i.severity == "medium"]
-        low      = [i for i in new_issues if i.severity == "low"]
+        critical = [i for i in new_high if i.severity == "critical"]
+        high     = [i for i in new_high if i.severity == "high"]
+        medium   = [i for i in new_high if i.severity == "medium"]
+        low      = [i for i in new_high if i.severity == "low"]
 
         for group_label, group, open_default in [
             ("🔴 Critical", critical, True),
@@ -396,8 +419,23 @@ def format_github_comment(
             parts.append("</details>")
             parts.append("")
 
+    # ── Nitpicks toggle (all <7 confidence actionable issues) ─────────────────
+    if all_nitpicks:
+        parts.append("<details>")
+        parts.append(f"<summary>🔍 Nitpicks & Low-confidence ({len(all_nitpicks)} issues, confidence &lt; 7)</summary>")
+        parts.append("")
+        parts.append("*These findings have lower confidence and may be false positives. Review at your discretion.*")
+        parts.append("")
+        for line in _render_issues_by_file(all_nitpicks):
+            parts.append(line)
+        parts.append("</details>")
+        parts.append("")
+
     if not fixed_issues and not open_issues and not new_issues:
         parts.append("✅ **No issues found. The code looks good!**")
+        parts.append("")
+    elif not fixed_issues and not open_high and not new_high and all_nitpicks:
+        parts.append("✅ **No significant issues found.** Only low-confidence observations (see Nitpicks above).")
         parts.append("")
 
     # ── Positive findings ─────────────────────────────────────────────────────

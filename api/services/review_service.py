@@ -396,85 +396,34 @@ def _build_review_prompt(
 
 # ==========================================================================
 # ==========================================================================
-# Reconciliation helpers
+# Context helpers
 # ==========================================================================
 
-def _reconcile(
-    new_issues: list[Issue],
-    prev_run: dict | None,
-) -> ReconciledReview:
-    """
-    Diff new agent output against the previous run.
-
-    Each issue gets a status:
-      - "fixed"      — fingerprint was in prev run but not in new run
-      - "still_open" — fingerprint in both runs
-      - "new"        — fingerprint only in new run
-
-    Fixed issues from the previous run are re-injected (with status="fixed")
-    so the comment can render them in the ✅ Fixed section.
-    """
-    prev_issues: list[dict] = prev_run.get("issues", []) if prev_run else []
-    prev_fp: set[str] = {i["fingerprint"] for i in prev_issues if i.get("fingerprint")}
-    new_fp: set[str] = {i.fingerprint for i in new_issues}
-
-    fixed_fp = prev_fp - new_fp
-    still_open_fp = prev_fp & new_fp
-    new_fp_only = new_fp - prev_fp
-
-    tagged: list[Issue] = []
-    for issue in new_issues:
-        if issue.fingerprint in still_open_fp:
-            issue.status = "still_open"
-        else:
-            issue.status = "new"
-        tagged.append(issue)
-
-    # Re-add fixed issues from prev run so the comment can show them
-    for prev_issue_dict in prev_issues:
-        fp = prev_issue_dict.get("fingerprint", "")
-        if fp in fixed_fp:
-            fixed_issue = Issue.model_validate({**prev_issue_dict, "status": "fixed"})
-            tagged.append(fixed_issue)
-
-    total = len(tagged)
-    n_fixed = len(fixed_fp)
-    n_open = len(still_open_fp)
-    n_new = len(new_fp_only)
-    run_label = f"Run #{(prev_run or {}).get('runNumber', 0) + 1}"
-
-    if total == 0 or (n_fixed == total):
-        summary = f"{run_label} — All issues resolved. No new issues found. ✅"
-    else:
-        summary = (
-            f"{run_label} — {n_fixed} fixed, {n_open} still open, {n_new} new"
-        )
-
-    return ReconciledReview(
-        issues=tagged,
-        summary=summary,
-        fixed_fingerprints=list(fixed_fp),
-        still_open_fingerprints=list(still_open_fp),
-        new_fingerprints=list(new_fp_only),
-    )
-
-
-def _build_previous_issues_section(prev_run: dict) -> str:
-    """Format the previous run's open issues as a prompt context section."""
-    open_issues = [i for i in prev_run.get("issues", []) if i.get("status") != "fixed"]
-    if not open_issues:
+def _build_prev_issues_context(prev_run: dict) -> str:
+    """Format previous run issues so the LLM can verify fixes and carry forward open ones."""
+    issues = prev_run.get("issues", [])
+    if not issues:
         return ""
+    run_num = prev_run.get("runNumber", "?")
     lines = [
-        "## Previously Flagged Issues (still open from last review)",
-        "*These were reported in the last review run and NOT yet fixed. "
-        "Do not re-report them unless the code has changed further.*",
+        f"## Previous Review Findings (Run #{run_num})",
+        "For each issue below, check the current diff and set its status:",
+        '  "still_open" — same problem still present in the code',
+        '  "fixed"      — the code has been changed to address it',
+        'Issues you find that are NOT listed here → status: "new"',
+        "Include ALL previous issues in your output (as still_open or fixed).",
         "",
     ]
-    for issue in open_issues:
-        lines.append(
-            f"- [{issue.get('severity','?').upper()}] **{issue.get('title','')}** "
-            f"in `{issue.get('file','')}` — {issue.get('description','')}"
-        )
+    for idx, issue in enumerate(issues, 1):
+        sev = (issue.get("severity") or "?").upper()
+        title = issue.get("title") or ""
+        file_path = issue.get("file") or ""
+        line = issue.get("line_start", "?")
+        conf = issue.get("confidence", "?")
+        desc = (issue.get("description") or "")[:200]
+        lines.append(f"{idx}. [{sev}] **{title}** — `{file_path}:{line}` (confidence: {conf}/10)")
+        if desc:
+            lines.append(f"   _{desc}_")
     return "\n".join(lines)
 
 
@@ -745,11 +694,22 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
         else:
             logger.warning(f"No Firestore user found for GitHub owner '{owner}' — skipping history")
 
-        # Inject previous open issues into agent context
+        # Detect files added to the PR since the last review
+        prev_files = set(prev_run.get("filesChanged", prev_run.get("files_changed", []))) if prev_run else set()
+        new_files_in_pr = sorted(set(files_changed) - prev_files)
+
+        # Inject previous findings so the LLM can verify fixes
         if prev_run:
-            prev_section = _build_previous_issues_section(prev_run)
+            prev_section = _build_prev_issues_context(prev_run)
             if prev_section:
                 agent_context = agent_context + "\n\n" + prev_section
+
+        # Highlight newly added files for fresh review
+        if new_files_in_pr:
+            new_files_note = "\n\n## Newly Added Files (not in previous review)\n"
+            new_files_note += "*These files are new to this PR since the last review:*\n"
+            new_files_note += "\n".join(f"- `{f}`" for f in new_files_in_pr)
+            agent_context = agent_context + new_files_note
 
         # ── Step 8: Assemble final prompt + run multi-agent review ───────
         logger.info("Step 8: running LangGraph review agents (this may take several minutes)")
@@ -765,27 +725,31 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
         review_results.files_changed_summary = _parse_files_changed(
             diff_text, review_results.issues, walk_through=review_results.walk_through
         )
-        logger.info(f"Review complete: {len(review_results.issues)} issues found")
+        logger.info(
+            "Review complete: %d total issues (%d open)",
+            len(review_results.issues),
+            sum(1 for i in review_results.issues if i.status != "fixed"),
+        )
 
-        # ── Step 9: Reconcile new results against previous run ───────────
-        reconciled = _reconcile(review_results.issues, prev_run)
-        reconciled.positive_findings = review_results.positive_findings
-
-        # ── Step 10: Save run to Firestore ───────────────────────────────
+        # ── Step 9: Save all issues to Firestore (all confidence levels) ─
         if uid:
             run_doc = ReviewRunData(
-                issues=[i.model_dump() for i in reconciled.issues],
-                positive_findings=reconciled.positive_findings,
-                summary=reconciled.summary,
-                fixed_fingerprints=reconciled.fixed_fingerprints,
-                still_open_fingerprints=reconciled.still_open_fingerprints,
-                new_fingerprints=reconciled.new_fingerprints,
+                issues=[i.model_dump() for i in review_results.issues],
+                positive_findings=review_results.positive_findings,
+                summary=review_results.summary,
+                files_changed=files_changed,
                 repo_id=repo_id,
                 pr_number=pr_number,
             )
             firebase_service.save_review_run(uid, owner, repo, pr_number, run_doc)
 
-        # ── Step 11: Post PR review + inline comments ────────────────────
+        reconciled = ReconciledReview(
+            issues=review_results.issues,
+            positive_findings=review_results.positive_findings,
+            summary=review_results.summary,
+        )
+
+        # ── Step 10: Post PR review + inline comments ─────────────────────
         context_data = ContextData(
             files_changed=files_changed,
             modified_symbols=changed_symbol_names,
@@ -800,15 +764,16 @@ async def execute_pr_review(owner: str, repo: str, pr_number: int, neo4j: Neo4jC
             for ln in range(int(hunk["start_line"]), int(hunk["end_line"]) + 1):
                 valid_diff_lines.add((hunk["file_path"], ln))
 
-        # Determine review event: request changes for critical/high issues
-        actionable_issues = [i for i in reconciled.issues if i.status in ("new", "still_open")]
-        has_blocking = any(i.severity in ("critical", "high") for i in actionable_issues)
+        all_actionable = [i for i in reconciled.issues if i.status in ("new", "still_open")]
+        # Only post inline comments for high-confidence issues (≥7) to avoid noise
+        inline_candidates = [i for i in all_actionable if i.confidence >= 7]
+        has_blocking = any(i.severity in ("critical", "high") for i in inline_candidates)
         review_event = "REQUEST_CHANGES" if has_blocking else "COMMENT"
 
-        # Post inline comments for each actionable issue
+        # Post inline comments for each high-confidence actionable issue
         inline_posted = 0
         inline_skipped = 0
-        for issue in actionable_issues:
+        for issue in inline_candidates:
             if (issue.file, issue.line_start) in valid_diff_lines:
                 body = format_inline_comment(issue)
                 ok = await gh.post_inline_comment(

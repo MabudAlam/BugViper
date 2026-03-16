@@ -23,8 +23,6 @@ from code_review_agent.config import config
 from code_review_agent.models.agent_schemas import AgentFindings, ReviewResults
 from db.code_serarch_layer import CodeSearchService
 
-CONFIDENCE_THRESHOLD = 7
-
 logger = logging.getLogger(__name__)
 
 
@@ -38,7 +36,6 @@ def _extract_json(text: str) -> dict:
     """
     text = text.strip()
 
-    # Strip code fences
     fenced = re.sub(r"^```(?:json)?\s*", "", text)
     fenced = re.sub(r"\s*```$", "", fenced).strip()
     try:
@@ -46,13 +43,11 @@ def _extract_json(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Try the raw text
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Find the outermost {...} block
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
         return json.loads(match.group())
@@ -61,10 +56,7 @@ def _extract_json(text: str) -> dict:
 
 
 async def _synthesize(model: str, explored_messages: list) -> AgentFindings:
-    """Call the LLM with schema-in-prompt and parse the JSON response manually.
-
-    This works for any model on OpenRouter — no structured-output API required.
-    """
+    """Call the LLM with schema-in-prompt and parse the JSON response manually."""
     llm = load_chat_model(model)
 
     synthesis_messages = [
@@ -96,13 +88,14 @@ async def run_review(
     """LangGraph PR review: explore context with tools, then synthesize structured findings.
 
     Phase 1 — ReAct exploration:
-        A tool-limited graph (max 6 tool rounds) gathers additional context
-        from Neo4j. Even if the graph ends at the round limit, the accumulated
-        messages are returned cleanly — no recursion errors.
+        A tool-limited graph gathers additional context from Neo4j.
+        The explorer now explicitly traces callers of changed functions
+        for cross-file impact analysis.
 
     Phase 2 — JSON synthesis:
-        A plain LLM call with the full JSON schema embedded in the system
-        prompt. The response is parsed robustly so any OpenRouter model works.
+        A plain LLM call produces all issues at all confidence levels (0-10).
+        Status ("new"/"still_open"/"fixed") is set by the LLM based on
+        previous findings injected into the context by the caller.
     """
     model = config.review_model
     logger.info("LangGraph review start — %s#%s  model=%s", repo_id, pr_number, model)
@@ -138,18 +131,20 @@ async def run_review(
         logger.exception("Structured synthesis failed — returning empty findings")
         findings = AgentFindings(walk_through=[], issues=[], positive_findings=[])
 
-    issues = [i for i in findings.issues if i.confidence >= CONFIDENCE_THRESHOLD]
+    issues = findings.issues  # all confidence levels, status set by LLM
+    open_issues = [i for i in issues if i.status != "fixed"]
+    critical = sum(1 for i in open_issues if i.severity == "critical")
+    high = sum(1 for i in open_issues if i.severity == "high")
+
     logger.info(
-        "Review complete: %d raw issues → %d after confidence filter (≥%d)",
-        len(findings.issues), len(issues), CONFIDENCE_THRESHOLD,
+        "Review complete: %d total issues (%d open: %d critical, %d high)",
+        len(issues), len(open_issues), critical, high,
     )
 
-    critical = sum(1 for i in issues if i.severity == "critical")
-    high = sum(1 for i in issues if i.severity == "high")
     summary = (
-        "No significant issues found. The code looks good."
-        if not issues
-        else f"Found {len(issues)} issue(s) ({critical} critical, {high} high). Review the details below."
+        "No open issues found. The code looks good."
+        if not open_issues
+        else f"{len(open_issues)} open issue(s) ({critical} critical, {high} high)."
     )
 
     return ReviewResults(

@@ -8,12 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 
-def _fb(alias: str, default=None, **kwargs):
-    """Shorthand: Field with a Firestore (camelCase) serialization alias."""
-    return Field(default, serialization_alias=alias, **kwargs)
-
-
-
 
 class FirebaseUserData(BaseModel):
     """User document written to / read from users/{uid}."""
@@ -125,8 +119,6 @@ class ReviewRunData(BaseModel):
     Review run document saved after each LLM review.
 
     Stored at: users/{uid}/repos/{owner}_{repo}/prs/{pr_number}/reviews/run_{n}
-
-
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -134,8 +126,6 @@ class ReviewRunData(BaseModel):
     issues: list[dict]
     positive_findings: list[str]
     summary: str
-    fixed_fingerprints: list[str]
-    still_open_fingerprints: list[str]
-    new_fingerprints: list[str]
+    files_changed: list[str] = Field(default_factory=list, serialization_alias="filesChanged")
     repo_id: str = Field(serialization_alias="repoId")
     pr_number: int = Field(serialization_alias="prNumber")

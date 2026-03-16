@@ -1,7 +1,5 @@
-
-import hashlib
 from typing import Any, Literal
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class Issue(BaseModel):
@@ -33,7 +31,8 @@ class Issue(BaseModel):
             "Self-assessed confidence 0-10. "
             "10 = provable from diff lines alone. "
             "7-9 = strong signal, some context assumed. "
-            "<7 = needs full file to confirm - do not include."
+            "4-6 = uncertain, possible false positive. "
+            "0-3 = very speculative."
         ),
     )
     ai_fix: str | None = Field(
@@ -44,27 +43,22 @@ class Issue(BaseModel):
             "plus 1-2 lines of context. Only populate when the fix is unambiguous."
         ),
     )
-    # Populated post-reconciliation (not by the LLM)
-    status: Literal["new", "still_open", "fixed"] = Field(default="new")
-    fingerprint: str = Field(default="")
-
-    @model_validator(mode="after")
-    def compute_fingerprint(self) -> "Issue":
-        if not self.fingerprint:
-            raw = f"{self.file}::{self.title.strip().lower()}"
-            self.fingerprint = hashlib.sha1(raw.encode()).hexdigest()[:12]
-        return self
+    status: Literal["new", "still_open", "fixed"] = Field(
+        default="new",
+        description=(
+            "new = not seen before. "
+            "still_open = was in previous review and is still present. "
+            "fixed = was in previous review and has been addressed."
+        ),
+    )
 
 
 class ReconciledReview(BaseModel):
-    """Review results after cross-run reconciliation."""
+    """Review results ready for display."""
 
     issues: list[Issue] = Field(default_factory=list)
     positive_findings: list[str] = Field(default_factory=list)
     summary: str = ""
-    fixed_fingerprints: list[str] = Field(default_factory=list)
-    still_open_fingerprints: list[str] = Field(default_factory=list)
-    new_fingerprints: list[str] = Field(default_factory=list)
 
 
 class AgentFindings(BaseModel):
@@ -95,7 +89,7 @@ class FileSummary(BaseModel):
     file: str
     lines_added: int
     lines_removed: int
-    what_changed: str  # one-sentence description
+    what_changed: str
 
 
 class ReviewResults(BaseModel):
