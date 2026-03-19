@@ -19,6 +19,15 @@ class AgentConfig(BaseSettings):
     openrouter_api_key: str = Field(default="sk-or-v1-placeholder")
     openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1")
     review_model: str = Field(default="openai/gpt-4o-mini")
+    synthesis_model: str = Field(
+        default="google/gemini-2.5-pro-preview-03-25",
+        description="Reasoning model used by the Review Agent (Phase 2). "
+                    "Set SYNTHESIS_MODEL in .env to override.",
+    )
+    review_agent_max_rounds: int = Field(
+        default=5,
+        description="Max tool-call rounds the Review Agent may use for targeted verification.",
+    )
     enable_logfire: bool = Field(default=False)
     logfire_token: Optional[str] = Field(default=None)
 

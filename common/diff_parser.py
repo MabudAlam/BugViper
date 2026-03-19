@@ -31,14 +31,20 @@ def parse_unified_diff(diff_text: str) -> List[Dict[str, object]]:
         if hunk_match and current_file:
             start_line = int(hunk_match.group(1))
             count = int(hunk_match.group(2)) if hunk_match.group(2) else 1
-            end_line = start_line + max(count - 1, 0)
+            # count=0 means a deletion-only hunk — no new-file lines exist,
+            # so there is nothing to comment on (side=RIGHT). Skip it.
+            if count == 0:
+                continue
+            end_line = start_line + count - 1
             results.append({
                 "file_path": current_file,
                 "start_line": start_line,
                 "end_line": end_line,
             })
 
+
     return results
+
 
 
 def split_diff_by_file(diff_text: str) -> Dict[str, str]:

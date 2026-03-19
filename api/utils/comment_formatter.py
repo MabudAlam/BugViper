@@ -6,6 +6,63 @@ from code_review_agent.models.agent_schemas import ContextData, FileSummary, Iss
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_SECURITY_TOOLS = {"bandit", "semgrep", "gitleaks"}
+
+
+def _extract_tool(issue: Issue) -> str:
+    """Parse tool name from lint issue titles like '[ruff] E501: ...'."""
+    if issue.title.startswith("[") and "]" in issue.title:
+        return issue.title[1:issue.title.index("]")]
+    return "lint"
+
+
+def _render_static_section(lint_issues: list[Issue]) -> list[str]:
+    """Render grouped static analysis findings by tool.
+
+    Security tools (bandit, semgrep, gitleaks) are shown open by default.
+    Style/quality tools are collapsed.
+    """
+    if not lint_issues:
+        return []
+
+    by_tool: dict[str, list[Issue]] = defaultdict(list)
+    for issue in lint_issues:
+        by_tool[_extract_tool(issue)].append(issue)
+
+    lines: list[str] = []
+    lines.append("### 🔬 Static Analysis")
+    lines.append("")
+    lines.append(f"*{len(lint_issues)} finding(s) from {len(by_tool)} tool(s) — deterministic, confidence 10/10*")
+    lines.append("")
+
+    # Security tools first, then alphabetical
+    security = {t: v for t, v in by_tool.items() if t in _SECURITY_TOOLS}
+    quality  = {t: v for t, v in by_tool.items() if t not in _SECURITY_TOOLS}
+
+    for tool, issues in list(security.items()) + sorted(quality.items()):
+        is_sec = tool in _SECURITY_TOOLS
+        # All sections open by default
+        lines.append("<details open>")
+        lines.append(f"<summary>{'🔐' if is_sec else '🔧'} {tool} ({len(issues)} issue(s))</summary>")
+        lines.append("")
+        lines.append("| File | Line | Rule | Message |")
+        lines.append("|------|------|------|---------|")
+        for issue in sorted(issues, key=lambda i: (i.file, i.line_start)):
+            # Extract rule from title: "[tool] RULE: message" → "RULE"
+            rule = ""
+            if "] " in issue.title:
+                after_tool = issue.title.split("] ", 1)[1]
+                rule = after_tool.split(":")[0].strip() if ":" in after_tool else after_tool.split()[0]
+            # No truncation — show full message
+            lines.append(
+                f"| `{issue.file}` | {issue.line_start} | `{rule}` | {issue.description} |"
+            )
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+    return lines
+
 _LANG_MAP = {
     "py": "python", "ts": "typescript", "tsx": "typescript",
     "js": "javascript", "jsx": "javascript", "rb": "ruby",
@@ -22,24 +79,35 @@ def _file_lang(path: str) -> str:
 def _ai_fix_to_suggestion(ai_fix: str) -> str | None:
     """Convert a unified-diff ai_fix into a GitHub suggestion block.
 
-    Extracts the '+' lines (new code) so the PR author can apply the fix
-    with a single click. Returns None if there are no '+' lines.
+    Only produces a suggestion when the diff is clean and unambiguous:
+    - Contains at least one '+' line (new code)
+    - No lines that start with '-+' or '+-' (malformed agent output)
+    - No hunk headers ('@@') that would confuse the suggestion block
+
+    Returns None for complex or malformed diffs so callers fall back to
+    showing the fix as prose — avoids broken rendered comments.
     """
+    raw = ai_fix.strip()
+    lines = raw.splitlines()
+
+    # Reject malformed diffs immediately
+    for line in lines:
+        # Agent sometimes writes '-+' or '+-' on the same line — not valid unified diff
+        if (line.startswith("-+") or line.startswith("+-")
+                or line.startswith("@@")):
+            return None
+
     plus_lines = [
-        line[1:] for line in ai_fix.strip().splitlines()
+        line[1:] for line in lines
         if line.startswith("+") and not line.startswith("+++")
     ]
     if not plus_lines:
         return None
+
     return "```suggestion\n" + "\n".join(plus_lines) + "\n```"
 
-_SEV_LABEL = {
-    "critical": "🔴 Critical",
-    "high":     "🟠 High",
-    "medium":   "🟡 Medium",
-    "low":      "🟢 Low",
-}
-_RISK_EMOJI = {"low": "🟢", "medium": "🟡", "high": "🔴"}
+
+# Severity labels removed — descriptions carry the meaning
 
 
 def _line_range(issue: Issue) -> str:
@@ -52,8 +120,8 @@ def _render_issue_block(issue: Issue) -> list[str]:
     """Render one issue in CodeRabbit inline-comment style."""
     lines: list[str] = []
 
-    sev = _SEV_LABEL.get(issue.severity, issue.severity.capitalize())
-    lines.append(f"{_line_range(issue)}: _⚠️ {sev}_")
+    issue_type = getattr(issue, "issue_type", None) or "Potential issue"
+    lines.append(f"{_line_range(issue)}: ⚠️ **{issue_type}**")
     lines.append("")
     lines.append(f"**{issue.title}**")
     lines.append("")
@@ -83,15 +151,24 @@ def _render_issue_block(issue: Issue) -> list[str]:
         lines.append(f"> **Suggestion**: {issue.suggestion}")
 
     if issue.ai_fix:
+        suggestion = _ai_fix_to_suggestion(issue.ai_fix)
         lines.append("")
-        lines.append("<details>")
-        lines.append("<summary>🤖 Suggested fix</summary>")
-        lines.append("")
-        lines.append("```diff")
-        lines.append(issue.ai_fix.strip("\n"))
-        lines.append("```")
-        lines.append("")
-        lines.append("</details>")
+        if suggestion:
+            lines.append("<details>")
+            lines.append("<summary>🔧 Suggested fix (apply on diff)</summary>")
+            lines.append("")
+            lines.append(suggestion)
+            lines.append("")
+            lines.append("</details>")
+        else:
+            lines.append("<details>")
+            lines.append("<summary>🔧 Suggested fix (diff)</summary>")
+            lines.append("")
+            lines.append("```diff")
+            lines.append(issue.ai_fix.strip("\n"))
+            lines.append("```")
+            lines.append("")
+            lines.append("</details>")
 
     return lines
 
@@ -127,11 +204,13 @@ def format_inline_comment(issue: Issue) -> str:
     If the issue has an ai_fix, converts it to a GitHub suggestion block
     so the PR author can apply it with one click.
     """
-    sev = _SEV_LABEL.get(issue.severity, issue.severity.capitalize())
     lang = _file_lang(issue.file)
+    issue_type = getattr(issue, "issue_type", None) or "Potential issue"
 
     lines: list[str] = [
-        f"**{sev} · {issue.title}**",
+        f"⚠️ {issue_type}",
+        "",
+        f"**{issue.title}**",
         "",
         issue.description,
     ]
@@ -147,22 +226,92 @@ def format_inline_comment(issue: Issue) -> str:
         if suggestion:
             lines += ["", suggestion]
         else:
-            lines += ["", "```diff", issue.ai_fix.strip(), "```"]
+            lines += ["", "<details>", "<summary>🐛 Proposed fix (diff)</summary>", "",
+                      "```diff", issue.ai_fix.strip(), "```", "", "</details>"]
     elif issue.code_snippet:
         lines += ["", f"```{lang}", issue.code_snippet.strip(), "```"]
 
+    ai_agent_prompt = getattr(issue, "ai_agent_prompt", None)
+    if ai_agent_prompt:
+        lines += [
+            "",
+            "---",
+            "",
+            "**🤖 Prompt for AI Agents**",
+            "",
+            ai_agent_prompt,
+        ]
+
     lines += ["", f"*Category: `{issue.category}` · Confidence: {issue.confidence}/10*"]
     return "\n".join(lines)
+
+
+
+def _render_debug_section(raw_agent_json: str, debug_info: dict) -> list[str]:
+    """Render a collapsible debug section with agent JSON + full lint dump."""
+    lines: list[str] = []
+    lines.append("<details>")
+    lines.append("<summary>🛠️ Debug — Agent output &amp; static analysis dump</summary>")
+    lines.append("")
+
+    # Pipeline stats
+    tool_rounds = debug_info.get("tool_rounds_used", 0)
+    lint_raw    = debug_info.get("lint_raw_count", 0)
+    lint_pr     = debug_info.get("lint_on_diff_count", 0)
+    lines.append(f"**Explorer tool rounds:** {tool_rounds}")
+    lines.append(f"**Lint findings:** {lint_pr} in PR files / {lint_raw} total (pre-filter)")
+    lines.append("")
+
+    # Raw lint dump
+    lint_raw_issues: list[dict] = debug_info.get("lint_raw", [])
+    if lint_raw_issues:
+        lines.append("**All lint findings (including pre-existing / off-diff):**")
+        lines.append("")
+        lines.append("| File | Line | Tool | Rule | Severity |")
+        lines.append("|------|------|------|------|----------|")
+        for i in lint_raw_issues:
+            title = i.get("title", "")
+            rule = ""
+            if "] " in title:
+                after = title.split("] ", 1)[1]
+                rule = after.split(":")[0].strip() if ":" in after else after.split()[0]
+            tool = title[1:title.index("]")] if title.startswith("[") and "]" in title else "lint"
+            lines.append(
+                f"| `{i.get('file', '')}` | {i.get('line_start', '')} "
+                f"| {tool} | `{rule}` | {i.get('severity', '')} |"
+            )
+        lines.append("")
+
+    # Raw agent JSON
+    _MAX_JSON = 25_000
+    if raw_agent_json:
+        display = raw_agent_json[:_MAX_JSON]
+        truncated = len(raw_agent_json) > _MAX_JSON
+        lines.append("**Raw synthesizer output (JSON):**")
+        lines.append("")
+        lines.append("```json")
+        lines.append(display)
+        if truncated:
+            lines.append("# ... truncated")
+        lines.append("```")
+        lines.append("")
+
+    lines.append("</details>")
+    lines.append("")
+    return lines
 
 
 def format_review_summary(
     review: ReconciledReview,
     context: ContextData | None,
     pr_number: int,
+    lint_issues: list[Issue] | None = None,
     files_changed_summary: list[FileSummary] | None = None,
     walk_through: list[str] | None = None,
     inline_posted: int = 0,
     inline_skipped: int = 0,
+    raw_agent_json: str = "",
+    debug_info: dict | None = None,
 ) -> str:
     """Format the top-level PR review body (overview only).
 
@@ -171,6 +320,8 @@ def format_review_summary(
     """
     parts: list[str] = []
 
+    # review.issues contains LLM-only findings; lint_issues are passed separately
+    lint_issues = lint_issues or []
     fixed_issues = [i for i in review.issues if i.status == "fixed"]
     open_issues  = [i for i in review.issues if i.status == "still_open"]
     new_issues   = [i for i in review.issues if i.status == "new"]
@@ -192,6 +343,8 @@ def format_review_summary(
         badges.append(f"🔁 {len(open_issues)} still open")
     if new_issues:
         badges.append(f"🆕 {len(new_issues)} new")
+    if lint_issues:
+        badges.append(f"🔬 {len(lint_issues)} static")
     if badges:
         parts.append("  ".join(badges))
         parts.append("")
@@ -227,15 +380,24 @@ def format_review_summary(
         parts.append("</details>")
         parts.append("")
 
-    # ── Impact analysis ───────────────────────────────────────────────────────
-    if context:
-        risk_emoji = _RISK_EMOJI.get(context.risk_level, "⚪")
+    # Impact analysis intentionally removed — low signal for most PRs
+
+    # ── All Issues table (collapsed) ──────────────────────────────────────────
+    all_actionable = [i for i in review.issues if i.status in ("new", "still_open")]
+    if all_actionable:
+        sorted_issues = sorted(all_actionable, key=lambda i: i.confidence, reverse=True)
         parts.append("<details>")
-        parts.append("<summary>📊 Impact Analysis</summary>")
+        parts.append(f"<summary>🔍 All Issues ({len(sorted_issues)})</summary>")
         parts.append("")
-        parts.append(f"- **Symbols modified**: {len(context.modified_symbols)}")
-        parts.append(f"- **Downstream callers**: {context.total_callers}")
-        parts.append(f"- **Risk level**: {risk_emoji} {context.risk_level.upper()}")
+        parts.append("| File | Line | Type | Title | Confidence |")
+        parts.append("|------|------|------|-------|------------|")
+        for i in sorted_issues:
+            status_icon = "🆕" if i.status == "new" else "🔁"
+            line_ref = f"{i.line_start}" if not i.line_end or i.line_end == i.line_start else f"{i.line_start}–{i.line_end}"
+            issue_type = getattr(i, "issue_type", None) or "Potential issue"
+            parts.append(
+                f"| `{i.file}` | {line_ref} | {status_icon} {issue_type} | {i.title} | {i.confidence}/10 |"
+            )
         parts.append("")
         parts.append("</details>")
         parts.append("")
@@ -249,6 +411,7 @@ def format_review_summary(
                 f"- ~~**{issue.title}**~~ `{issue.file}:{issue.line_start}` — resolved"
             )
         parts.append("")
+
 
     # ── Nitpicks toggle (all <7 confidence actionable issues) ─────────────────
     if nitpicks:
@@ -274,8 +437,17 @@ def format_review_summary(
         parts.append("")
 
     if not actionable and not fixed_issues:
-        parts.append("✅ **No issues found. The code looks good!**")
+        parts.append("✅ **BugViper found no issues.**")
         parts.append("")
+
+    # ── Static analysis section ───────────────────────────────────────────────
+    for line in _render_static_section(lint_issues):
+        parts.append(line)
+
+    # ── Debug section ─────────────────────────────────────────────────────────
+    if raw_agent_json or debug_info:
+        for line in _render_debug_section(raw_agent_json, debug_info or {}):
+            parts.append(line)
 
     # ── Footer ────────────────────────────────────────────────────────────────
     parts.append("---")
@@ -292,13 +464,17 @@ def format_github_comment(
     review: ReconciledReview,
     context: ContextData | None,
     pr_number: int,
+    lint_issues: list[Issue] | None = None,
     files_changed_summary: list[FileSummary] | None = None,
     walk_through: list[str] | None = None,
-    raw_agent_json: str | None = None,
+    raw_agent_json: str = "",
+    debug_info: dict | None = None,
 ) -> str:
     """Format a ReconciledReview into a GitHub PR comment (CodeRabbit-style)."""
     parts: list[str] = []
 
+    # review.issues contains LLM-only findings; lint_issues are passed separately
+    lint_issues = lint_issues or []
     fixed_issues = [i for i in review.issues if i.status == "fixed"]
     open_issues  = [i for i in review.issues if i.status == "still_open"]
     new_issues   = [i for i in review.issues if i.status == "new"]
@@ -319,6 +495,8 @@ def format_github_comment(
         run_summary_parts.append(f"**{len(open_issues)} still open**")
     if new_issues:
         run_summary_parts.append(f"**{len(new_issues)} new**")
+    if lint_issues:
+        run_summary_parts.append(f"**{len(lint_issues)} static**")
     if run_summary_parts:
         parts.append(" · ".join(run_summary_parts))
         parts.append("")
@@ -352,23 +530,10 @@ def format_github_comment(
         parts.append("</details>")
         parts.append("")
 
-    # ── Impact analysis ───────────────────────────────────────────────────────
-    if context:
-        risk_emoji = _RISK_EMOJI.get(context.risk_level, "⚪")
-        parts.append("<details>")
-        parts.append("<summary>📊 Impact Analysis</summary>")
-        parts.append("")
-        parts.append(f"- **Symbols modified**: {len(context.modified_symbols)}")
-        parts.append(f"- **Downstream callers**: {context.total_callers}")
-        parts.append(f"- **Risk level**: {risk_emoji} {context.risk_level.upper()}")
-        parts.append("")
-        parts.append("</details>")
-        parts.append("")
 
     parts.append("---")
     parts.append("")
 
-    # ── Fixed ─────────────────────────────────────────────────────────────────
     if fixed_issues:
         parts.append(f"### ✅ Fixed Since Last Review ({len(fixed_issues)})")
         parts.append("")
@@ -396,28 +561,9 @@ def format_github_comment(
     if new_high:
         parts.append(f"### 🆕 New Issues ({len(new_high)})")
         parts.append("")
-
-        critical = [i for i in new_high if i.severity == "critical"]
-        high     = [i for i in new_high if i.severity == "high"]
-        medium   = [i for i in new_high if i.severity == "medium"]
-        low      = [i for i in new_high if i.severity == "low"]
-
-        for group_label, group, open_default in [
-            ("🔴 Critical", critical, True),
-            ("🟠 High",     high,     True),
-            ("🟡 Medium",   medium,   False),
-            ("🟢 Low",      low,      False),
-        ]:
-            if not group:
-                continue
-            open_attr = " open" if open_default else ""
-            parts.append(f"<details{open_attr}>")
-            parts.append(f"<summary>{group_label} ({len(group)})</summary>")
-            parts.append("")
-            for line in _render_issues_by_file(group):
-                parts.append(line)
-            parts.append("</details>")
-            parts.append("")
+        for line in _render_issues_by_file(new_high):
+            parts.append(line)
+        parts.append("")
 
     # ── Nitpicks toggle (all <7 confidence actionable issues) ─────────────────
     if all_nitpicks:
@@ -432,11 +578,15 @@ def format_github_comment(
         parts.append("")
 
     if not fixed_issues and not open_issues and not new_issues:
-        parts.append("✅ **No issues found. The code looks good!**")
+        parts.append("✅ **BugViper found no issues.**")
         parts.append("")
     elif not fixed_issues and not open_high and not new_high and all_nitpicks:
         parts.append("✅ **No significant issues found.** Only low-confidence observations (see Nitpicks above).")
         parts.append("")
+
+    # ── Static analysis section ───────────────────────────────────────────────
+    for line in _render_static_section(lint_issues):
+        parts.append(line)
 
     # ── Positive findings ─────────────────────────────────────────────────────
     if review.positive_findings:
@@ -449,25 +599,10 @@ def format_github_comment(
         parts.append("</details>")
         parts.append("")
 
-    # ── Raw agent JSON (capped to keep total comment under GitHub's 65 536-char limit) ──
-    _MAX_JSON_CHARS = 30_000
-    if raw_agent_json:
-        display_json = raw_agent_json
-        truncated = False
-        if len(raw_agent_json) > _MAX_JSON_CHARS:
-            display_json = raw_agent_json[:_MAX_JSON_CHARS]
-            truncated = True
-        parts.append("<details>")
-        parts.append("<summary>🔍 Raw agent response (JSON)</summary>")
-        parts.append("")
-        parts.append("```json")
-        parts.append(display_json)
-        if truncated:
-            parts.append("# ... (truncated — full JSON exceeds display limit)")
-        parts.append("```")
-        parts.append("")
-        parts.append("</details>")
-        parts.append("")
+    # ── Debug section ─────────────────────────────────────────────────────────
+    if raw_agent_json or debug_info:
+        for line in _render_debug_section(raw_agent_json, debug_info or {}):
+            parts.append(line)
 
     # ── Footer ────────────────────────────────────────────────────────────────
     parts.append("---")

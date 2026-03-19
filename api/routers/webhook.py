@@ -9,20 +9,13 @@ from fastapi import APIRouter, BackgroundTasks, Request, Response
 
 from api.services.cloud_tasks_service import CloudTasksService
 from api.services.review_service import execute_pr_review
+from common.github_client import get_github_client
 from common.job_models import IncrementalPRPayload, IncrementalPushPayload, PRReviewPayload
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 cloud_tasks = CloudTasksService()
-
-
-def _verify_github_signature(secret: str, body: bytes, sig_header: str) -> bool:
-    """Return True if the X-Hub-Signature-256 header matches the HMAC-SHA256 of the body."""
-    if not sig_header.startswith("sha256="):
-        return False
-    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(f"sha256={expected}", sig_header)
 
 
 @router.post("/onComment")
@@ -51,7 +44,11 @@ async def on_comment(request: Request, background_tasks: BackgroundTasks):
 
 
 async def _handle_push(payload: dict, background_tasks: BackgroundTasks) -> dict:
-    """Ingest changed files when code is pushed directly to a branch."""
+    """Ingest changed files when code is pushed directly to a branch.
+
+    If the pushed branch has an open PR, ingestion is skipped — the PR review
+    flow handles those pushes (triggered by an @bugviper mention on the PR).
+    """
     repo_info = payload.get("repository", {})
     owner = repo_info.get("owner", {}).get("login") or repo_info.get("owner", {}).get("name", "")
     repo_name = repo_info.get("name", "")
@@ -65,7 +62,24 @@ async def _handle_push(payload: dict, background_tasks: BackgroundTasks) -> dict
     if before_sha == "0000000000000000000000000000000000000000":
         return {"status": "ignored", "reason": "new branch creation — use full ingestion"}
 
+    # Extract branch name from ref (e.g. "refs/heads/pr-2" → "pr-2")
+    branch = ref.removeprefix("refs/heads/")
+
     logger.info("Push: %s/%s %s (%s..%s)", owner, repo_name, ref, before_sha[:7], after_sha[:7])
+
+    # If there's an open PR for this branch, skip graph ingestion.
+    # The PR review pipeline owns those pushes — re-ingesting mid-PR would
+    # corrupt the graph with an unmerged intermediate state.
+    gh = get_github_client()
+    if await gh.has_open_pr_for_branch(owner, repo_name, branch):
+        logger.info(
+            "Push to %s/%s branch '%s' has an open PR — skipping ingestion",
+            owner, repo_name, branch,
+        )
+        return {
+            "status": "ignored",
+            "reason": f"branch '{branch}' has an open PR — ingestion skipped",
+        }
 
     job_id = f"inc-push-{uuid.uuid4().hex[:12]}"
 
@@ -188,17 +202,7 @@ async def on_marketplace(request: Request):
     """
     body = await request.body()
 
-    # ── Signature verification ───────────────────────────────────────────────
-    secret = os.getenv("GITHUB_MARKETPLACE_WEBHOOK_SECRET", "")
-    if secret:
-        sig_header = request.headers.get("X-Hub-Signature-256", "")
-        if not _verify_github_signature(secret, body, sig_header):
-            logger.warning("Marketplace webhook: invalid signature")
-            return Response(
-                content=json.dumps({"detail": "Invalid signature"}),
-                status_code=401,
-                media_type="application/json",
-            )
+
 
     # ── Parse payload (JSON or form-encoded) ────────────────────────────────
     content_type = request.headers.get("content-type", "")

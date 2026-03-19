@@ -10,14 +10,29 @@ def _lang_hint(file_path: str) -> str:
     return EXT_TO_LANG.get(Path(file_path).suffix.lower(), "")
 
 
-def build_graph_context_section(graph_context: dict[str, Any]) -> str:
-    """Build a markdown section from graph context for the LLM prompt."""
+def build_graph_context_section(graph_context: dict[str, Any], changed_files: set[str] | None = None) -> str:
+    """Build a markdown section from graph context for the LLM prompt.
+
+    Args:
+        graph_context: Graph context dict from Neo4j.
+        changed_files: Set of file paths in the PR diff. Symbols from these files
+            are excluded from the affected_symbols section because the full-file
+            contents already show the authoritative post-PR source — the graph
+            snapshot is always pre-PR state and would be stale/misleading.
+    """
     parts: list[str] = []
+    _changed = changed_files or set()
 
     # ── Affected symbols (functions, methods, classes) ───────────────────────
     affected = graph_context.get("affected_symbols", [])
+    # Only keep symbols from files NOT in the PR diff.
+    # Files in the diff already have full post-PR source in the prompt.
+    affected = [
+        s for s in affected
+        if (s.get("change_file") or s.get("file_path", "")) not in _changed
+    ]
     if affected:
-        parts.append(f"**{len(affected)} symbol(s) modified in this PR:**")
+        parts.append(f"**{len(affected)} symbol(s) from dependent files (pre-PR graph snapshot — for call-graph context only):**")
         parts.append("")
 
         for sym in affected[:20]:

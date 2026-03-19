@@ -247,18 +247,19 @@ class BugViperFirebaseService:
         )
         return [doc.to_dict() for doc in docs]
 
-    # ── User lookup by GitHub username ────────────────────────────────────
-
-    def lookup_uid_by_github_username(self, github_username: str) -> Optional[str]:
-        """Return the Firebase UID for a given GitHub username, or None if not found."""
+    def find_repo_owner_uid(self, owner: str, repo: str) -> Optional[str]:
+        """Return the Firebase UID that owns the repo metadata entry, if any."""
+        full_name = f"{owner}/{repo}"
         docs = (
-            self._db.collection("users")
-            .where("githubUsername", "==", github_username)
+            self._db.collection_group("repos")
+            .where("fullName", "==", full_name)
             .limit(1)
             .stream()
         )
         for doc in docs:
-            return doc.id
+            parent = doc.reference.parent
+            user_ref = parent.parent
+            return user_ref.id if user_ref else None
         return None
 
     # ── PR metadata ────────────────────────────────────────────────────────
@@ -352,6 +353,7 @@ class BugViperFirebaseService:
 
         logger.info(f"Saved review run {run_id} for {owner}/{repo}#{pr_number}")
         return run_id
+
 
     # ── Customer support ──────────────────────────────────────────────────
 

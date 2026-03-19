@@ -5,8 +5,13 @@ from pydantic import BaseModel, Field
 class Issue(BaseModel):
     """Code review issue/finding."""
 
-    severity: Literal["critical", "high", "medium", "low"] = Field(
-        description="Issue severity level"
+    issue_type: str = Field(
+        default="Potential issue",
+        description=(
+            "Human-readable label for the kind of issue. "
+            "Examples: 'Bug', 'Potential issue', 'Security concern', "
+            "'Performance', 'Logic error', 'Missing validation', 'Resource leak'."
+        ),
     )
     category: str = Field(description="Issue category (e.g., 'security', 'bug', 'style')")
     title: str = Field(description="Short title of the issue")
@@ -28,9 +33,10 @@ class Issue(BaseModel):
         ge=0,
         le=10,
         description=(
-            "Self-assessed confidence 0-10. "
-            "10 = provable from diff lines alone. "
-            "7-9 = strong signal, some context assumed. "
+            "Self-assessed confidence 0-9 for LLM findings. "
+            "10 is RESERVED for deterministic static analysis tools only — never set 10 yourself. "
+            "9 = provable from diff lines alone. "
+            "7-8 = strong signal, some context assumed. "
             "4-6 = uncertain, possible false positive. "
             "0-3 = very speculative."
         ),
@@ -41,6 +47,15 @@ class Issue(BaseModel):
             "Unified diff patch showing the fix. Use `-` prefix for removed lines "
             "and `+` prefix for added lines. Keep it minimal - only the changed lines "
             "plus 1-2 lines of context. Only populate when the fix is unambiguous."
+        ),
+    )
+    ai_agent_prompt: str | None = Field(
+        default=None,
+        description=(
+            "A self-contained, machine-readable instruction for an AI agent to verify and fix this issue. "
+            "Include: exact file path, line range, what to check, and what change to make. "
+            "Written in second-person imperative. Example: "
+            "'In `foo/bar.py` around lines 42-50, verify that ... then replace ... with ...'."
         ),
     )
     status: Literal["new", "still_open", "fixed"] = Field(
@@ -105,6 +120,10 @@ class ReviewResults(BaseModel):
     )
     error: str | None = Field(default=None, description="Error message if review failed")
     files_changed_summary: list[FileSummary] = Field(default_factory=list)
+    # Debug fields — raw outputs for transparency
+    raw_agent_json: str = Field(default="", description="Raw JSON string from the Review Agent")
+    tool_rounds_used: int = Field(default=0, description="Tool rounds used by the Explorer (Phase 1)")
+    review_agent_rounds_used: int = Field(default=0, description="Tool rounds used by the Review Agent (Phase 2)")
 
 
 class ContextData(BaseModel):

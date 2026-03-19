@@ -687,23 +687,26 @@ async def ingest_direct_push(
     # =================================
     info_logger(f"Calling GitHub API: repository.compare('{before_sha[:7]}', '{after_sha[:7]}')")
 
-    def _compare_commits():
-        github = gh._get_github_instance(owner, repo)
-        repository = github.get_repo(f"{owner}/{repo}")
-        comparison = repository.compare(before_sha, after_sha)
+    # Use GitHub's Compare API: GET /repos/{owner}/{repo}/compare/{before}...{after}
+    token = await gh._get_token(owner, repo)
+    r = await gh._http.get(
+        f"/repos/{owner}/{repo}/compare/{before_sha}...{after_sha}",
+        headers=gh._auth_headers(token),
+    )
+    r.raise_for_status()
+    compare_data = r.json()
 
-        return [
-            {
-                "filename": f.filename,
-                "status": f.status,
-                "previous_filename": getattr(f, 'previous_filename', None),
-                "additions": f.additions,
-                "deletions": f.deletions,
-            }
-            for f in comparison.files
-        ]
+    changed_files = [
+        {
+            "filename": f["filename"],
+            "status": f["status"],
+            "previous_filename": f.get("previous_filename"),
+            "additions": f.get("additions", 0),
+            "deletions": f.get("deletions", 0),
+        }
+        for f in compare_data.get("files", [])
+    ]
 
-    changed_files = await asyncio.to_thread(_compare_commits)
 
     info_logger(f"GitHub API returned {len(changed_files)} changed files:")
     for idx, file in enumerate(changed_files):
