@@ -166,6 +166,22 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
 
     logger.info("Review triggered: %s/%s#%s", owner, repo_name, pr_number)
 
+    from api.services.firebase_service import firebase_service
+    from common.firebase_models import PrReviewStatus
+    uid = firebase_service.lookup_uid_by_github_username(owner)
+    if uid:
+        pr_meta = firebase_service.get_pr_metadata(uid, owner, repo_name, pr_number)
+        if pr_meta and pr_meta.get("reviewStatus") == PrReviewStatus.RUNNING.value:
+            logger.info("Skipping review for %s/%s#%s — already running", owner, repo_name, pr_number)
+            gh = get_github_client()
+            await gh.post_comment(
+                owner,
+                repo_name,
+                pr_number,
+                "⏳ **BugViper is already reviewing this PR.** Please wait until the current review completes before requesting another one!"
+            )
+            return {"status": "ignored", "reason": "review already running"}
+
     if cloud_tasks.review_is_enabled:
         review_payload = PRReviewPayload(owner=owner, repo=repo_name, pr_number=pr_number)
         cloud_tasks.dispatch_pr_review(review_payload)

@@ -715,7 +715,7 @@ class CodeSearchService:
         records, _, _ = self.db.run_query(
             """
             MATCH (f:File)
-            WHERE f.relative_path = $relative_path AND f.repo = $repo_id
+            WHERE f.path = $relative_path AND f.repo = $repo_id
             MATCH (f)-[:CONTAINS]->(n)
             WHERE (n:Function OR n:Class OR n:Variable)
               AND n.line_number IS NOT NULL
@@ -725,7 +725,7 @@ class CodeSearchService:
                 CASE WHEN n:Function THEN 'function' WHEN n:Class THEN 'class' ELSE 'variable' END as type,
                 n.name as name, n.line_number as start_line,
                 coalesce(n.end_line, n.line_number) as end_line,
-                n.source as source, n.docstring as docstring, f.relative_path as file_path
+                n.source as source, n.docstring as docstring, f.path as file_path
             ORDER BY n.line_number
             """,
             {"repo_id": repo_id, "relative_path": relative_path, "start_line": start_line, "end_line": end_line},
@@ -794,9 +794,9 @@ class CodeSearchService:
         records, _, _ = self.db.run_query(
             """
             MATCH (f:File)
-            WHERE f.relative_path = $relative_path AND f.repo = $repo_id
+            WHERE f.path = $relative_path AND f.repo = $repo_id
             RETURN f.source_code AS source_code,
-                   f.relative_path AS path,
+                   f.path AS path,
                    f.language AS language,
                    f.lines_count AS lines_count
             LIMIT 1

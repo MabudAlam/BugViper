@@ -22,4 +22,5 @@ def load_chat_model(model: str, timeout: int = 180) -> BaseChatModel:
         api_key=os.getenv("OPENROUTER_API_KEY"),
         base_url=OPENROUTER_BASE_URL,
         timeout=timeout,
+        extra_body={"include_reasoning": False},
     )

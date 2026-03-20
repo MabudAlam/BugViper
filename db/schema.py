@@ -663,7 +663,7 @@ CYPHER_QUERIES = {
                m.cyclomatic_complexity as complexity,
                coalesce(m.source_code, m.source) as source_code,
                coalesce(f.path, f2.path) as file_path,
-               coalesce(f.relative_path, f2.relative_path) as relative_path,
+               coalesce(f.path, f2.path) as relative_path,
                cls.name as class_name,
                labels(m)[0] as symbol_type
         ORDER BY coalesce(f.path, f2.path)

@@ -76,9 +76,9 @@ async def _run_review_agent(
         result = await graph.ainvoke(
             {"messages": seed_messages, "tool_rounds": 0, "findings": None}
         )
-    except Exception:
-        logger.exception("Review Agent phase failed — returning empty findings")
-        return AgentFindings(walk_through=[], issues=[], positive_findings=[]), 0
+    except Exception as e:
+        logger.exception("Review Agent phase failed")
+        raise Exception(f"Review Agent failed: {e}") from e
 
     findings: AgentFindings | None = result.get("findings")
     review_rounds_used: int = result.get("tool_rounds", 0)
@@ -163,8 +163,9 @@ async def run_review(
             repo_id=repo_id,
             max_rounds=max_review_rounds,
         )
-    except Exception:
-        logger.exception("Review Agent failed — returning empty findings")
+    except Exception as e:
+        logger.exception("Review Agent failed critically.")
+        raise
 
     logger.info(
         "Review Agent complete: %d tool rounds used",

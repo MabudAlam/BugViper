@@ -1,9 +1,16 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from enum import Enum
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class PrReviewStatus(str, Enum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 
@@ -110,6 +117,14 @@ class PRMetadata(BaseModel):
     repo: str
     pr_number: int = Field(serialization_alias="prNumber")
     repo_id: str = Field(serialization_alias="repoId")
+    review_status: Optional[PrReviewStatus] = Field(
+        default=None, serialization_alias="reviewStatus"
+    )
+    review_count: int = Field(default=0, serialization_alias="reviewCount")
+    open_issue_count: int = Field(default=0, serialization_alias="openIssueCount")
+    created_at: Optional[str] = Field(None, serialization_alias="createdAt")
+    updated_at: Optional[str] = Field(None, serialization_alias="updatedAt")
+    failed_reasons: list[str] = Field(default_factory=list, serialization_alias="failedReasons")
 
 
 

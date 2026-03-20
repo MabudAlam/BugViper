@@ -33,7 +33,7 @@ from common.languages import EXT_TO_LANG, LANG_PARSER_REGISTRY
 from common.call_skip import get_call_skip
 from common.debug_writer import make_review_dir, write_step
 from api.services.firebase_service import firebase_service
-from common.firebase_models import PRMetadata, ReviewRunData
+from common.firebase_models import PRMetadata, ReviewRunData, PrReviewStatus
 from db.client import Neo4jClient, get_neo4j_client
 from db.code_serarch_layer import CodeSearchService
 from code_review_agent.models.agent_schemas import ContextData, FileSummary, Issue, ReconciledReview
@@ -310,13 +310,16 @@ def _build_prev_issues_context(prev_run: dict) -> str:
         desc = (issue.get("description") or "")[:300]
         issue_type = issue.get("issue_type") or "Issue"
 
-        loc = f"`{fp}:{line_start}`" if line_start == line_end else f"`{fp}:{line_start}-{line_end}`"
+        loc = (
+            f"`{fp}:{line_start}`" if line_start == line_end else f"`{fp}:{line_start}-{line_end}`"
+        )
         lines.append(f"{idx}. **[{issue_type}] {title}** — {loc}")
         lines.append(f"   Category: `{category}` · Confidence: {confidence}/10")
         if desc:
             lines.append(f"   > {desc}")
         lines.append("")
     return "\n".join(lines)
+
 
 def _diff_summary_for_file(diff_text: str, file_path: str) -> str:
     """Return a human-readable one-liner describing what changed in *file_path*.
@@ -362,16 +365,21 @@ def _diff_summary_for_file(diff_text: str, file_path: str) -> str:
     # Heuristic 2 — lock / dependency file
     ext = file_path.rsplit(".", 1)[-1].lower()
     base = file_path.rsplit("/", 1)[-1].lower()
-    if ext in {"lock", "toml", "cfg", "ini"} or base in {"requirements.txt", "pyproject.toml", "package.json", "cargo.toml"}:
-        pkgs = [_re.search(r'name\s*=\s*"([^"]+)"', l) for l in added]
+    if ext in {"lock", "toml", "cfg", "ini"} or base in {
+        "requirements.txt",
+        "pyproject.toml",
+        "package.json",
+        "cargo.toml",
+    }:
+        pkgs = [re.search(r'name\s*=\s*"([^"]+)"', l) for l in added]
         pkg_names = [m.group(1) for m in pkgs if m]
         if pkg_names:
             return f"Add dependency: {', '.join(pkg_names[:3])}"
         return f"Update dependencies (+{add_count} / -{rem_count} lines)"
 
     # Heuristic 3 — variable / import renames in Python
-    import_old = [_re.search(r"import\s+(\w+)", l) for l in removed]
-    import_new = [_re.search(r"import\s+(\w+)", l) for l in added]
+    import_old = [re.search(r"import\s+(\w+)", l) for l in removed]
+    import_new = [re.search(r"import\s+(\w+)", l) for l in added]
     old_imports = {m.group(1) for m in import_old if m}
     new_imports = {m.group(1) for m in import_new if m}
     if old_imports != new_imports and old_imports and new_imports:
@@ -444,6 +452,9 @@ async def execute_pr_review(
     owner: str, repo: str, pr_number: int, neo4j: Neo4jClient | None = None
 ) -> None:
     """Full PR review pipeline."""
+    uid = firebase_service.lookup_uid_by_github_username(owner)
+    repo_id = f"{owner}/{repo}"
+    
     try:
         try:
             pr_number = int(pr_number)
@@ -454,8 +465,16 @@ async def execute_pr_review(
             return
 
         logger.info("Starting review for %s/%s#%s", owner, repo, pr_number)
-        repo_id = f"{owner}/{repo}"
         review_dir = make_review_dir(owner, repo, pr_number)
+        
+        if uid:
+            firebase_service.upsert_pr_metadata(
+                uid,
+                owner,
+                repo,
+                pr_number,
+                PRMetadata(owner=owner, repo=repo, pr_number=pr_number, repo_id=repo_id, review_status=PrReviewStatus.RUNNING),
+            )
 
         # ── Step 1: Fetch diff + PR metadata + head SHA ────────────────────
         gh = get_github_client()
@@ -466,6 +485,11 @@ async def execute_pr_review(
         )
         if not diff_text:
             logger.warning("Empty diff — skipping review")
+            if uid:
+                firebase_service.upsert_pr_metadata(
+                    uid, owner, repo, pr_number,
+                    PRMetadata(owner=owner, repo=repo, pr_number=pr_number, repo_id=repo_id, review_status=PrReviewStatus.COMPLETED)
+                )
             return
 
         pr_title = pr_info.get("title", "")
@@ -667,16 +691,8 @@ async def execute_pr_review(
         )
 
         # ── Step 7: Load previous Firestore run ────────────────────────────
-        uid = firebase_service.find_repo_owner_uid(owner, repo)
         prev_run: dict | None = None
         if uid:
-            firebase_service.upsert_pr_metadata(
-                uid,
-                owner,
-                repo,
-                pr_number,
-                PRMetadata(owner=owner, repo=repo, pr_number=pr_number, repo_id=repo_id),
-            )
             prev_run = firebase_service.get_latest_review_run(uid, owner, repo, pr_number)
             if prev_run:
                 logger.info("Loaded previous run #%s", prev_run.get("runNumber"))
@@ -734,7 +750,9 @@ async def execute_pr_review(
         # Ensure all PR files appear in walkthrough.
         # Always run — even if the agent returned an empty list, every changed
         # file must have an entry so the comment table is never blank.
-        covered = {e.split(" — ")[0].strip().strip("`") for e in (review_results.walk_through or [])}
+        covered = {
+            e.split(" — ")[0].strip().strip("`") for e in (review_results.walk_through or [])
+        }
         for fp in files_changed:
             if fp not in covered:
                 review_results.walk_through = list(review_results.walk_through or [])
@@ -853,5 +871,36 @@ async def execute_pr_review(
             await gh.post_comment(owner, repo, pr_number, fallback)
             logger.info("Posted fallback comment on %s/%s#%s", owner, repo, pr_number)
 
-    except Exception:
+    except Exception as e:
+        error_msg = str(e) or type(e).__name__
         logger.error("Review pipeline failed:\n%s", traceback.format_exc())
+        
+        try:
+            gh = get_github_client()
+            await gh.post_comment(
+                owner, 
+                repo, 
+                pr_number, 
+                f"🚨 **BugViper Review Failed**\n\nThere was a critical error running the review pipeline:\n```text\n{error_msg}\n```\nPlease check the server logs for more details or try running the review again."
+            )
+        except Exception as gh_e:
+            logger.error("Failed to post failure comment: %s", gh_e)
+            
+        if uid:
+            firebase_service.upsert_pr_metadata(
+                uid, owner, repo, pr_number,
+                PRMetadata(
+                    owner=owner, 
+                    repo=repo, 
+                    pr_number=pr_number, 
+                    repo_id=repo_id, 
+                    review_status=PrReviewStatus.FAILED,
+                    failed_reasons=[error_msg]
+                )
+            )
+    else:
+        if uid:
+            firebase_service.upsert_pr_metadata(
+                uid, owner, repo, pr_number,
+                PRMetadata(owner=owner, repo=repo, pr_number=pr_number, repo_id=repo_id, review_status=PrReviewStatus.COMPLETED)
+            )
