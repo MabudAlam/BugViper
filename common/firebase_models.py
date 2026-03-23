@@ -1,8 +1,7 @@
-
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -11,9 +10,6 @@ class PrReviewStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-
-
-
 
 
 class FirebaseUserData(BaseModel):
@@ -42,8 +38,6 @@ class FirebaseUserProfile(BaseModel):
     github_username: Optional[str] = Field(None, serialization_alias="githubUsername")
     photo_url: Optional[str] = Field(None, serialization_alias="photoURL")
     created_at: Optional[str] = Field(None, serialization_alias="createdAt")
-
-
 
 
 class RepoMetadata(BaseModel):
@@ -102,8 +96,6 @@ class RepoIngestionError(BaseModel):
     error_message: str = Field(serialization_alias="errorMessage")
 
 
-
-
 class PRMetadata(BaseModel):
     """
     PR metadata document.
@@ -125,8 +117,6 @@ class PRMetadata(BaseModel):
     created_at: Optional[str] = Field(None, serialization_alias="createdAt")
     updated_at: Optional[str] = Field(None, serialization_alias="updatedAt")
     failed_reasons: list[str] = Field(default_factory=list, serialization_alias="failedReasons")
-
-
 
 
 class ReviewRunData(BaseModel):

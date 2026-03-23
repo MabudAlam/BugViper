@@ -1,6 +1,6 @@
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-import re
 
 from common.debug_log import warning_logger
 from common.tree_sitter_manager import execute_query
@@ -36,6 +36,7 @@ RUST_QUERIES = {
     """,  # <-- Added trait query
 }
 
+
 class RustLangTreeSitterParser:
     """A Rust-specific parser using tree-sitter."""
 
@@ -48,7 +49,9 @@ class RustLangTreeSitterParser:
     def _get_node_text(self, node: Any) -> str:
         return node.text.decode("utf-8")
 
-    def parse(self, path: Path, is_dependency: bool = False, index_source: bool = False) -> Dict[str, Any]:
+    def parse(
+        self, path: Path, is_dependency: bool = False, index_source: bool = False
+    ) -> Dict[str, Any]:
         """Parses a Rust file and returns its structure."""
         self.index_source = index_source
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -75,7 +78,17 @@ class RustLangTreeSitterParser:
             "lang": self.language_name,
         }
 
-    def _get_parent_context(self, node: Any, types: Tuple[str, ...] = ("function_item", "struct_item", "enum_item", "trait_item", "impl_item")) -> Tuple[Optional[str], Optional[str], Optional[int]]:
+    def _get_parent_context(
+        self,
+        node: Any,
+        types: Tuple[str, ...] = (
+            "function_item",
+            "struct_item",
+            "enum_item",
+            "trait_item",
+            "impl_item",
+        ),
+    ) -> Tuple[Optional[str], Optional[str], Optional[int]]:
         curr = node.parent
         while curr:
             if curr.type in types:
@@ -89,7 +102,7 @@ class RustLangTreeSitterParser:
                         if child.type == "type_identifier":
                             name_node = child
                             break
-                
+
                 return (
                     self._get_node_text(name_node) if name_node else None,
                     curr.type,
@@ -121,7 +134,7 @@ class RustLangTreeSitterParser:
         functions = []
         # Query that just finds the function items
         query_str = "(function_item) @f"
-        
+
         for func_node, _ in execute_query(self.language, query_str, root_node):
             # Use child_by_field_name for reliable identification
             name_node = func_node.child_by_field_name("name")
@@ -142,13 +155,13 @@ class RustLangTreeSitterParser:
                     "name": name,
                     "line_number": name_node.start_point[0] + 1,
                     "end_line": func_node.end_point[0] + 1,
-                    "params": params, # Renamed to params to match other languages
-                    "args": params,   # Keep args for compatibility
+                    "params": params,  # Renamed to params to match other languages
+                    "args": params,  # Keep args for compatibility
                 }
 
                 if self.index_source:
                     func_data["source"] = self._get_node_text(func_node)
-                
+
                 functions.append(func_data)
         return functions
 
@@ -170,7 +183,7 @@ class RustLangTreeSitterParser:
                     if child.type == "type_identifier":
                         name_node = child
                         break
-            
+
             if name_node:
                 name = self._get_node_text(name_node)
                 struct_data = {
@@ -182,7 +195,7 @@ class RustLangTreeSitterParser:
 
                 if self.index_source:
                     struct_data["source"] = self._get_node_text(item_node)
-                
+
                 structs.append(struct_data)
         return structs
 
@@ -193,18 +206,27 @@ class RustLangTreeSitterParser:
             node, capture_name = match
             if capture_name == "trait_node":
                 trait_node = node
-                name_node = next((n for n, c in execute_query(self.language, "(trait_item name: (type_identifier) @name)", trait_node) if c == "name"), None)
+                name_node = next(
+                    (
+                        n
+                        for n, c in execute_query(
+                            self.language, "(trait_item name: (type_identifier) @name)", trait_node
+                        )
+                        if c == "name"
+                    ),
+                    None,
+                )
                 if name_node:
                     name = self._get_node_text(name_node)
                     trait_data = {
-                            "name": name,
-                            "line_number": name_node.start_point[0] + 1,
-                            "end_line": trait_node.end_point[0] + 1,
-                        }
+                        "name": name,
+                        "line_number": name_node.start_point[0] + 1,
+                        "end_line": trait_node.end_point[0] + 1,
+                    }
 
                     if self.index_source:
                         trait_data["source"] = self._get_node_text(trait_node)
-                    
+
                     traits.append(trait_data)
         return traits
 
@@ -246,18 +268,22 @@ class RustLangTreeSitterParser:
             if capture_name == "name":
                 # Find the call_expression
                 call_node = node.parent
-                while call_node and call_node.type != 'call_expression' and call_node.type != 'source_file':
+                while (
+                    call_node
+                    and call_node.type != "call_expression"
+                    and call_node.type != "source_file"
+                ):
                     call_node = call_node.parent
-                
+
                 call_name = self._get_node_text(node)
-                
+
                 # Extract arguments
                 args = []
-                if call_node and call_node.type == 'call_expression':
-                    args_node = call_node.child_by_field_name('arguments')
+                if call_node and call_node.type == "call_expression":
+                    args_node = call_node.child_by_field_name("arguments")
                     if args_node:
                         for child in args_node.children:
-                            if child.type not in ('(', ')', ','):
+                            if child.type not in ("(", ")", ","):
                                 args.append(self._get_node_text(child))
 
                 calls.append(
@@ -273,6 +299,7 @@ class RustLangTreeSitterParser:
                 )
         return calls
 
+
 def pre_scan_rust(files: list[Path], parser_wrapper, repo_path: Path) -> dict:
     """Scans Rust files to create a map of function/struct/enum/trait names to their RELATIVE file paths."""
     imports_map = {}
@@ -282,7 +309,6 @@ def pre_scan_rust(files: list[Path], parser_wrapper, repo_path: Path) -> dict:
         (enum_item name: (type_identifier) @name)
         (trait_item name: (type_identifier) @name)
     """
-    
 
     for path in files:
         try:
@@ -290,7 +316,7 @@ def pre_scan_rust(files: list[Path], parser_wrapper, repo_path: Path) -> dict:
                 tree = parser_wrapper.parser.parse(bytes(f.read(), "utf8"))
 
             for capture, _ in execute_query(parser_wrapper.language, query_str, tree.root_node):
-                name = capture.text.decode('utf-8')
+                name = capture.text.decode("utf-8")
                 if name not in imports_map:
                     imports_map[name] = []
                 # Store RELATIVE path

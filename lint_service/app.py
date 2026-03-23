@@ -17,17 +17,18 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from lint_service.runners import (
-    run_ruff, run_bandit,
-    run_eslint,
-    run_golangci_lint,
-    run_rubocop,
+    run_bandit,
     run_cppcheck,
-    run_pmd,
-    run_phpcs,
-    run_ktlint,
-    run_hlint,
-    run_semgrep,
+    run_eslint,
     run_gitleaks,
+    run_golangci_lint,
+    run_hlint,
+    run_ktlint,
+    run_phpcs,
+    run_pmd,
+    run_rubocop,
+    run_ruff,
+    run_semgrep,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,17 +40,17 @@ Runner = Callable[[Path, dict[str, str]], list[dict]]
 # Maps canonical language name (matching common/languages.py) to its runners.
 # Tools listed here run only when that language is present in the PR.
 LANG_RUNNERS: dict[str, list[Runner]] = {
-    "python":     [run_ruff, run_bandit],
+    "python": [run_ruff, run_bandit],
     "javascript": [run_eslint],
     "typescript": [run_eslint],
-    "go":         [run_golangci_lint],
-    "ruby":       [run_rubocop],
-    "c":          [run_cppcheck],
-    "cpp":        [run_cppcheck],
-    "java":       [run_pmd],
-    "php":        [run_phpcs],
-    "kotlin":     [run_ktlint],
-    "haskell":    [run_hlint],
+    "go": [run_golangci_lint],
+    "ruby": [run_rubocop],
+    "c": [run_cppcheck],
+    "cpp": [run_cppcheck],
+    "java": [run_pmd],
+    "php": [run_phpcs],
+    "kotlin": [run_ktlint],
+    "haskell": [run_hlint],
     # rust: clippy needs full cargo project — skip
     # c_sharp: roslyn needs .csproj — skip
     # scala: needs sbt — skip
@@ -61,8 +62,8 @@ SECURITY_RUNNERS: list[Runner] = [run_semgrep, run_gitleaks]
 
 
 class LintRequest(BaseModel):
-    files: dict[str, str]   # {repo-relative path: source code}
-    languages: list[str]    # canonical language names from common/languages.py
+    files: dict[str, str]  # {repo-relative path: source code}
+    languages: list[str]  # canonical language names from common/languages.py
 
 
 class LintResponse(BaseModel):

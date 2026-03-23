@@ -51,6 +51,8 @@ dependencies = [
     "langchain-openai>=1.1.10",
     # pydantic-ai imports from griffe; v2.0 renamed the module — pin to 1.x
     "griffe>=0.38.0,<2.0.0",
+    "openrouter>=0.7.11",
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]

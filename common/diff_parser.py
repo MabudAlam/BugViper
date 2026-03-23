@@ -1,8 +1,6 @@
-
-
 import re
-from typing import List, Dict
 from collections import defaultdict
+from typing import Dict, List
 
 
 def parse_unified_diff(diff_text: str) -> List[Dict[str, object]]:
@@ -21,13 +19,13 @@ def parse_unified_diff(diff_text: str) -> List[Dict[str, object]]:
 
     for line in diff_text.splitlines():
         # Match file header: +++ b/path/to/file.py
-        file_match = re.match(r'^\+\+\+ b/(.+)$', line)
+        file_match = re.match(r"^\+\+\+ b/(.+)$", line)
         if file_match:
             current_file = file_match.group(1)
             continue
 
         # Match hunk header: @@ -a,b +c,d @@
-        hunk_match = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
+        hunk_match = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
         if hunk_match and current_file:
             start_line = int(hunk_match.group(1))
             count = int(hunk_match.group(2)) if hunk_match.group(2) else 1
@@ -36,15 +34,15 @@ def parse_unified_diff(diff_text: str) -> List[Dict[str, object]]:
             if count == 0:
                 continue
             end_line = start_line + count - 1
-            results.append({
-                "file_path": current_file,
-                "start_line": start_line,
-                "end_line": end_line,
-            })
-
+            results.append(
+                {
+                    "file_path": current_file,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                }
+            )
 
     return results
-
 
 
 def split_diff_by_file(diff_text: str) -> Dict[str, str]:
@@ -62,7 +60,7 @@ def split_diff_by_file(diff_text: str) -> Dict[str, str]:
     current_lines: List[str] = []
 
     for line in diff_text.splitlines():
-        diff_header = re.match(r'^diff --git a/.+ b/(.+)$', line)
+        diff_header = re.match(r"^diff --git a/.+ b/(.+)$", line)
         if diff_header:
             # Save previous file
             if current_file and current_lines:

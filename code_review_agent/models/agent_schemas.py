@@ -1,4 +1,5 @@
-from typing import Any, Literal
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -122,8 +123,12 @@ class ReviewResults(BaseModel):
     files_changed_summary: list[FileSummary] = Field(default_factory=list)
     # Debug fields — raw outputs for transparency
     raw_agent_json: str = Field(default="", description="Raw JSON string from the Review Agent")
-    tool_rounds_used: int = Field(default=0, description="Tool rounds used by the Explorer (Phase 1)")
-    review_agent_rounds_used: int = Field(default=0, description="Tool rounds used by the Review Agent (Phase 2)")
+    tool_rounds_used: int = Field(
+        default=0, description="Tool rounds used by the Explorer (Phase 1)"
+    )
+    review_agent_rounds_used: int = Field(
+        default=0, description="Tool rounds used by the Review Agent (Phase 2)"
+    )
 
 
 class ContextData(BaseModel):

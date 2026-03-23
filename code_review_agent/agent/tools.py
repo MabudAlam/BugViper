@@ -15,7 +15,9 @@ _S = dict  # shorthand for a source dict
 
 def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> list:
 
-    def _src(path: str, line: int | None = None, name: str | None = None, typ: str | None = None) -> _S:
+    def _src(
+        path: str, line: int | None = None, name: str | None = None, typ: str | None = None
+    ) -> _S:
         return {"path": path, "line_number": line, "name": name, "type": typ}
 
     # ── 1. Unified fulltext search ────────────────────────────────────────────
@@ -33,7 +35,11 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
             f"[{r.get('type')}] {r.get('name')}  →  {r.get('path')}:{r.get('line_number')}"
             for r in results
         ]
-        sources = [_src(r["path"], r.get("line_number"), r.get("name"), r.get("type")) for r in results if r.get("path")]
+        sources = [
+            _src(r["path"], r.get("line_number"), r.get("name"), r.get("type"))
+            for r in results
+            if r.get("path")
+        ]
         return "\n".join(lines), sources
 
     # ── 2. Peek file lines ────────────────────────────────────────────────────
@@ -57,7 +63,9 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         body = ""
         for entry in result["window"]:
             prefix = "→" if entry["is_anchor"] else " "
-            body += f"{prefix} {entry['line_number']:>4} │ {entry['content'].replace(chr(9), '    ')}\n"
+            body += (
+                f"{prefix} {entry['line_number']:>4} │ {entry['content'].replace(chr(9), '    ')}\n"
+            )
         return f"{header}\n{sep}\n{body}", [_src(path, line, typ="file")]
 
     # ── 3. Semantic vector search ─────────────────────────────────────────────
@@ -77,10 +85,16 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         lines = []
         for r in results[:10]:
             score = f"{float(r.get('score') or 0):.3f}"
-            lines.append(f"[{r.get('type')}] {r.get('name')}  score={score}  →  {r.get('path')}:{r.get('line_number')}")
+            lines.append(
+                f"[{r.get('type')}] {r.get('name')}  score={score}  →  {r.get('path')}:{r.get('line_number')}"
+            )
             if r.get("docstring"):
                 lines.append(f"    {r['docstring'][:120]}")
-        sources = [_src(r["path"], r.get("line_number"), r.get("name"), r.get("type")) for r in results[:10] if r.get("path")]
+        sources = [
+            _src(r["path"], r.get("line_number"), r.get("name"), r.get("type"))
+            for r in results[:10]
+            if r.get("path")
+        ]
         return "\n".join(lines), sources
 
     # ── 4. Find function by name ──────────────────────────────────────────────
@@ -105,7 +119,11 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
             if r.get("source") or r.get("source_code"):
                 src = (r.get("source_code") or r.get("source") or "")[:300]
                 lines.append(f"  source:\n    {src}")
-        sources = [_src(r["path"], r.get("line_number"), r.get("name"), "function") for r in results if r.get("path")]
+        sources = [
+            _src(r["path"], r.get("line_number"), r.get("name"), "function")
+            for r in results
+            if r.get("path")
+        ]
         return "\n".join(lines), sources
 
     # ── 5. Find class by name ─────────────────────────────────────────────────
@@ -130,7 +148,11 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
             if r.get("source") or r.get("source_code"):
                 src = (r.get("source_code") or r.get("source") or "")[:300]
                 lines.append(f"  source:\n    {src}")
-        sources = [_src(r["path"], r.get("line_number"), r.get("name"), "class") for r in results if r.get("path")]
+        sources = [
+            _src(r["path"], r.get("line_number"), r.get("name"), "class")
+            for r in results
+            if r.get("path")
+        ]
         return "\n".join(lines), sources
 
     # ── 6. Find variable by name ──────────────────────────────────────────────
@@ -145,7 +167,11 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         if not results:
             return f"Variable '{name}' not found.", []
         lines = [f"• {r.get('name')}  →  {r.get('path')}:{r.get('line_number')}" for r in results]
-        sources = [_src(r["path"], r.get("line_number"), r.get("name"), "variable") for r in results if r.get("path")]
+        sources = [
+            _src(r["path"], r.get("line_number"), r.get("name"), "variable")
+            for r in results
+            if r.get("path")
+        ]
         return "\n".join(lines), sources
 
     # ── 7. Find by content ────────────────────────────────────────────────────
@@ -159,8 +185,15 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         results = query_service.find_by_content(query, repo_id=repo_id)
         if not results:
             return f"No content matches for: '{query}'", []
-        lines = [f"[{r.get('type')}] {r.get('name')}  →  {r.get('path')}:{r.get('line_number')}" for r in results]
-        sources = [_src(r["path"], r.get("line_number"), r.get("name"), r.get("type")) for r in results if r.get("path")]
+        lines = [
+            f"[{r.get('type')}] {r.get('name')}  →  {r.get('path')}:{r.get('line_number')}"
+            for r in results
+        ]
+        sources = [
+            _src(r["path"], r.get("line_number"), r.get("name"), r.get("type"))
+            for r in results
+            if r.get("path")
+        ]
         return "\n".join(lines), sources
 
     # ── 8. Find by file line ──────────────────────────────────────────────────
@@ -175,7 +208,9 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         results = query_service.search_file_content(query, min(limit, 100), repo_id=repo_id)
         if not results:
             return f"No line matches for: '{query}'", []
-        lines = [f"{r.get('path')}:{r.get('line_number')}  {r.get('match_line', '')}" for r in results]
+        lines = [
+            f"{r.get('path')}:{r.get('line_number')}  {r.get('match_line', '')}" for r in results
+        ]
         sources = [_src(r["path"], r.get("line_number")) for r in results if r.get("path")]
         return "\n".join(lines), sources
 
@@ -258,9 +293,13 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         lines = []
         sources: list[_S] = []
         for defn in result.get("definitions") or []:
-            lines.append(f"Definition: [{defn.get('type')}] {defn.get('name')}  →  {defn.get('path')}:{defn.get('line_number')}")
+            lines.append(
+                f"Definition: [{defn.get('type')}] {defn.get('name')}  →  {defn.get('path')}:{defn.get('line_number')}"
+            )
             if defn.get("path"):
-                sources.append(_src(defn["path"], defn.get("line_number"), defn.get("name"), defn.get("type")))
+                sources.append(
+                    _src(defn["path"], defn.get("line_number"), defn.get("name"), defn.get("type"))
+                )
         callers = result.get("callers") or []
         if callers:
             lines.append(f"\nCallers ({len(callers)}):")
@@ -293,11 +332,15 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         for parent in result.get("parents") or []:
             lines.append(f"  ↑ inherits from: {parent.get('name')}  ({parent.get('path')})")
             if parent.get("path"):
-                sources.append(_src(parent["path"], parent.get("line_number"), parent.get("name"), "class"))
+                sources.append(
+                    _src(parent["path"], parent.get("line_number"), parent.get("name"), "class")
+                )
         for child in result.get("children") or []:
             lines.append(f"  ↓ subclassed by: {child.get('name')}  ({child.get('path')})")
             if child.get("path"):
-                sources.append(_src(child["path"], child.get("line_number"), child.get("name"), "class"))
+                sources.append(
+                    _src(child["path"], child.get("line_number"), child.get("name"), "class")
+                )
         return "\n".join(lines) if lines else f"No hierarchy data for '{class_name}'.", sources
 
     # ── 14. Change impact analysis ────────────────────────────────────────────
@@ -311,7 +354,10 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         callers_result = query_service.find_callers(symbol_name, repo_id=repo_id)
         callers = callers_result.get("callers") or []
         impact = "high" if len(callers) > 5 else "medium" if callers else "low"
-        lines = [f"Symbol: {symbol_name}", f"Impact level: {impact.upper()}  ({len(callers)} callers)"]
+        lines = [
+            f"Symbol: {symbol_name}",
+            f"Impact level: {impact.upper()}  ({len(callers)} callers)",
+        ]
         sources: list[_S] = []
         if callers:
             lines.append("\nCallers:")
@@ -336,13 +382,25 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         if not result:
             return f"Function '{function_name}' not found.", []
         score = result.get("cyclomatic_complexity", 1)
-        risk = "simple" if score <= 5 else "moderate" if score <= 10 else "complex" if score <= 20 else "high risk"
+        risk = (
+            "simple"
+            if score <= 5
+            else "moderate"
+            if score <= 10
+            else "complex"
+            if score <= 20
+            else "high risk"
+        )
         content = (
             f"Function: {result.get('name')}\n"
             f"File:     {result.get('path')}:{result.get('line_number')}\n"
             f"Score:    {score}  ({risk})"
         )
-        sources = [_src(result["path"], result.get("line_number"), result.get("name"), "function")] if result.get("path") else []
+        sources = (
+            [_src(result["path"], result.get("line_number"), result.get("name"), "function")]
+            if result.get("path")
+            else []
+        )
         return content, sources
 
     # ── 16. Top complex functions ─────────────────────────────────────────────
@@ -361,7 +419,11 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
             f"{i:>2}. [{r.get('cyclomatic_complexity', 1):>3}] {r.get('name')}  →  {r.get('path')}:{r.get('line_number')}"
             for i, r in enumerate(results, 1)
         ]
-        sources = [_src(r["path"], r.get("line_number"), r.get("name"), "function") for r in results if r.get("path")]
+        sources = [
+            _src(r["path"], r.get("line_number"), r.get("name"), "function")
+            for r in results
+            if r.get("path")
+        ]
         return "\n".join(lines), sources
 
     # ── 17. Get full file source ──────────────────────────────────────────────
@@ -380,7 +442,7 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         source = result.get("source_code") or result.get("source") or ""
         lines = source.splitlines()
         header = f"File: {file_path}  ({len(lines)} lines)\n" + "-" * 60
-        numbered = "\n".join(f"{i+1:>4} │ {l}" for i, l in enumerate(lines))
+        numbered = "\n".join(f"{i + 1:>4} │ {l}" for i, l in enumerate(lines))
         return f"{header}\n{numbered}", [_src(file_path, None, typ="file")]
 
     # ── 18. Language statistics ───────────────────────────────────────────────
@@ -409,16 +471,33 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         """Get overall statistics for the selected repository (or entire graph if no repo selected).
         Returns: counts of files, functions, classes, variables, imports.
         """
-        stats = query_service.get_repository_stats(repo_id) if repo_id else query_service.get_graph_stats()
+        stats = (
+            query_service.get_repository_stats(repo_id)
+            if repo_id
+            else query_service.get_graph_stats()
+        )
         if not stats:
             return "No stats available.", []
         return json.dumps(stats, indent=2), []
 
     return [
-        search_code, peek_code, semantic_search,
-        find_function, find_class, find_variable,
-        find_by_content, find_by_line, find_module, find_imports,
-        find_method_usages, find_callers, get_class_hierarchy,
-        get_change_impact, get_complexity, get_top_complex_functions,
-        get_file_source, get_language_stats, get_repo_stats,
+        search_code,
+        peek_code,
+        semantic_search,
+        find_function,
+        find_class,
+        find_variable,
+        find_by_content,
+        find_by_line,
+        find_module,
+        find_imports,
+        find_method_usages,
+        find_callers,
+        get_class_hierarchy,
+        get_change_impact,
+        get_complexity,
+        get_top_complex_functions,
+        get_file_source,
+        get_language_stats,
+        get_repo_stats,
     ]

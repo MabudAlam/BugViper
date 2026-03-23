@@ -1,11 +1,8 @@
-import hashlib
-import hmac
 import json
 import logging
-import os
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Request
 
 from api.services.cloud_tasks_service import CloudTasksService
 from api.services.review_service import execute_pr_review
@@ -42,7 +39,6 @@ async def on_comment(request: Request, background_tasks: BackgroundTasks):
     return {"status": "ignored", "reason": f"unhandled event '{event_type}'"}
 
 
-
 async def _handle_push(payload: dict, background_tasks: BackgroundTasks) -> dict:
     """Ingest changed files when code is pushed directly to a branch.
 
@@ -74,7 +70,9 @@ async def _handle_push(payload: dict, background_tasks: BackgroundTasks) -> dict
     if await gh.has_open_pr_for_branch(owner, repo_name, branch):
         logger.info(
             "Push to %s/%s branch '%s' has an open PR — skipping ingestion",
-            owner, repo_name, branch,
+            owner,
+            repo_name,
+            branch,
         )
         return {
             "status": "ignored",
@@ -85,14 +83,18 @@ async def _handle_push(payload: dict, background_tasks: BackgroundTasks) -> dict
 
     if cloud_tasks.is_enabled:
         task_payload = IncrementalPushPayload(
-            job_id=job_id, owner=owner, repo_name=repo_name,
-            before_sha=before_sha, after_sha=after_sha,
+            job_id=job_id,
+            owner=owner,
+            repo_name=repo_name,
+            before_sha=before_sha,
+            after_sha=after_sha,
         )
         cloud_tasks.dispatch_incremental_push(task_payload)
     else:
         # Local dev only — ingestion_service code is not present in the Cloud Run image
         from db.client import get_neo4j_client
         from ingestion_service.core.incremental_updater import ingest_direct_push
+
         background_tasks.add_task(
             ingest_direct_push, owner, repo_name, before_sha, after_sha, get_neo4j_client()
         )
@@ -127,16 +129,18 @@ async def _handle_pr_merged(payload: dict, background_tasks: BackgroundTasks) ->
 
     if cloud_tasks.is_enabled:
         task_payload = IncrementalPRPayload(
-            job_id=job_id, owner=owner, repo_name=repo_name, pr_number=pr_number,
+            job_id=job_id,
+            owner=owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
         )
         cloud_tasks.dispatch_incremental_pr(task_payload)
     else:
         # Local dev only — ingestion_service code is not present in the Cloud Run image
         from db.client import get_neo4j_client
         from ingestion_service.core.incremental_updater import ingest_merged_pr
-        background_tasks.add_task(
-            ingest_merged_pr, owner, repo_name, pr_number, get_neo4j_client()
-        )
+
+        background_tasks.add_task(ingest_merged_pr, owner, repo_name, pr_number, get_neo4j_client())
 
     return {
         "status": "processing",
@@ -168,17 +172,20 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
 
     from api.services.firebase_service import firebase_service
     from common.firebase_models import PrReviewStatus
+
     uid = firebase_service.lookup_uid_by_github_username(owner)
     if uid:
         pr_meta = firebase_service.get_pr_metadata(uid, owner, repo_name, pr_number)
         if pr_meta and pr_meta.get("reviewStatus") == PrReviewStatus.RUNNING.value:
-            logger.info("Skipping review for %s/%s#%s — already running", owner, repo_name, pr_number)
+            logger.info(
+                "Skipping review for %s/%s#%s — already running", owner, repo_name, pr_number
+            )
             gh = get_github_client()
             await gh.post_comment(
                 owner,
                 repo_name,
                 pr_number,
-                "⏳ **BugViper is already reviewing this PR.** Please wait until the current review completes before requesting another one!"
+                "⏳ **BugViper is already reviewing this PR.** Please wait until the current review completes before requesting another one!",
             )
             return {"status": "ignored", "reason": "review already running"}
 
@@ -217,8 +224,6 @@ async def on_marketplace(request: Request):
                        pending_change, pending_change_cancelled.
     """
     body = await request.body()
-
-
 
     # ── Parse payload (JSON or form-encoded) ────────────────────────────────
     content_type = request.headers.get("content-type", "")

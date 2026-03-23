@@ -15,11 +15,13 @@ caller — results are merged before the final comment is posted.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime
 
 from langchain_core.messages import HumanMessage
+from openrouter import OpenRouter
 
-from code_review_agent.agent.review_graph import build_review_agent, build_review_explorer
+from code_review_agent.agent.review_graph import build_review_explorer
 from code_review_agent.agent.review_prompt import (
     REVIEW_AGENT_PROMPT,
     REVIEW_EXPLORER_PROMPT,
@@ -34,60 +36,60 @@ logger = logging.getLogger(__name__)
 async def _run_review_agent(
     model: str,
     explored_messages: list,
-    query_service: CodeSearchService,
-    repo_id: str,
-    max_rounds: int,
 ) -> tuple[AgentFindings, int]:
-    """Phase 2: Run the Review Agent on the Explorer's gathered context.
+    """Phase 2: Single LLM call via OpenRouter structured output."""
 
-    The Review Agent is a ReAct graph backed by a reasoning/thinking model.
-    It receives all Explorer messages as its starting context, reasons about
-    the code, optionally calls tools to verify doubts, then produces a
-    validated AgentFindings instance via with_structured_output — no JSON
-    text parsing involved.
 
-    Returns:
-        (findings, review_rounds_used)
-    """
+    schema = AgentFindings.model_json_schema()
     system_prompt = REVIEW_AGENT_PROMPT.format(
-        max_rounds=max_rounds,
         system_time=datetime.now(tz=UTC).isoformat(),
+        schema=schema,
     )
 
-    graph = build_review_agent(
-        query_service,
-        system_prompt=system_prompt,
-        model=model,
-        repo_id=repo_id,
-        max_rounds=max_rounds,
+    # Extract raw content from explored_messages for prompt
+    content_lines = []
+    for msg in explored_messages:
+        role = getattr(msg, "type", "assistant")
+        if role == "ai":
+            role = "assistant"
+        content = getattr(msg, "content", str(msg))
+        if isinstance(content, list):
+            content = " ".join([str(c) for c in content if isinstance(c, str)])
+        content_lines.append(f"{role.upper()}:\n{content}\n")
+
+    context_str = "\n".join(content_lines)
+
+    # Construct the final prompt with system instructions
+    final_prompt = (
+        f"{system_prompt}\n\n"
+        f"--- EXPLORED CONTEXT ---\n{context_str}\n\n"
+        "You have the full PR context above. Produce the structured code review.\n"
+        "You MUST output ONLY valid JSON matching the exact schema."
     )
 
-    # Seed the agent with the Explorer's accumulated context + a final instruction.
-    seed_messages = [
-        *explored_messages,
-        HumanMessage(content=(
-            "You have the full PR context above. Reason through the code carefully, "
-            "use tools only if you have a specific unresolved doubt, then produce "
-            "the structured code review."
-        )),
-    ]
+   
+    logger.info("Executing Phase 2 via direct OpenRouter SDK structured output call")
 
     try:
-        result = await graph.ainvoke(
-            {"messages": seed_messages, "tool_rounds": 0, "findings": None}
-        )
+        async with OpenRouter(api_key=os.getenv("OPENROUTER_API_KEY")) as client:
+            response = await client.chat.send_async(
+                model=model,
+                messages=[{"role": "user", "content": final_prompt}],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {"strict": True, "name": "AgentFindings", "schema": schema},
+                },
+
+            )
+        content = response.choices[0].message.content
+        findings = AgentFindings.model_validate_json(content)
+        logger.info(f"AgentFindings: {findings}")
     except Exception as e:
-        logger.exception("Review Agent phase failed")
-        raise Exception(f"Review Agent failed: {e}") from e
+        logger.error(f"Failed to parse AgentFindings or call OpenRouter: {e}")
+        # Return empty findings on fatal error
+        return AgentFindings(walk_through=[], issues=[], positive_findings=[]), 0
 
-    findings: AgentFindings | None = result.get("findings")
-    review_rounds_used: int = result.get("tool_rounds", 0)
-
-    if findings is None:
-        logger.error("Review Agent terminated without producing findings — returning empty")
-        findings = AgentFindings(walk_through=[], issues=[], positive_findings=[])
-
-    return findings, review_rounds_used
+    return findings, 0
 
 
 async def run_review(
@@ -115,11 +117,13 @@ async def run_review(
     """
     explore_model = config.review_model
     synthesis_model = config.synthesis_model
-    max_review_rounds = config.review_agent_max_rounds
 
     logger.info(
         "Review start — %s#%s  explore_model=%s  synthesis_model=%s",
-        repo_id, pr_number, explore_model, synthesis_model,
+        repo_id,
+        pr_number,
+        explore_model,
+        synthesis_model,
     )
 
     # ── Phase 1: Context exploration ─────────────────────────────────────────
@@ -143,14 +147,12 @@ async def run_review(
 
     logger.info(
         "Exploration complete: %d tool rounds, %d messages in context",
-        tool_rounds_used, len(explored_messages),
+        tool_rounds_used,
+        len(explored_messages),
     )
 
     # ── Phase 2: Review Agent (structured output) ─────────────────────────────
-    logger.info(
-        "Review Agent start — model=%s  max_rounds=%d",
-        synthesis_model, max_review_rounds,
-    )
+    logger.info("Review Agent start — model=%s", synthesis_model)
 
     findings = AgentFindings(walk_through=[], issues=[], positive_findings=[])
     review_agent_rounds_used = 0
@@ -159,11 +161,8 @@ async def run_review(
         findings, review_agent_rounds_used = await _run_review_agent(
             model=synthesis_model,
             explored_messages=explored_messages,
-            query_service=query_service,
-            repo_id=repo_id,
-            max_rounds=max_review_rounds,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Review Agent failed critically.")
         raise
 
@@ -175,11 +174,14 @@ async def run_review(
     issues = findings.issues
     open_issues = [i for i in issues if i.status != "fixed"]
     critical = sum(1 for i in open_issues if i.category in ("bug", "security"))
-    high     = sum(1 for i in open_issues if i.category == "performance")
+    high = sum(1 for i in open_issues if i.category == "performance")
 
     logger.info(
         "Review complete: %d issues (%d open — %d critical, %d high)",
-        len(issues), len(open_issues), critical, high,
+        len(issues),
+        len(open_issues),
+        critical,
+        high,
     )
 
     summary = (
@@ -193,7 +195,7 @@ async def run_review(
         issues=issues,
         positive_findings=findings.positive_findings,
         walk_through=findings.walk_through,
-        raw_agent_json=findings.model_dump_json(indent=2), 
+        raw_agent_json=findings.model_dump_json(indent=2),
         tool_rounds_used=tool_rounds_used,
         review_agent_rounds_used=review_agent_rounds_used,
     )

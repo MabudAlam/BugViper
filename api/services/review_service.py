@@ -22,26 +22,24 @@ import traceback
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
+from api.services.firebase_service import firebase_service
+from api.services.lint_service import run_lint
 from api.utils.comment_formatter import (
     format_github_comment,
     format_inline_comment,
     format_review_summary,
 )
-
 from api.utils.graph_context import build_graph_context_section
-from common.languages import EXT_TO_LANG, LANG_PARSER_REGISTRY
+from code_review_agent.agent.runner import run_review
+from code_review_agent.models.agent_schemas import ContextData, FileSummary, Issue, ReconciledReview
 from common.call_skip import get_call_skip
 from common.debug_writer import make_review_dir, write_step
-from api.services.firebase_service import firebase_service
-from common.firebase_models import PRMetadata, ReviewRunData, PrReviewStatus
+from common.diff_parser import parse_unified_diff
+from common.firebase_models import PRMetadata, PrReviewStatus, ReviewRunData
+from common.github_client import get_github_client
+from common.languages import EXT_TO_LANG, LANG_PARSER_REGISTRY
 from db.client import Neo4jClient, get_neo4j_client
 from db.code_serarch_layer import CodeSearchService
-from code_review_agent.models.agent_schemas import ContextData, FileSummary, Issue, ReconciledReview
-from code_review_agent.agent.runner import run_review
-from api.services.lint_service import run_lint
-from common.github_client import get_github_client
-from common.diff_parser import parse_unified_diff
-
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +55,7 @@ def _get_lang_parser(lang: str):
         return None
     module_path, class_name = LANG_PARSER_REGISTRY[lang]
     try:
-        from common.tree_sitter_manager import get_language_safe, create_parser
+        from common.tree_sitter_manager import create_parser, get_language_safe
 
         class _Adapter:
             pass
@@ -454,7 +452,7 @@ async def execute_pr_review(
     """Full PR review pipeline."""
     uid = firebase_service.lookup_uid_by_github_username(owner)
     repo_id = f"{owner}/{repo}"
-    
+
     try:
         try:
             pr_number = int(pr_number)
@@ -466,14 +464,20 @@ async def execute_pr_review(
 
         logger.info("Starting review for %s/%s#%s", owner, repo, pr_number)
         review_dir = make_review_dir(owner, repo, pr_number)
-        
+
         if uid:
             firebase_service.upsert_pr_metadata(
                 uid,
                 owner,
                 repo,
                 pr_number,
-                PRMetadata(owner=owner, repo=repo, pr_number=pr_number, repo_id=repo_id, review_status=PrReviewStatus.RUNNING),
+                PRMetadata(
+                    owner=owner,
+                    repo=repo,
+                    pr_number=pr_number,
+                    repo_id=repo_id,
+                    review_status=PrReviewStatus.RUNNING,
+                ),
             )
 
         # ── Step 1: Fetch diff + PR metadata + head SHA ────────────────────
@@ -487,8 +491,17 @@ async def execute_pr_review(
             logger.warning("Empty diff — skipping review")
             if uid:
                 firebase_service.upsert_pr_metadata(
-                    uid, owner, repo, pr_number,
-                    PRMetadata(owner=owner, repo=repo, pr_number=pr_number, repo_id=repo_id, review_status=PrReviewStatus.COMPLETED)
+                    uid,
+                    owner,
+                    repo,
+                    pr_number,
+                    PRMetadata(
+                        owner=owner,
+                        repo=repo,
+                        pr_number=pr_number,
+                        repo_id=repo_id,
+                        review_status=PrReviewStatus.COMPLETED,
+                    ),
                 )
             return
 
@@ -874,33 +887,45 @@ async def execute_pr_review(
     except Exception as e:
         error_msg = str(e) or type(e).__name__
         logger.error("Review pipeline failed:\n%s", traceback.format_exc())
-        
+
         try:
             gh = get_github_client()
             await gh.post_comment(
-                owner, 
-                repo, 
-                pr_number, 
-                f"🚨 **BugViper Review Failed**\n\nThere was a critical error running the review pipeline:\n```text\n{error_msg}\n```\nPlease check the server logs for more details or try running the review again."
+                owner,
+                repo,
+                pr_number,
+                f"🚨 **BugViper Review Failed**\n\nThere was a critical error running the review pipeline:\n```text\n{error_msg}\n```\nPlease check the server logs for more details or try running the review again.",
             )
         except Exception as gh_e:
             logger.error("Failed to post failure comment: %s", gh_e)
-            
+
         if uid:
             firebase_service.upsert_pr_metadata(
-                uid, owner, repo, pr_number,
+                uid,
+                owner,
+                repo,
+                pr_number,
                 PRMetadata(
-                    owner=owner, 
-                    repo=repo, 
-                    pr_number=pr_number, 
-                    repo_id=repo_id, 
+                    owner=owner,
+                    repo=repo,
+                    pr_number=pr_number,
+                    repo_id=repo_id,
                     review_status=PrReviewStatus.FAILED,
-                    failed_reasons=[error_msg]
-                )
+                    failed_reasons=[error_msg],
+                ),
             )
     else:
         if uid:
             firebase_service.upsert_pr_metadata(
-                uid, owner, repo, pr_number,
-                PRMetadata(owner=owner, repo=repo, pr_number=pr_number, repo_id=repo_id, review_status=PrReviewStatus.COMPLETED)
+                uid,
+                owner,
+                repo,
+                pr_number,
+                PRMetadata(
+                    owner=owner,
+                    repo=repo,
+                    pr_number=pr_number,
+                    repo_id=repo_id,
+                    review_status=PrReviewStatus.COMPLETED,
+                ),
             )

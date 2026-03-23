@@ -74,12 +74,14 @@ class FirebaseAuthMiddleware:
         if not auth_header.startswith("Bearer "):
             response = JSONResponse(
                 status_code=401,
-                content={"detail": "Missing or malformed Authorization header. Expected: Bearer <token>"},
+                content={
+                    "detail": "Missing or malformed Authorization header. Expected: Bearer <token>"
+                },
             )
             await response(scope, receive, send)
             return
 
-        token = auth_header[len("Bearer "):].strip()
+        token = auth_header[len("Bearer ") :].strip()
         if not token:
             response = JSONResponse(
                 status_code=401,

@@ -20,6 +20,7 @@ class AskResponse(BaseModel):
 
 # ── History fetch (GET /sessions/{id}) ──────────────────────────────────────
 
+
 class ChatMessage(BaseModel):
     role: str  # "human" | "ai"
     content: str

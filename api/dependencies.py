@@ -1,5 +1,7 @@
 from fastapi import Request
-from db import Neo4jClient, get_neo4j_client as _build_neo4j_client
+
+from db import Neo4jClient
+from db import get_neo4j_client as _build_neo4j_client
 
 
 def get_current_user(request: Request) -> dict:

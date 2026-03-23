@@ -9,13 +9,15 @@ from langgraph.prebuilt import ToolNode
 
 from api.agent.context import Context
 from api.agent.state import InputState, State
-from api.models.rag import Source
 from api.agent.tools import get_tools
 from api.agent.utils import load_chat_model
+from api.models.rag import Source
 from db.code_serarch_layer import CodeSearchService
 
 
-def build_graph(query_service: CodeSearchService, context: Context | None = None, repo_id: str | None = None):
+def build_graph(
+    query_service: CodeSearchService, context: Context | None = None, repo_id: str | None = None
+):
     ctx = context or Context()
 
     tools = get_tools(query_service, repo_id=repo_id)
@@ -27,11 +29,21 @@ def build_graph(query_service: CodeSearchService, context: Context | None = None
             if repo_id
             else "\n\n---\nNo repository selected — searches run across the entire graph."
         )
-        system_prompt = ctx.system_prompt.format(system_time=datetime.now(tz=UTC).isoformat()) + repo_context
-        response: AIMessage = llm.invoke([{"role": "system", "content": system_prompt}, *state.messages])
+        system_prompt = (
+            ctx.system_prompt.format(system_time=datetime.now(tz=UTC).isoformat()) + repo_context
+        )
+        response: AIMessage = llm.invoke(
+            [{"role": "system", "content": system_prompt}, *state.messages]
+        )
 
         if state.is_last_step and response.tool_calls:
-            return {"messages": [AIMessage(id=response.id, content="Could not find an answer within the allowed steps.")]}
+            return {
+                "messages": [
+                    AIMessage(
+                        id=response.id, content="Could not find an answer within the allowed steps."
+                    )
+                ]
+            }
 
         return {"messages": [response]}
 
@@ -53,12 +65,14 @@ def build_graph(query_service: CodeSearchService, context: Context | None = None
                 break
             for item in msg.artifact or []:
                 if item.get("path"):
-                    new_sources.append(Source(
-                        path=item["path"],
-                        line_number=item.get("line_number"),
-                        name=item.get("name"),
-                        type=item.get("type"),
-                    ))
+                    new_sources.append(
+                        Source(
+                            path=item["path"],
+                            line_number=item.get("line_number"),
+                            name=item.get("name"),
+                            type=item.get("type"),
+                        )
+                    )
         return {"sources": new_sources}
 
     builder = StateGraph(State, input_schema=InputState)

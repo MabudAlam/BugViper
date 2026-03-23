@@ -1,6 +1,11 @@
 from pathlib import Path
+from typing import Any, Dict
 
 from common.debug_log import warning_logger
+from common.tree_sitter_manager import execute_query
+
+from .typescript import TypescriptLangTreeSitterParser
+
 
 def pre_scan_typescript(files: list[Path], parser_wrapper, repo_path: Path) -> dict:
     """
@@ -24,34 +29,36 @@ def pre_scan_typescript(files: list[Path], parser_wrapper, repo_path: Path) -> d
                 tree = parser_wrapper.parser.parse(bytes(source_code, "utf8"))
             for query_str in query_strings:
                 try:
-                    for node, capture_name in execute_query(parser_wrapper.language, query_str, tree.root_node):
+                    for node, capture_name in execute_query(
+                        parser_wrapper.language, query_str, tree.root_node
+                    ):
                         name = None
-                        if capture_name == 'class':
-                            name_node = node.child_by_field_name('name')
+                        if capture_name == "class":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
-                        elif capture_name == 'function':
-                            name_node = node.child_by_field_name('name')
+                                name = name_node.text.decode("utf-8")
+                        elif capture_name == "function":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
-                        elif capture_name == 'var_decl':
-                            name_node = node.child_by_field_name('name')
-                            value_node = node.child_by_field_name('value')
+                                name = name_node.text.decode("utf-8")
+                        elif capture_name == "var_decl":
+                            name_node = node.child_by_field_name("name")
+                            value_node = node.child_by_field_name("value")
                             if name_node and value_node:
-                                if value_node.type in ('function', 'arrow_function'):
-                                    name = name_node.text.decode('utf-8')
-                        elif capture_name == 'method':
-                            name_node = node.child_by_field_name('name')
+                                if value_node.type in ("function", "arrow_function"):
+                                    name = name_node.text.decode("utf-8")
+                        elif capture_name == "method":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
-                        elif capture_name == 'interface':
-                            name_node = node.child_by_field_name('name')
+                                name = name_node.text.decode("utf-8")
+                        elif capture_name == "interface":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
-                        elif capture_name == 'type_alias':
-                            name_node = node.child_by_field_name('name')
+                                name = name_node.text.decode("utf-8")
+                        elif capture_name == "type_alias":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
+                                name = name_node.text.decode("utf-8")
                         if name:
                             if name not in imports_map:
                                 imports_map[name] = []
@@ -61,25 +68,30 @@ def pre_scan_typescript(files: list[Path], parser_wrapper, repo_path: Path) -> d
                                 if relative_path not in imports_map[name]:
                                     imports_map[name].append(relative_path)
                             except ValueError:
-                                warning_logger(f"Pre-scan: File {path} not within repo {repo_path}, skipping")
+                                warning_logger(
+                                    f"Pre-scan: File {path} not within repo {repo_path}, skipping"
+                                )
                 except Exception as query_error:
                     warning_logger(f"Query failed for pattern '{query_str}': {query_error}")
         except Exception as e:
             warning_logger(f"Tree-sitter pre-scan failed for {path}: {e}")
     return imports_map
-from typing import Dict, Any
-from common.tree_sitter_manager import execute_query
-from .typescript import TypescriptLangTreeSitterParser
+
+
 
 class TypescriptLangJSXTreeSitterParser(TypescriptLangTreeSitterParser):
     """
-    A parser for TypeScript JSX (.tsx) files. 
+    A parser for TypeScript JSX (.tsx) files.
     """
+
     def __init__(self, generic_parser_wrapper):
         super().__init__(generic_parser_wrapper)
-        self.language_name = 'typescript'
-        self.jsx_enabled = True 
-    def parse(self, path: Path, is_dependency: bool = False, index_source: bool = False) -> Dict[str, Any]:
+        self.language_name = "typescript"
+        self.jsx_enabled = True
+
+    def parse(
+        self, path: Path, is_dependency: bool = False, index_source: bool = False
+    ) -> Dict[str, Any]:
         """
         Parse a .tsx file, reusing TypeScript logic and ensuring JSX nodes are handled.
         Indexes components, functions, imports, and exports.
@@ -121,17 +133,17 @@ class TypescriptLangJSXTreeSitterParser(TypescriptLangTreeSitterParser):
         Find React components in .tsx files (function and class components).
         """
         components = []
-       
+
         query_strings = [
-            '(class_declaration name: (type_identifier) @name)',
-            '(variable_declarator name: (identifier) @name value: (arrow_function) @fn)',
-            '(variable_declarator name: (identifier) @name value: (function_expression) @fn)',
-            '(function_declaration name: (identifier) @name)',
+            "(class_declaration name: (type_identifier) @name)",
+            "(variable_declarator name: (identifier) @name value: (arrow_function) @fn)",
+            "(variable_declarator name: (identifier) @name value: (function_expression) @fn)",
+            "(function_declaration name: (identifier) @name)",
         ]
         for query_str in query_strings:
             for node, capture_name in execute_query(self.language, query_str, root_node):
-                if capture_name == 'name':
-                    name = node.text.decode('utf-8')
+                if capture_name == "name":
+                    name = node.text.decode("utf-8")
                     line_number = node.start_point[0] + 1
                     component_data = {
                         "name": name,
@@ -141,9 +153,8 @@ class TypescriptLangJSXTreeSitterParser(TypescriptLangTreeSitterParser):
                     }
 
                     if self.index_source:
-                       
                         parent = node.parent
-                        component_data["source"] = parent.text.decode('utf-8')
+                        component_data["source"] = parent.text.decode("utf-8")
 
                     components.append(component_data)
         return components

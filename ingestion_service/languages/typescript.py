@@ -90,8 +90,10 @@ TS_QUERIES = {
     """,
 }
 
+
 def is_typescript_file(path: Path) -> bool:
     return path.suffix in {".ts", ".tsx"}
+
 
 class TypescriptLangTreeSitterParser:
     """A TypeScript-specific parser using tree-sitter, encapsulating language-specific logic."""
@@ -103,39 +105,62 @@ class TypescriptLangTreeSitterParser:
         self.parser = generic_parser_wrapper.parser
 
     def _get_node_text(self, node) -> str:
-        return node.text.decode('utf-8')
+        return node.text.decode("utf-8")
 
-    def _get_parent_context(self, node, types=('function_declaration', 'class_declaration', 'method_definition', 'function_expression', 'arrow_function')):
+    def _get_parent_context(
+        self,
+        node,
+        types=(
+            "function_declaration",
+            "class_declaration",
+            "method_definition",
+            "function_expression",
+            "arrow_function",
+        ),
+    ):
         curr = node.parent
         while curr:
             if curr.type in types:
-                name_node = curr.child_by_field_name('name')
-                if not name_node and curr.type in ('function_expression', 'arrow_function'):
+                name_node = curr.child_by_field_name("name")
+                if not name_node and curr.type in ("function_expression", "arrow_function"):
                     # Try to find name from variable declaration
-                    if curr.parent and curr.parent.type == 'variable_declarator':
-                        name_node = curr.parent.child_by_field_name('name')
-                    elif curr.parent and curr.parent.type == 'assignment_expression':
-                        name_node = curr.parent.child_by_field_name('left')
-                    elif curr.parent and curr.parent.type == 'pair': # property: function
-                        name_node = curr.parent.child_by_field_name('key')
+                    if curr.parent and curr.parent.type == "variable_declarator":
+                        name_node = curr.parent.child_by_field_name("name")
+                    elif curr.parent and curr.parent.type == "assignment_expression":
+                        name_node = curr.parent.child_by_field_name("left")
+                    elif curr.parent and curr.parent.type == "pair":  # property: function
+                        name_node = curr.parent.child_by_field_name("key")
 
-                return self._get_node_text(name_node) if name_node else None, curr.type, curr.start_point[0] + 1
+                return (
+                    self._get_node_text(name_node) if name_node else None,
+                    curr.type,
+                    curr.start_point[0] + 1,
+                )
             curr = curr.parent
         return None, None, None
 
     def _calculate_complexity(self, node):
         complexity_nodes = {
-            "if_statement", "for_statement", "while_statement", "do_statement",
-            "switch_statement", "case_statement", "conditional_expression",
-            "logical_expression", "binary_expression", "catch_clause"
+            "if_statement",
+            "for_statement",
+            "while_statement",
+            "do_statement",
+            "switch_statement",
+            "case_statement",
+            "conditional_expression",
+            "logical_expression",
+            "binary_expression",
+            "catch_clause",
         }
         count = 1
+
         def traverse(n):
             nonlocal count
             if n.type in complexity_nodes:
                 count += 1
             for child in n.children:
                 traverse(child)
+
         traverse(node)
         return count
 
@@ -170,76 +195,90 @@ class TypescriptLangTreeSitterParser:
             "lang": self.language_name,
         }
 
-
     def _find_functions(self, root_node):
         functions = []
-        query_str = TS_QUERIES['functions']
+        query_str = TS_QUERIES["functions"]
+
         def _fn_for_name(name_node):
             current = name_node.parent
             while current:
-                if current.type in ('function_declaration', 'function', 'arrow_function', 'method_definition'):
+                if current.type in (
+                    "function_declaration",
+                    "function",
+                    "arrow_function",
+                    "method_definition",
+                ):
                     return current
-                elif current.type in ('variable_declarator', 'assignment_expression'):
+                elif current.type in ("variable_declarator", "assignment_expression"):
                     for child in current.children:
-                        if child.type in ('function', 'arrow_function'):
+                        if child.type in ("function", "arrow_function"):
                             return child
                 current = current.parent
             return None
+
         def _fn_for_params(params_node):
             current = params_node.parent
             while current:
-                if current.type in ('function_declaration', 'function', 'arrow_function', 'method_definition'):
+                if current.type in (
+                    "function_declaration",
+                    "function",
+                    "arrow_function",
+                    "method_definition",
+                ):
                     return current
                 current = current.parent
             return None
+
         def _key(n):
             return (n.start_byte, n.end_byte, n.type)
+
         captures_by_function = {}
+
         def _bucket_for(node):
             fid = _key(node)
-            return captures_by_function.setdefault(fid, {
-                'node': node, 'name': None, 'params': None, 'single_param': None
-            })
+            return captures_by_function.setdefault(
+                fid, {"node": node, "name": None, "params": None, "single_param": None}
+            )
+
         for node, capture_name in execute_query(self.language, query_str, root_node):
-            if capture_name == 'function_node':
+            if capture_name == "function_node":
                 _bucket_for(node)
-            elif capture_name == 'name':
+            elif capture_name == "name":
                 fn = _fn_for_name(node)
                 if fn:
                     b = _bucket_for(fn)
-                    b['name'] = self._get_node_text(node)
-            elif capture_name == 'params':
+                    b["name"] = self._get_node_text(node)
+            elif capture_name == "params":
                 fn = _fn_for_params(node)
                 if fn:
                     b = _bucket_for(fn)
-                    b['params'] = node
-            elif capture_name == 'single_param':
+                    b["params"] = node
+            elif capture_name == "single_param":
                 fn = _fn_for_params(node)
                 if fn:
                     b = _bucket_for(fn)
-                    b['single_param'] = node
+                    b["single_param"] = node
         for _, data in captures_by_function.items():
-            func_node = data['node']
-            name = data.get('name')
-            if not name and func_node.type == 'method_definition':
-                nm = func_node.child_by_field_name('name')
+            func_node = data["node"]
+            name = data.get("name")
+            if not name and func_node.type == "method_definition":
+                nm = func_node.child_by_field_name("name")
                 if nm:
                     name = self._get_node_text(nm)
             if not name:
                 continue
             args = []
-            if data.get('params'):
-                args = self._extract_parameters(data['params'])
-            elif data.get('single_param'):
-                args = [self._get_node_text(data['single_param'])]
+            if data.get("params"):
+                args = self._extract_parameters(data["params"])
+            elif data.get("single_param"):
+                args = [self._get_node_text(data["single_param"])]
             context, context_type, _ = self._get_parent_context(func_node)
-            class_context = context if context_type == 'class_declaration' else None
+            class_context = context if context_type == "class_declaration" else None
             docstring = None
             func_data = {
                 "name": name,
                 "line_number": func_node.start_point[0] + 1,
                 "end_line": func_node.end_point[0] + 1,
-                "args": args,
                 "args": args,
                 "cyclomatic_complexity": self._calculate_complexity(func_node),
                 "context": context,
@@ -258,62 +297,72 @@ class TypescriptLangTreeSitterParser:
 
     def _extract_parameters(self, params_node):
         params = []
-        if params_node.type == 'formal_parameters':
+        if params_node.type == "formal_parameters":
             for child in params_node.children:
-                if child.type == 'identifier':
+                if child.type == "identifier":
                     params.append(self._get_node_text(child))
-                elif child.type == 'required_parameter':
+                elif child.type == "required_parameter":
                     # required_parameter -> pattern (identifier) + type_annotation
-                    pattern = child.child_by_field_name('pattern')
+                    pattern = child.child_by_field_name("pattern")
                     if pattern:
-                         params.append(self._get_node_text(pattern))
+                        params.append(self._get_node_text(pattern))
                     else:
                         # Fallback: first child that is an identifier or pattern
                         for sub in child.children:
-                            if sub.type in ('identifier', 'object_pattern', 'array_pattern'):
+                            if sub.type in ("identifier", "object_pattern", "array_pattern"):
                                 params.append(self._get_node_text(sub))
                                 break
-                elif child.type == 'optional_parameter':
-                    pattern = child.child_by_field_name('pattern')
+                elif child.type == "optional_parameter":
+                    pattern = child.child_by_field_name("pattern")
                     if pattern:
-                         params.append(self._get_node_text(pattern))
-                elif child.type == 'assignment_pattern':
-                    left_child = child.child_by_field_name('left')
-                    if left_child and left_child.type == 'identifier':
+                        params.append(self._get_node_text(pattern))
+                elif child.type == "assignment_pattern":
+                    left_child = child.child_by_field_name("left")
+                    if left_child and left_child.type == "identifier":
                         params.append(self._get_node_text(left_child))
-                elif child.type == 'rest_pattern':
-                    argument = child.child_by_field_name('argument')
-                    if argument and argument.type == 'identifier':
+                elif child.type == "rest_pattern":
+                    argument = child.child_by_field_name("argument")
+                    if argument and argument.type == "identifier":
                         params.append(f"...{self._get_node_text(argument)}")
         return params
 
     def _find_classes(self, root_node):
         classes = []
-        query_str = TS_QUERIES['classes']
+        query_str = TS_QUERIES["classes"]
         for class_node, capture_name in execute_query(self.language, query_str, root_node):
-            if capture_name == 'class':
-                name_node = class_node.child_by_field_name('name')
-                if not name_node: continue
+            if capture_name == "class":
+                name_node = class_node.child_by_field_name("name")
+                if not name_node:
+                    continue
                 name = self._get_node_text(name_node)
                 bases = []
-                heritage_node = next((child for child in class_node.children if child.type == 'class_heritage'), None)
+                heritage_node = next(
+                    (child for child in class_node.children if child.type == "class_heritage"), None
+                )
                 if heritage_node:
                     for child in heritage_node.children:
-                        if child.type == 'extends_clause':
+                        if child.type == "extends_clause":
                             # extends_clause -> extends identifier
                             for sub in child.children:
-                                if sub.type in ('identifier', 'type_identifier', 'member_expression'):
+                                if sub.type in (
+                                    "identifier",
+                                    "type_identifier",
+                                    "member_expression",
+                                ):
                                     bases.append(self._get_node_text(sub))
-                        elif child.type == 'implements_clause':
+                        elif child.type == "implements_clause":
                             # implements_clause -> implements identifier, identifier...
                             for sub in child.children:
-                                if sub.type in ('identifier', 'type_identifier', 'member_expression'):
+                                if sub.type in (
+                                    "identifier",
+                                    "type_identifier",
+                                    "member_expression",
+                                ):
                                     bases.append(self._get_node_text(sub))
                 class_data = {
                     "name": name,
                     "line_number": class_node.start_point[0] + 1,
                     "end_line": class_node.end_point[0] + 1,
-                    "bases": bases,
                     "bases": bases,
                     "context": None,
                     "decorators": [],
@@ -325,20 +374,20 @@ class TypescriptLangTreeSitterParser:
                     class_data["docstring"] = self._get_docstring(class_node)
                 classes.append(class_data)
         return classes
-    
+
     def _find_interfaces(self, root_node):
         interfaces = []
-        query_str = TS_QUERIES['interfaces']
+        query_str = TS_QUERIES["interfaces"]
         for node, capture_name in execute_query(self.language, query_str, root_node):
-            if capture_name == 'interface_node':
-                name_node = node.child_by_field_name('name')
-                if not name_node: continue
-                
+            if capture_name == "interface_node":
+                name_node = node.child_by_field_name("name")
+                if not name_node:
+                    continue
+
                 name = self._get_node_text(name_node)
                 interface_data = {
                     "name": name,
                     "line_number": node.start_point[0] + 1,
-                    "end_line": node.end_point[0] + 1,
                     "end_line": node.end_point[0] + 1,
                 }
                 if self.index_source:
@@ -348,17 +397,17 @@ class TypescriptLangTreeSitterParser:
 
     def _find_type_aliases(self, root_node):
         type_aliases = []
-        query_str = TS_QUERIES['type_aliases']
+        query_str = TS_QUERIES["type_aliases"]
         for node, capture_name in execute_query(self.language, query_str, root_node):
-            if capture_name == 'type_alias_node':
-                name_node = node.child_by_field_name('name')
-                if not name_node: continue
+            if capture_name == "type_alias_node":
+                name_node = node.child_by_field_name("name")
+                if not name_node:
+                    continue
 
                 name = self._get_node_text(name_node)
                 type_alias_data = {
                     "name": name,
                     "line_number": node.start_point[0] + 1,
-                    "end_line": node.end_point[0] + 1,
                     "end_line": node.end_point[0] + 1,
                 }
                 if self.index_source:
@@ -368,74 +417,114 @@ class TypescriptLangTreeSitterParser:
 
     def _find_imports(self, root_node):
         imports = []
-        query_str = TS_QUERIES['imports']
+        query_str = TS_QUERIES["imports"]
         for node, capture_name in execute_query(self.language, query_str, root_node):
-            if capture_name != 'import':
+            if capture_name != "import":
                 continue
             line_number = node.start_point[0] + 1
-            if node.type == 'import_statement':
-                source = self._get_node_text(node.child_by_field_name('source')).strip('\'"')
-                import_clause = node.child_by_field_name('import')
+            if node.type == "import_statement":
+                source = self._get_node_text(node.child_by_field_name("source")).strip("'\"")
+                import_clause = node.child_by_field_name("import")
                 if not import_clause:
-                    imports.append({'name': source, 'source': source, 'alias': None, 'line_number': line_number,
-                                    'lang': self.language_name})
+                    imports.append(
+                        {
+                            "name": source,
+                            "source": source,
+                            "alias": None,
+                            "line_number": line_number,
+                            "lang": self.language_name,
+                        }
+                    )
                     continue
-                if import_clause.type == 'identifier':
+                if import_clause.type == "identifier":
                     alias = self._get_node_text(import_clause)
-                    imports.append({'name': 'default', 'source': source, 'alias': alias, 'line_number': line_number,
-                                    'lang': self.language_name})
-                elif import_clause.type == 'namespace_import':
-                    alias_node = import_clause.child_by_field_name('alias')
+                    imports.append(
+                        {
+                            "name": "default",
+                            "source": source,
+                            "alias": alias,
+                            "line_number": line_number,
+                            "lang": self.language_name,
+                        }
+                    )
+                elif import_clause.type == "namespace_import":
+                    alias_node = import_clause.child_by_field_name("alias")
                     if alias_node:
                         alias = self._get_node_text(alias_node)
-                        imports.append({'name': '*', 'source': source, 'alias': alias, 'line_number': line_number,
-                                        'lang': self.language_name})
-                elif import_clause.type == 'named_imports':
+                        imports.append(
+                            {
+                                "name": "*",
+                                "source": source,
+                                "alias": alias,
+                                "line_number": line_number,
+                                "lang": self.language_name,
+                            }
+                        )
+                elif import_clause.type == "named_imports":
                     for specifier in import_clause.children:
-                        if specifier.type == 'import_specifier':
-                            name_node = specifier.child_by_field_name('name')
-                            alias_node = specifier.child_by_field_name('alias')
+                        if specifier.type == "import_specifier":
+                            name_node = specifier.child_by_field_name("name")
+                            alias_node = specifier.child_by_field_name("alias")
                             original_name = self._get_node_text(name_node)
                             alias = self._get_node_text(alias_node) if alias_node else None
                             imports.append(
-                                {'name': original_name, 'source': source, 'alias': alias, 'line_number': line_number,
-                                 'lang': self.language_name})
-            elif node.type == 'call_expression':
-                args = node.child_by_field_name('arguments')
-                if not args or args.named_child_count == 0: continue
+                                {
+                                    "name": original_name,
+                                    "source": source,
+                                    "alias": alias,
+                                    "line_number": line_number,
+                                    "lang": self.language_name,
+                                }
+                            )
+            elif node.type == "call_expression":
+                args = node.child_by_field_name("arguments")
+                if not args or args.named_child_count == 0:
+                    continue
                 source_node = args.named_child(0)
-                if not source_node or source_node.type != 'string': continue
-                source = self._get_node_text(source_node).strip('\'"')
+                if not source_node or source_node.type != "string":
+                    continue
+                source = self._get_node_text(source_node).strip("'\"")
                 alias = None
-                if node.parent.type == 'variable_declarator':
-                    alias_node = node.parent.child_by_field_name('name')
+                if node.parent.type == "variable_declarator":
+                    alias_node = node.parent.child_by_field_name("name")
                     if alias_node:
                         alias = self._get_node_text(alias_node)
-                imports.append({'name': source, 'source': source, 'alias': alias, 'line_number': line_number,
-                                'lang': self.language_name})
+                imports.append(
+                    {
+                        "name": source,
+                        "source": source,
+                        "alias": alias,
+                        "line_number": line_number,
+                        "lang": self.language_name,
+                    }
+                )
         return imports
 
     def _find_calls(self, root_node):
         calls = []
-        query_str = TS_QUERIES['calls']
+        query_str = TS_QUERIES["calls"]
         for node, capture_name in execute_query(self.language, query_str, root_node):
-            if capture_name == 'name':
+            if capture_name == "name":
                 # Traverse up to find the call/new expression
                 call_node = node.parent
-                while call_node and call_node.type not in ('call_expression', 'new_expression') and call_node.type != 'program':
+                while (
+                    call_node
+                    and call_node.type not in ("call_expression", "new_expression")
+                    and call_node.type != "program"
+                ):
                     call_node = call_node.parent
-                
+
                 name = self._get_node_text(node)
 
                 # Improved args extraction
                 args = []
                 arguments_node = None
-                if call_node and call_node.type in ('call_expression', 'new_expression'):
-                    arguments_node = call_node.child_by_field_name('arguments')
-                
+                if call_node and call_node.type in ("call_expression", "new_expression"):
+                    arguments_node = call_node.child_by_field_name("arguments")
+
                 if arguments_node:
                     for arg in arguments_node.children:
-                        if arg.type not in ('(', ')', ','):
+                        if arg.type not in ("(", ")", ","):
                             args.append(self._get_node_text(arg))
 
                 call_data = {
@@ -445,7 +534,9 @@ class TypescriptLangTreeSitterParser:
                     "args": args,
                     "inferred_obj_type": None,
                     "context": self._get_parent_context(node),
-                    "class_context": self._get_parent_context(node, types=('class_declaration', 'abstract_class_declaration')),
+                    "class_context": self._get_parent_context(
+                        node, types=("class_declaration", "abstract_class_declaration")
+                    ),
                     "lang": self.language_name,
                     "is_dependency": False,
                 }
@@ -454,11 +545,11 @@ class TypescriptLangTreeSitterParser:
 
     def _find_variables(self, root_node):
         variables = []
-        query_str = TS_QUERIES['variables']
+        query_str = TS_QUERIES["variables"]
         for match in execute_query(self.language, query_str, root_node):
             capture_name = match[1]
             node = match[0]
-            if capture_name == 'name':
+            if capture_name == "name":
                 var_node = node.parent
                 name = self._get_node_text(node)
                 value = None
@@ -473,7 +564,7 @@ class TypescriptLangTreeSitterParser:
                     # --- Skip variables that are assigned a function ---
                     if value_type in ("function_expression", "arrow_function"):
                         continue
-                    
+
                     if "function" in value_type or "arrow" in value_type:
                         continue
 
@@ -485,7 +576,7 @@ class TypescriptLangTreeSitterParser:
                         value = self._get_node_text(value_node)
 
                 context, context_type, context_line = self._get_parent_context(node)
-                class_context = context if context_type == 'class_declaration' else None
+                class_context = context if context_type == "class_declaration" else None
 
                 variable_data = {
                     "name": name,
@@ -500,10 +591,11 @@ class TypescriptLangTreeSitterParser:
                 variables.append(variable_data)
         return variables
 
+
 def pre_scan_typescript(files: list[Path], parser_wrapper, repo_path: Path) -> dict:
     """Scans TypeScript files to create a map of class/function names to their RELATIVE file paths."""
     imports_map = {}
-    
+
     # Simplified queries that capture the parent nodes, then extract names manually
     query_strings = [
         "(class_declaration) @class",
@@ -513,54 +605,55 @@ def pre_scan_typescript(files: list[Path], parser_wrapper, repo_path: Path) -> d
         "(interface_declaration) @interface",
         "(type_alias_declaration) @type_alias",
     ]
-    
+
     for path in files:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 source_code = f.read()
                 tree = parser_wrapper.parser.parse(bytes(source_code, "utf8"))
-            
+
             # Run each query separately
             for query_str in query_strings:
                 try:
-                    
-                    for node, capture_name in execute_query(parser_wrapper.language, query_str, tree.root_node):
+                    for node, capture_name in execute_query(
+                        parser_wrapper.language, query_str, tree.root_node
+                    ):
                         name = None
-                        
+
                         # Extract name based on node type
-                        if capture_name == 'class':
-                            name_node = node.child_by_field_name('name')
+                        if capture_name == "class":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
-                        
-                        elif capture_name == 'function':
-                            name_node = node.child_by_field_name('name')
+                                name = name_node.text.decode("utf-8")
+
+                        elif capture_name == "function":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
-                        
-                        elif capture_name == 'var_decl':
+                                name = name_node.text.decode("utf-8")
+
+                        elif capture_name == "var_decl":
                             # Check if it's a function or arrow function
-                            name_node = node.child_by_field_name('name')
-                            value_node = node.child_by_field_name('value')
+                            name_node = node.child_by_field_name("name")
+                            value_node = node.child_by_field_name("value")
                             if name_node and value_node:
-                                if value_node.type in ('function', 'arrow_function'):
-                                    name = name_node.text.decode('utf-8')
-                        
-                        elif capture_name == 'method':
-                            name_node = node.child_by_field_name('name')
+                                if value_node.type in ("function", "arrow_function"):
+                                    name = name_node.text.decode("utf-8")
+
+                        elif capture_name == "method":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
-                        
-                        elif capture_name == 'interface':
-                            name_node = node.child_by_field_name('name')
+                                name = name_node.text.decode("utf-8")
+
+                        elif capture_name == "interface":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
-                        
-                        elif capture_name == 'type_alias':
-                            name_node = node.child_by_field_name('name')
+                                name = name_node.text.decode("utf-8")
+
+                        elif capture_name == "type_alias":
+                            name_node = node.child_by_field_name("name")
                             if name_node:
-                                name = name_node.text.decode('utf-8')
-                        
+                                name = name_node.text.decode("utf-8")
+
                         # Add to imports map if we found a name
                         if name:
                             if name not in imports_map:
@@ -571,12 +664,14 @@ def pre_scan_typescript(files: list[Path], parser_wrapper, repo_path: Path) -> d
                                 if relative_path not in imports_map[name]:
                                     imports_map[name].append(relative_path)
                             except ValueError:
-                                warning_logger(f"Pre-scan: File {path} not within repo {repo_path}, skipping")
-                                
+                                warning_logger(
+                                    f"Pre-scan: File {path} not within repo {repo_path}, skipping"
+                                )
+
                 except Exception as query_error:
                     warning_logger(f"Query failed for pattern '{query_str}': {query_error}")
-                    
+
         except Exception as e:
             warning_logger(f"Tree-sitter pre-scan failed for {path}: {e}")
-    
+
     return imports_map

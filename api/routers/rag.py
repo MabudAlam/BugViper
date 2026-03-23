@@ -3,8 +3,8 @@ from langchain_core.messages import HumanMessage
 
 from api.agent.graph import build_graph
 from api.dependencies import get_current_user
-from api.routers.query import get_query_service
 from api.models.rag import AskRequest, AskResponse, ChatMessage, SessionHistory
+from api.routers.query import get_query_service
 from common.chat_history import FirestoreChatHistory
 from db.code_serarch_layer import CodeSearchService
 

@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from dotenv import load_dotenv
 
 # Load env vars BEFORE any imports that read them (Firebase, OpenRouter, etc.)

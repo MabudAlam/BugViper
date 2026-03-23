@@ -256,9 +256,9 @@ class BugViperFirebaseService:
         """
         repo_key = f"{owner}_{repo}"
         now = datetime.now(timezone.utc).isoformat()
-        
+
         pr_data.updated_at = now
-        
+
         doc_ref = (
             self._db.collection("users")
             .document(uid)

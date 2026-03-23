@@ -3,9 +3,10 @@
 Reads configuration ONLY from .env file, not from system environment.
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
 from typing import Optional
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AgentConfig(BaseSettings):
@@ -22,7 +23,7 @@ class AgentConfig(BaseSettings):
     synthesis_model: str = Field(
         default="google/gemini-2.5-pro-preview-03-25",
         description="Reasoning model used by the Review Agent (Phase 2). "
-                    "Set SYNTHESIS_MODEL in .env to override.",
+        "Set SYNTHESIS_MODEL in .env to override.",
     )
     review_agent_max_rounds: int = Field(
         default=5,
@@ -33,7 +34,12 @@ class AgentConfig(BaseSettings):
 
     @classmethod
     def settings_customise_sources(
-        cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings,
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
     ):
         return (init_settings, dotenv_settings, file_secret_settings)
 

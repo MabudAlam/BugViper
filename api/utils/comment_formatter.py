@@ -1,4 +1,3 @@
-
 from collections import defaultdict
 
 from code_review_agent.config import config
@@ -12,7 +11,7 @@ _SECURITY_TOOLS = {"bandit", "semgrep", "gitleaks"}
 def _extract_tool(issue: Issue) -> str:
     """Parse tool name from lint issue titles like '[ruff] E501: ...'."""
     if issue.title.startswith("[") and "]" in issue.title:
-        return issue.title[1:issue.title.index("]")]
+        return issue.title[1 : issue.title.index("]")]
     return "lint"
 
 
@@ -32,18 +31,22 @@ def _render_static_section(lint_issues: list[Issue]) -> list[str]:
     lines: list[str] = []
     lines.append("### 🔬 Static Analysis")
     lines.append("")
-    lines.append(f"*{len(lint_issues)} finding(s) from {len(by_tool)} tool(s) — deterministic, confidence 10/10*")
+    lines.append(
+        f"*{len(lint_issues)} finding(s) from {len(by_tool)} tool(s) — deterministic, confidence 10/10*"
+    )
     lines.append("")
 
     # Security tools first, then alphabetical
     security = {t: v for t, v in by_tool.items() if t in _SECURITY_TOOLS}
-    quality  = {t: v for t, v in by_tool.items() if t not in _SECURITY_TOOLS}
+    quality = {t: v for t, v in by_tool.items() if t not in _SECURITY_TOOLS}
 
     for tool, issues in list(security.items()) + sorted(quality.items()):
         is_sec = tool in _SECURITY_TOOLS
         # All sections open by default
         lines.append("<details open>")
-        lines.append(f"<summary>{'🔐' if is_sec else '🔧'} {tool} ({len(issues)} issue(s))</summary>")
+        lines.append(
+            f"<summary>{'🔐' if is_sec else '🔧'} {tool} ({len(issues)} issue(s))</summary>"
+        )
         lines.append("")
         lines.append("| File | Line | Rule | Message |")
         lines.append("|------|------|------|---------|")
@@ -52,7 +55,9 @@ def _render_static_section(lint_issues: list[Issue]) -> list[str]:
             rule = ""
             if "] " in issue.title:
                 after_tool = issue.title.split("] ", 1)[1]
-                rule = after_tool.split(":")[0].strip() if ":" in after_tool else after_tool.split()[0]
+                rule = (
+                    after_tool.split(":")[0].strip() if ":" in after_tool else after_tool.split()[0]
+                )
             # No truncation — show full message
             lines.append(
                 f"| `{issue.file}` | {issue.line_start} | `{rule}` | {issue.description} |"
@@ -63,11 +68,20 @@ def _render_static_section(lint_issues: list[Issue]) -> list[str]:
 
     return lines
 
+
 _LANG_MAP = {
-    "py": "python", "ts": "typescript", "tsx": "typescript",
-    "js": "javascript", "jsx": "javascript", "rb": "ruby",
-    "go": "go", "rs": "rust", "java": "java", "cs": "csharp",
-    "cpp": "cpp", "c": "c",
+    "py": "python",
+    "ts": "typescript",
+    "tsx": "typescript",
+    "js": "javascript",
+    "jsx": "javascript",
+    "rb": "ruby",
+    "go": "go",
+    "rs": "rust",
+    "java": "java",
+    "cs": "csharp",
+    "cpp": "cpp",
+    "c": "c",
 }
 
 
@@ -93,14 +107,10 @@ def _ai_fix_to_suggestion(ai_fix: str) -> str | None:
     # Reject malformed diffs immediately
     for line in lines:
         # Agent sometimes writes '-+' or '+-' on the same line — not valid unified diff
-        if (line.startswith("-+") or line.startswith("+-")
-                or line.startswith("@@")):
+        if line.startswith("-+") or line.startswith("+-") or line.startswith("@@"):
             return None
 
-    plus_lines = [
-        line[1:] for line in lines
-        if line.startswith("+") and not line.startswith("+++")
-    ]
+    plus_lines = [line[1:] for line in lines if line.startswith("+") and not line.startswith("+++")]
     if not plus_lines:
         return None
 
@@ -136,8 +146,11 @@ def _render_issue_block(issue: Issue) -> list[str]:
         # detect language from the file extension
         ext = issue.file.rsplit(".", 1)[-1] if "." in issue.file else ""
         lang_map = {
-            "py": "python", "ts": "typescript", "tsx": "typescript",
-            "js": "javascript", "jsx": "javascript",
+            "py": "python",
+            "ts": "typescript",
+            "tsx": "typescript",
+            "js": "javascript",
+            "jsx": "javascript",
         }
         lang = lang_map.get(ext, ext)
         lines.append(f"```{lang}")
@@ -198,6 +211,7 @@ def _render_issues_by_file(issues: list[Issue]) -> list[str]:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+
 def format_inline_comment(issue: Issue) -> str:
     """Format one issue as an inline PR review comment body.
 
@@ -226,8 +240,17 @@ def format_inline_comment(issue: Issue) -> str:
         if suggestion:
             lines += ["", suggestion]
         else:
-            lines += ["", "<details>", "<summary>🐛 Proposed fix (diff)</summary>", "",
-                      "```diff", issue.ai_fix.strip(), "```", "", "</details>"]
+            lines += [
+                "",
+                "<details>",
+                "<summary>🐛 Proposed fix (diff)</summary>",
+                "",
+                "```diff",
+                issue.ai_fix.strip(),
+                "```",
+                "",
+                "</details>",
+            ]
     elif issue.code_snippet:
         lines += ["", f"```{lang}", issue.code_snippet.strip(), "```"]
 
@@ -246,7 +269,6 @@ def format_inline_comment(issue: Issue) -> str:
     return "\n".join(lines)
 
 
-
 def _render_debug_section(raw_agent_json: str, debug_info: dict) -> list[str]:
     """Render a collapsible debug section with agent JSON + full lint dump."""
     lines: list[str] = []
@@ -256,8 +278,8 @@ def _render_debug_section(raw_agent_json: str, debug_info: dict) -> list[str]:
 
     # Pipeline stats
     tool_rounds = debug_info.get("tool_rounds_used", 0)
-    lint_raw    = debug_info.get("lint_raw_count", 0)
-    lint_pr     = debug_info.get("lint_on_diff_count", 0)
+    lint_raw = debug_info.get("lint_raw_count", 0)
+    lint_pr = debug_info.get("lint_on_diff_count", 0)
     lines.append(f"**Explorer tool rounds:** {tool_rounds}")
     lines.append(f"**Lint findings:** {lint_pr} in PR files / {lint_raw} total (pre-filter)")
     lines.append("")
@@ -275,7 +297,7 @@ def _render_debug_section(raw_agent_json: str, debug_info: dict) -> list[str]:
             if "] " in title:
                 after = title.split("] ", 1)[1]
                 rule = after.split(":")[0].strip() if ":" in after else after.split()[0]
-            tool = title[1:title.index("]")] if title.startswith("[") and "]" in title else "lint"
+            tool = title[1 : title.index("]")] if title.startswith("[") and "]" in title else "lint"
             lines.append(
                 f"| `{i.get('file', '')}` | {i.get('line_start', '')} "
                 f"| {tool} | `{rule}` | {i.get('severity', '')} |"
@@ -323,9 +345,9 @@ def format_review_summary(
     # review.issues contains LLM-only findings; lint_issues are passed separately
     lint_issues = lint_issues or []
     fixed_issues = [i for i in review.issues if i.status == "fixed"]
-    open_issues  = [i for i in review.issues if i.status == "still_open"]
-    new_issues   = [i for i in review.issues if i.status == "new"]
-    actionable   = len(open_issues) + len(new_issues)
+    open_issues = [i for i in review.issues if i.status == "still_open"]
+    new_issues = [i for i in review.issues if i.status == "new"]
+    actionable = len(open_issues) + len(new_issues)
 
     # ── Header ────────────────────────────────────────────────────────────────
     parts.append("## 🐍 BugViper AI Code Review")
@@ -353,7 +375,9 @@ def format_review_summary(
     parts.append(f"**Actionable: {len(high_conf_actionable)}**{nitpick_note}")
     if inline_posted:
         skipped_note = f" ({inline_skipped} outside diff)" if inline_skipped else ""
-        parts.append(f"*{inline_posted} inline comment(s) posted directly on the diff{skipped_note}*")
+        parts.append(
+            f"*{inline_posted} inline comment(s) posted directly on the diff{skipped_note}*"
+        )
     parts.append("")
     parts.append("---")
     parts.append("")
@@ -393,7 +417,11 @@ def format_review_summary(
         parts.append("|------|------|------|-------|------------|")
         for i in sorted_issues:
             status_icon = "🆕" if i.status == "new" else "🔁"
-            line_ref = f"{i.line_start}" if not i.line_end or i.line_end == i.line_start else f"{i.line_start}–{i.line_end}"
+            line_ref = (
+                f"{i.line_start}"
+                if not i.line_end or i.line_end == i.line_start
+                else f"{i.line_start}–{i.line_end}"
+            )
             issue_type = getattr(i, "issue_type", None) or "Potential issue"
             parts.append(
                 f"| `{i.file}` | {line_ref} | {status_icon} {issue_type} | {i.title} | {i.confidence}/10 |"
@@ -407,18 +435,19 @@ def format_review_summary(
         parts.append(f"### ✅ Fixed Since Last Review ({len(fixed_issues)})")
         parts.append("")
         for issue in fixed_issues:
-            parts.append(
-                f"- ~~**{issue.title}**~~ `{issue.file}:{issue.line_start}` — resolved"
-            )
+            parts.append(f"- ~~**{issue.title}**~~ `{issue.file}:{issue.line_start}` — resolved")
         parts.append("")
-
 
     # ── Nitpicks toggle (all <7 confidence actionable issues) ─────────────────
     if nitpicks:
         parts.append("<details>")
-        parts.append(f"<summary>🔍 Nitpicks & Low-confidence ({len(nitpicks)} issues, confidence &lt; 7)</summary>")
+        parts.append(
+            f"<summary>🔍 Nitpicks & Low-confidence ({len(nitpicks)} issues, confidence &lt; 7)</summary>"
+        )
         parts.append("")
-        parts.append("*These findings have lower confidence and may be false positives. Review at your discretion.*")
+        parts.append(
+            "*These findings have lower confidence and may be false positives. Review at your discretion.*"
+        )
         parts.append("")
         for line in _render_issues_by_file(nitpicks):
             parts.append(line)
@@ -476,16 +505,14 @@ def format_github_comment(
     # review.issues contains LLM-only findings; lint_issues are passed separately
     lint_issues = lint_issues or []
     fixed_issues = [i for i in review.issues if i.status == "fixed"]
-    open_issues  = [i for i in review.issues if i.status == "still_open"]
-    new_issues   = [i for i in review.issues if i.status == "new"]
-    actionable   = len(open_issues) + len(new_issues)
+    open_issues = [i for i in review.issues if i.status == "still_open"]
+    new_issues = [i for i in review.issues if i.status == "new"]
+    actionable = len(open_issues) + len(new_issues)
 
     # ── Header ────────────────────────────────────────────────────────────────
     parts.append("## 🐍 BugViper AI Code Review")
     parts.append("")
-    parts.append(
-        f"**PR**: #{pr_number} | **Model**: {config.review_model}"
-    )
+    parts.append(f"**PR**: #{pr_number} | **Model**: {config.review_model}")
     parts.append("")
 
     run_summary_parts = []
@@ -530,7 +557,6 @@ def format_github_comment(
         parts.append("</details>")
         parts.append("")
 
-
     parts.append("---")
     parts.append("")
 
@@ -538,16 +564,14 @@ def format_github_comment(
         parts.append(f"### ✅ Fixed Since Last Review ({len(fixed_issues)})")
         parts.append("")
         for issue in fixed_issues:
-            parts.append(
-                f"- ~~**{issue.title}**~~ `{issue.file}:{issue.line_start}` — resolved"
-            )
+            parts.append(f"- ~~**{issue.title}**~~ `{issue.file}:{issue.line_start}` — resolved")
         parts.append("")
 
     # Split all actionable issues by confidence
-    open_high   = [i for i in open_issues if i.confidence >= 7]
-    open_nitty  = [i for i in open_issues if i.confidence < 7]
-    new_high    = [i for i in new_issues if i.confidence >= 7]
-    new_nitty   = [i for i in new_issues if i.confidence < 7]
+    open_high = [i for i in open_issues if i.confidence >= 7]
+    open_nitty = [i for i in open_issues if i.confidence < 7]
+    new_high = [i for i in new_issues if i.confidence >= 7]
+    new_nitty = [i for i in new_issues if i.confidence < 7]
     all_nitpicks = open_nitty + new_nitty
 
     # ── Still open (high confidence) ──────────────────────────────────────────
@@ -568,9 +592,13 @@ def format_github_comment(
     # ── Nitpicks toggle (all <7 confidence actionable issues) ─────────────────
     if all_nitpicks:
         parts.append("<details>")
-        parts.append(f"<summary>🔍 Nitpicks & Low-confidence ({len(all_nitpicks)} issues, confidence &lt; 7)</summary>")
+        parts.append(
+            f"<summary>🔍 Nitpicks & Low-confidence ({len(all_nitpicks)} issues, confidence &lt; 7)</summary>"
+        )
         parts.append("")
-        parts.append("*These findings have lower confidence and may be false positives. Review at your discretion.*")
+        parts.append(
+            "*These findings have lower confidence and may be false positives. Review at your discretion.*"
+        )
         parts.append("")
         for line in _render_issues_by_file(all_nitpicks):
             parts.append(line)
@@ -581,7 +609,9 @@ def format_github_comment(
         parts.append("✅ **BugViper found no issues.**")
         parts.append("")
     elif not fixed_issues and not open_high and not new_high and all_nitpicks:
-        parts.append("✅ **No significant issues found.** Only low-confidence observations (see Nitpicks above).")
+        parts.append(
+            "✅ **No significant issues found.** Only low-confidence observations (see Nitpicks above)."
+        )
         parts.append("")
 
     # ── Static analysis section ───────────────────────────────────────────────

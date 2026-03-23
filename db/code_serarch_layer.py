@@ -1,6 +1,6 @@
-from typing import Any, Dict, List, Literal, Optional
-import re
 import logging
+import re
+from typing import Any, Dict, List, Literal, Optional
 
 from .client import Neo4jClient
 from .schema import CYPHER_QUERIES
@@ -47,17 +47,24 @@ class CodeSearchService:
         """Get statistics for a specific repository."""
         if not self.db.connected:
             return {
-                "files": 25, "classes": 12, "functions": 89,
-                "methods": 156, "lines": 3420, "imports": 67,
+                "files": 25,
+                "classes": 12,
+                "functions": 89,
+                "methods": 156,
+                "lines": 3420,
+                "imports": 67,
                 "languages": ["Python", "TypeScript", "JavaScript"],
             }
         records, _, _ = self.db.run_query(CYPHER_QUERIES["get_repo_stats"], {"repo_id": repo_id})
         if records:
             r = records[0]
             return {
-                "files": r["file_count"], "classes": r["class_count"],
-                "functions": r["function_count"], "methods": r["method_count"],
-                "lines": r["line_count"], "imports": r["import_count"],
+                "files": r["file_count"],
+                "classes": r["class_count"],
+                "functions": r["function_count"],
+                "methods": r["method_count"],
+                "lines": r["line_count"],
+                "imports": r["import_count"],
                 "languages": r["languages"],
             }
         return {}
@@ -88,8 +95,11 @@ class CodeSearchService:
 
         return [
             {
-                "id": r.get("id"), "name": r.get("name"), "owner": r.get("owner"),
-                "url": r.get("url"), "local_path": r.get("local_path"),
+                "id": r.get("id"),
+                "name": r.get("name"),
+                "owner": r.get("owner"),
+                "url": r.get("url"),
+                "local_path": r.get("local_path"),
                 "last_commit": r.get("last_commit"),
                 "created_at": _dt(r.get("created_at")),
                 "updated_at": _dt(r.get("updated_at")),
@@ -118,16 +128,24 @@ class CodeSearchService:
         """Get a high-level overview of a repository."""
         if not self.db.connected:
             return {
-                "repo": {"id": repo_id, "name": repo_id.split("/")[-1], "owner": repo_id.split("/")[0]},
-                "files": 25, "classes": 12, "functions": 89,
+                "repo": {
+                    "id": repo_id,
+                    "name": repo_id.split("/")[-1],
+                    "owner": repo_id.split("/")[0],
+                },
+                "files": 25,
+                "classes": 12,
+                "functions": 89,
                 "languages": ["Python", "TypeScript", "JavaScript"],
             }
         records, _, _ = self.db.run_query(CYPHER_QUERIES["get_repo_overview"], {"repo_id": repo_id})
         if records:
             r = records[0]
             return {
-                "repo": r["repo"], "files": r["file_count"],
-                "classes": r["class_count"], "functions": r["function_count"],
+                "repo": r["repo"],
+                "files": r["file_count"],
+                "classes": r["class_count"],
+                "functions": r["function_count"],
                 "languages": r["languages"],
             }
         return {}
@@ -143,7 +161,15 @@ class CodeSearchService:
         ORDER BY f.path
         """
         records, _, _ = self.db.run_query(query, {"repo_id": repo_id})
-        return [{"id": r["id"], "path": r["path"], "language": r["language"], "lines_count": r["lines_count"]} for r in records]
+        return [
+            {
+                "id": r["id"],
+                "path": r["path"],
+                "language": r["language"],
+                "lines_count": r["lines_count"],
+            }
+            for r in records
+        ]
 
     def reconstruct_file(self, file_id: str) -> Optional[str]:
         """Return a file's source_code stored in the graph."""
@@ -187,12 +213,16 @@ class CodeSearchService:
             {"repo_id": repo_id},
         )
         return {
-            "repo_id": repo_id, "total_files": total, "files_with_source": with_source,
+            "repo_id": repo_id,
+            "total_files": total,
+            "files_with_source": with_source,
             "files_without_source": total - with_source,
             "success_rate": f"{rate:.1f}%",
             "total_lines": r["total_lines"] or 0,
             "total_source_size_mb": (r["total_source_size"] or 0) / 1024 / 1024,
-            "status": "All files ready" if rate == 100 else f"{total - with_source} files missing source",
+            "status": "All files ready"
+            if rate == 100
+            else f"{total - with_source} files missing source",
             "problem_files": [r["path"] for r in problem_records],
         }
 
@@ -209,8 +239,14 @@ class CodeSearchService:
         """
         records, _, _ = self.db.run_query(query, {"repo_id": repo_id})
         return [
-            {"id": r["id"], "path": r["path"], "file_type": r["file_type"],
-             "project_name": r["project_name"], "version": r["version"], "lines_count": r["lines_count"]}
+            {
+                "id": r["id"],
+                "path": r["path"],
+                "file_type": r["file_type"],
+                "project_name": r["project_name"],
+                "version": r["version"],
+                "lines_count": r["lines_count"],
+            }
             for r in records
         ]
 
@@ -226,8 +262,13 @@ class CodeSearchService:
         """
         records, _, _ = self.db.run_query(query, {"repo_id": repo_id})
         return [
-            {"name": r["name"], "version": r["version"], "is_dev": r["is_dev"],
-             "source": r["source"], "config_file": r["config_file"]}
+            {
+                "name": r["name"],
+                "version": r["version"],
+                "is_dev": r["is_dev"],
+                "source": r["source"],
+                "config_file": r["config_file"],
+            }
             for r in records
         ]
 
@@ -237,25 +278,34 @@ class CodeSearchService:
 
     def find_method_usages(self, method_name: str, repo_id: Optional[str] = None) -> Dict[str, Any]:
         """Find all usages of a method by name."""
-        records, _, _ = self.db.run_query(CYPHER_QUERIES["find_method_usages"], {"method_name": method_name, "repo_id": repo_id})
+        records, _, _ = self.db.run_query(
+            CYPHER_QUERIES["find_method_usages"], {"method_name": method_name, "repo_id": repo_id}
+        )
         results = []
         for record in records:
             callers = [
-                {"caller": c.get("caller_name"), "type": c.get("caller_type"), "line": c.get("line"), "file": c.get("file")}
+                {
+                    "caller": c.get("caller_name"),
+                    "type": c.get("caller_type"),
+                    "line": c.get("line"),
+                    "file": c.get("file"),
+                }
                 for c in (record["callers"] or [])
                 if c and c.get("caller_name")
             ]
-            results.append({
-                "method": {
-                    "name": record.get("method_name"),
-                    "line_number": record.get("line_number"),
-                    "docstring": record.get("docstring"),
-                    "source_code": record.get("source_code"),
-                    "complexity": record.get("complexity"),
-                },
-                "file": record.get("file_path"),
-                "callers": callers,
-            })
+            results.append(
+                {
+                    "method": {
+                        "name": record.get("method_name"),
+                        "line_number": record.get("line_number"),
+                        "docstring": record.get("docstring"),
+                        "source_code": record.get("source_code"),
+                        "complexity": record.get("complexity"),
+                    },
+                    "file": record.get("file_path"),
+                    "callers": callers,
+                }
+            )
         return {"usages": results}
 
     def find_callers(self, symbol_name: str, repo_id: Optional[str] = None) -> Dict[str, Any]:
@@ -263,15 +313,22 @@ class CodeSearchService:
 
         Falls back to source_code text search when no CALLS edges exist.
         """
-        def_records, _, _ = self.db.run_query(CYPHER_QUERIES["find_function_definition"], {"name": symbol_name, "repo_id": repo_id})
+        def_records, _, _ = self.db.run_query(
+            CYPHER_QUERIES["find_function_definition"], {"name": symbol_name, "repo_id": repo_id}
+        )
         definitions = [dict(r) for r in def_records]
 
-        call_records, _, _ = self.db.run_query(CYPHER_QUERIES["find_callers"], {"name": symbol_name, "repo_id": repo_id})
+        call_records, _, _ = self.db.run_query(
+            CYPHER_QUERIES["find_callers"], {"name": symbol_name, "repo_id": repo_id}
+        )
         callers: List[Dict[str, Any]] = [
             {
-                "caller": r["caller_name"], "type": r["caller_type"],
-                "file": r["file_path"], "line": r["call_line"],
-                "source": "call_graph", "source_code": r.get("source_code"),
+                "caller": r["caller_name"],
+                "type": r["caller_type"],
+                "file": r["file_path"],
+                "line": r["call_line"],
+                "source": "call_graph",
+                "source_code": r.get("source_code"),
             }
             for r in call_records
         ]
@@ -282,9 +339,17 @@ class CodeSearchService:
             callers = self._find_callers_by_file_content(symbol_name, def_files, repo_id=repo_id)
             fallback_used = bool(callers)
 
-        return {"callers": callers, "symbol": symbol_name, "total": len(callers), "definitions": definitions, "fallback_used": fallback_used}
+        return {
+            "callers": callers,
+            "symbol": symbol_name,
+            "total": len(callers),
+            "definitions": definitions,
+            "fallback_used": fallback_used,
+        }
 
-    def _find_callers_by_file_content(self, symbol_name: str, exclude_file_paths: set, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _find_callers_by_file_content(
+        self, symbol_name: str, exclude_file_paths: set, repo_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Find callers by scanning File.source_code content when no CALLS edges exist."""
         call_pattern = f"{symbol_name}("
         file_records, _, _ = self.db.run_query(
@@ -297,7 +362,11 @@ class CodeSearchService:
             RETURN f.path AS file_path, f.source_code AS source_code
             LIMIT 10
             """,
-            {"call_pattern": call_pattern, "exclude_paths": list(exclude_file_paths), "repo_id": repo_id},
+            {
+                "call_pattern": call_pattern,
+                "exclude_paths": list(exclude_file_paths),
+                "repo_id": repo_id,
+            },
         )
 
         callers: List[Dict[str, Any]] = []
@@ -309,7 +378,8 @@ class CodeSearchService:
 
             lines = source_code.split("\n")
             call_lines = [
-                i + 1 for i, line in enumerate(lines)
+                i + 1
+                for i, line in enumerate(lines)
                 if call_pattern in line and not line.lstrip().startswith("def ")
             ]
             if not call_lines:
@@ -346,11 +416,17 @@ class CodeSearchService:
                 fname, _ = containing
                 seen.add(fname)
                 fstart_idx, fend_idx = func_ranges[fname]
-                func_source = "\n".join(lines[fstart_idx - 1: fend_idx]).rstrip()
-                callers.append({
-                    "caller": fname, "type": "Function", "file": file_path,
-                    "line": call_line, "source": "text_reference", "source_code": func_source or None,
-                })
+                func_source = "\n".join(lines[fstart_idx - 1 : fend_idx]).rstrip()
+                callers.append(
+                    {
+                        "caller": fname,
+                        "type": "Function",
+                        "file": file_path,
+                        "line": call_line,
+                        "source": "text_reference",
+                        "source_code": func_source or None,
+                    }
+                )
 
         return callers
 
@@ -360,33 +436,78 @@ class CodeSearchService:
 
     def get_class_hierarchy(self, class_name: str, repo_id: Optional[str] = None) -> Dict[str, Any]:
         """Get the inheritance hierarchy of a class (ancestors + descendants)."""
-        records, _, _ = self.db.run_query(CYPHER_QUERIES["get_class_hierarchy"], {"class_name": class_name, "repo_id": repo_id})
+        records, _, _ = self.db.run_query(
+            CYPHER_QUERIES["get_class_hierarchy"], {"class_name": class_name, "repo_id": repo_id}
+        )
         if not records:
             return {"class_name": class_name, "found": False, "ancestors": [], "descendants": []}
 
         r = records[0]
-        clean = lambda nodes: [dict(n) for n in (nodes or []) if n and n.get("name")]
+
+        def clean(nodes):
+            return [dict(n) for n in (nodes or []) if n and n.get("name")]
+
         return {
-            "class_name": r.get("class_name"), "file_path": r.get("file_path"),
-            "line_number": r.get("line_number"), "docstring": r.get("docstring"),
-            "source_code": r.get("source_code"), "found": True,
-            "ancestors": clean(r["ancestors"]), "descendants": clean(r["descendants"]),
+            "class_name": r.get("class_name"),
+            "file_path": r.get("file_path"),
+            "line_number": r.get("line_number"),
+            "docstring": r.get("docstring"),
+            "source_code": r.get("source_code"),
+            "found": True,
+            "ancestors": clean(r["ancestors"]),
+            "descendants": clean(r["descendants"]),
         }
 
     # =========================================================================
     # Search Operations
     # =========================================================================
 
-    _CODE_KEYWORDS = frozenset({
-        'class', 'def', 'import', 'from', 'return', 'self', 'cls', 'None',
-        'True', 'False', 'and', 'or', 'not', 'in', 'is', 'if', 'else',
-        'elif', 'for', 'while', 'try', 'except', 'with', 'as', 'pass',
-        'break', 'continue', 'raise', 'yield', 'async', 'await', 'lambda',
-        'function', 'const', 'let', 'var', 'new', 'this', 'super',
-    })
+    _CODE_KEYWORDS = frozenset(
+        {
+            "class",
+            "def",
+            "import",
+            "from",
+            "return",
+            "self",
+            "cls",
+            "None",
+            "True",
+            "False",
+            "and",
+            "or",
+            "not",
+            "in",
+            "is",
+            "if",
+            "else",
+            "elif",
+            "for",
+            "while",
+            "try",
+            "except",
+            "with",
+            "as",
+            "pass",
+            "break",
+            "continue",
+            "raise",
+            "yield",
+            "async",
+            "await",
+            "lambda",
+            "function",
+            "const",
+            "let",
+            "var",
+            "new",
+            "this",
+            "super",
+        }
+    )
 
     def _extract_identifiers(self, query: str) -> List[str]:
-        tokens = re.findall(r'\b[A-Za-z_][A-Za-z0-9_]{2,}\b', query)
+        tokens = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b", query)
         seen: set = set()
         result = []
         for t in tokens:
@@ -398,12 +519,12 @@ class CodeSearchService:
     def _escape_lucene_query(self, query: str) -> str:
         query = query.strip()
         if not query:
-            return '*'
-        if re.match(r'^[A-Za-z0-9_]+$', query):
+            return "*"
+        if re.match(r"^[A-Za-z0-9_]+$", query):
             return f'"{query}"'
         identifiers = self._extract_identifiers(query)
         if identifiers:
-            return ' AND '.join(f'"{t}"' for t in identifiers[:3])
+            return " AND ".join(f'"{t}"' for t in identifiers[:3])
         return f'"{query.replace(chr(34), chr(92) + chr(34))}"'
 
     def _name_contains_fallback(self, search_term: str, limit: int = 20) -> List[Dict[str, Any]]:
@@ -428,10 +549,19 @@ class CodeSearchService:
             """,
             {"name_term": name_term, "limit": limit},
         )
-        return [{"type": r["type"], "name": r["name"], "path": r["path"], "line_number": r["line_number"], "score": r["score"]} for r in records]
+        return [
+            {
+                "type": r["type"],
+                "name": r["name"],
+                "path": r["path"],
+                "line_number": r["line_number"],
+                "score": r["score"],
+            }
+            for r in records
+        ]
 
     # Matches queries that look like code patterns: method calls, paths, indexing
-    _CODE_PATTERN_RE = re.compile(r'[.()\[\]{}/<>]')
+    _CODE_PATTERN_RE = re.compile(r"[.()\[\]{}/<>]")
 
     def search_code(self, search_term: str, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Three-tier code search: fulltext index → name CONTAINS → file content.
@@ -466,10 +596,23 @@ class CodeSearchService:
                     ORDER BY score DESC
                     LIMIT 20
                 """
-                records, _, _ = self.db.run_query(query, {"search_term": escaped, "repo_id": repo_id})
+                records, _, _ = self.db.run_query(
+                    query, {"search_term": escaped, "repo_id": repo_id}
+                )
             else:
-                records, _, _ = self.db.run_query(CYPHER_QUERIES["search_code"], {"search_term": escaped})
-            results = [{"type": r["type"], "name": r["name"], "path": r["path"], "line_number": r["line_number"], "score": r["score"]} for r in records]
+                records, _, _ = self.db.run_query(
+                    CYPHER_QUERIES["search_code"], {"search_term": escaped}
+                )
+            results = [
+                {
+                    "type": r["type"],
+                    "name": r["name"],
+                    "path": r["path"],
+                    "line_number": r["line_number"],
+                    "score": r["score"],
+                }
+                for r in records
+            ]
         except Exception as e:
             logger.warning("code_search fulltext failed: %s", e)
 
@@ -481,8 +624,13 @@ class CodeSearchService:
         if not results or is_code_pattern:
             file_hits = self.search_file_content(search_term, limit=20)
             line_results = [
-                {"type": "line", "name": h["match_line"].strip(), "path": h["path"],
-                 "line_number": h["line_number"], "score": 0.5}
+                {
+                    "type": "line",
+                    "name": h["match_line"].strip(),
+                    "path": h["path"],
+                    "line_number": h["line_number"],
+                    "score": 0.5,
+                }
                 for h in file_hits
             ]
             if not results:
@@ -495,7 +643,9 @@ class CodeSearchService:
 
     _MAX_FILE_BYTES = 500_000
 
-    def search_file_content(self, search_term: str, limit: int = 50, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def search_file_content(
+        self, search_term: str, limit: int = 50, repo_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Search file source code line by line, server-side in Cypher."""
         escaped = self._escape_lucene_query(search_term)
         limit = min(limit, 200)
@@ -515,9 +665,22 @@ class CodeSearchService:
                 ORDER BY score DESC, path, line_number
                 LIMIT $limit
                 """,
-                {"search_term": escaped, "raw_term": search_term, "max_bytes": self._MAX_FILE_BYTES, "limit": limit, "repo_id": repo_id},
+                {
+                    "search_term": escaped,
+                    "raw_term": search_term,
+                    "max_bytes": self._MAX_FILE_BYTES,
+                    "limit": limit,
+                    "repo_id": repo_id,
+                },
             )
-            results = [{"path": r["path"], "line_number": r["line_number"], "match_line": (r["match_line"] or "").rstrip()} for r in records]
+            results = [
+                {
+                    "path": r["path"],
+                    "line_number": r["line_number"],
+                    "match_line": (r["match_line"] or "").rstrip(),
+                }
+                for r in records
+            ]
             if results:
                 return results
         except Exception as e:
@@ -538,11 +701,25 @@ class CodeSearchService:
             ORDER BY path, line_number
             LIMIT $limit
             """,
-            {"raw_term": search_term, "max_bytes": self._MAX_FILE_BYTES, "limit": limit, "repo_id": repo_id},
+            {
+                "raw_term": search_term,
+                "max_bytes": self._MAX_FILE_BYTES,
+                "limit": limit,
+                "repo_id": repo_id,
+            },
         )
-        return [{"path": r["path"], "line_number": r["line_number"], "match_line": (r["match_line"] or "").rstrip()} for r in records]
+        return [
+            {
+                "path": r["path"],
+                "line_number": r["line_number"],
+                "match_line": (r["match_line"] or "").rstrip(),
+            }
+            for r in records
+        ]
 
-    def peek_file_lines(self, path: str, line: int, above: int = 10, below: int = 10) -> Dict[str, Any]:
+    def peek_file_lines(
+        self, path: str, line: int, above: int = 10, below: int = 10
+    ) -> Dict[str, Any]:
         """Return a window of lines around a specific line in a file."""
         records, _, _ = self.db.run_query(
             "MATCH (f:File {path: $path}) WHERE f.source_code IS NOT NULL AND size(f.source_code) < 2000000 RETURN f.source_code as source_code LIMIT 1",
@@ -556,8 +733,13 @@ class CodeSearchService:
         start = max(0, line - above - 1)
         end = min(total, line + below)
         return {
-            "path": path, "anchor_line": line, "total_lines": total,
-            "window": [{"line_number": i + 1, "content": lines[i], "is_anchor": (i + 1) == line} for i in range(start, end)],
+            "path": path,
+            "anchor_line": line,
+            "total_lines": total,
+            "window": [
+                {"line_number": i + 1, "content": lines[i], "is_anchor": (i + 1) == line}
+                for i in range(start, end)
+            ],
         }
 
     # =========================================================================
@@ -566,51 +748,83 @@ class CodeSearchService:
 
     def analyze_change_impact(self, target_id: str) -> List[Dict[str, Any]]:
         """Analyze the impact of changing a specific code element."""
-        records, _, _ = self.db.run_query(CYPHER_QUERIES["analyze_change_impact"], {"target_id": target_id})
-        return [{"affected": r["affected"], "type": r["type"], "file": r["file"], "distance": r["distance"]} for r in records]
+        records, _, _ = self.db.run_query(
+            CYPHER_QUERIES["analyze_change_impact"], {"target_id": target_id}
+        )
+        return [
+            {
+                "affected": r["affected"],
+                "type": r["type"],
+                "file": r["file"],
+                "distance": r["distance"],
+            }
+            for r in records
+        ]
 
     # =========================================================================
     # Symbol Lookup (CodeFinder)
     # =========================================================================
 
-    def _fulltext_query(self, find_by: Literal["Class", "Function"], fuzzy_search: bool, repo_id: Optional[str] = None) -> str:
-        repo_filter = "AND ($repo_id IS NULL OR node.repo = $repo_id)" if repo_id is not None else ""
+    def _fulltext_query(
+        self,
+        find_by: Literal["Class", "Function"],
+        fuzzy_search: bool,
+        repo_id: Optional[str] = None,
+    ) -> str:
+        repo_filter = (
+            "AND ($repo_id IS NULL OR node.repo = $repo_id)" if repo_id is not None else ""
+        )
         return f"""
             CALL db.index.fulltext.queryNodes("code_search_index", $search_term) YIELD node, score
             WITH node, score
-            WHERE node:{find_by} {'AND node.name CONTAINS $search_term' if not fuzzy_search else ''}
+            WHERE node:{find_by} {"AND node.name CONTAINS $search_term" if not fuzzy_search else ""}
               {repo_filter}
             RETURN node.name as name, node.path as path, node.line_number as line_number,
                 node.source as source, node.docstring as docstring, node.is_dependency as is_dependency
             ORDER BY score DESC LIMIT 20
         """
 
-    def find_by_function_name(self, search_term: str, fuzzy_search: bool = False, repo_id: Optional[str] = None) -> List[Dict]:
+    def find_by_function_name(
+        self, search_term: str, fuzzy_search: bool = False, repo_id: Optional[str] = None
+    ) -> List[Dict]:
         """Find functions by exact or fuzzy name match."""
         with self.driver.session() as session:
             if not fuzzy_search:
                 return session.run(
                     "MATCH (n:Function {name: $name}) WHERE $repo_id IS NULL OR n.repo = $repo_id RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
-                    name=search_term, repo_id=repo_id,
+                    name=search_term,
+                    repo_id=repo_id,
                 ).data()
-            return session.run(self._fulltext_query("Function", fuzzy_search, repo_id), search_term=f"name:{search_term}", repo_id=repo_id).data()
+            return session.run(
+                self._fulltext_query("Function", fuzzy_search, repo_id),
+                search_term=f"name:{search_term}",
+                repo_id=repo_id,
+            ).data()
 
-    def find_by_class_name(self, search_term: str, fuzzy_search: bool = False, repo_id: Optional[str] = None) -> List[Dict]:
+    def find_by_class_name(
+        self, search_term: str, fuzzy_search: bool = False, repo_id: Optional[str] = None
+    ) -> List[Dict]:
         """Find classes by exact or fuzzy name match."""
         with self.driver.session() as session:
             if not fuzzy_search:
                 return session.run(
                     "MATCH (n:Class {name: $name}) WHERE $repo_id IS NULL OR n.repo = $repo_id RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
-                    name=search_term, repo_id=repo_id,
+                    name=search_term,
+                    repo_id=repo_id,
                 ).data()
-            return session.run(self._fulltext_query("Class", fuzzy_search, repo_id), search_term=f"name:{search_term}", repo_id=repo_id).data()
+            return session.run(
+                self._fulltext_query("Class", fuzzy_search, repo_id),
+                search_term=f"name:{search_term}",
+                repo_id=repo_id,
+            ).data()
 
     def find_by_variable_name(self, search_term: str, repo_id: Optional[str] = None) -> List[Dict]:
         """Find variables by name substring."""
         with self.driver.session() as session:
             return session.run(
                 "MATCH (v:Variable) WHERE v.name CONTAINS $search_term AND ($repo_id IS NULL OR v.repo = $repo_id) RETURN v.name as name, v.path as path, v.line_number as line_number, v.value as value, v.context as context, v.is_dependency as is_dependency ORDER BY v.is_dependency ASC, v.name LIMIT 20",
-                search_term=search_term, repo_id=repo_id,
+                search_term=search_term,
+                repo_id=repo_id,
             ).data()
 
     def find_by_content(self, search_term: str, repo_id: Optional[str] = None) -> List[Dict]:
@@ -627,7 +841,8 @@ class CodeSearchService:
                         node.source as source, node.docstring as docstring, node.is_dependency as is_dependency
                     ORDER BY score DESC LIMIT 20
                     """,
-                    search_term=search_term, repo_id=repo_id,
+                    search_term=search_term,
+                    repo_id=repo_id,
                 ).data()
             except Exception:
                 return session.run(
@@ -640,7 +855,8 @@ class CodeSearchService:
                         node.source as source, node.docstring as docstring, node.is_dependency as is_dependency
                     LIMIT 20
                     """,
-                    search_term=search_term, repo_id=repo_id,
+                    search_term=search_term,
+                    repo_id=repo_id,
                 ).data()
 
     def find_by_module_name(self, search_term: str) -> List[Dict]:
@@ -663,35 +879,61 @@ class CodeSearchService:
                        m.name as module_name, f.path as path, r.line_number as line_number
                 ORDER BY f.path LIMIT 20
                 """,
-                search_term=search_term, repo_id=repo_id,
+                search_term=search_term,
+                repo_id=repo_id,
             ).data()
 
     def find_class_hierarchy(self, class_name: str, path: str = None) -> Dict[str, Any]:
         """Find parent classes, child classes, and methods for a class."""
-        match = "MATCH (child:Class {name: $class_name, path: $path})" if path else "MATCH (child:Class {name: $class_name})"
+        match = (
+            "MATCH (child:Class {name: $class_name, path: $path})"
+            if path
+            else "MATCH (child:Class {name: $class_name})"
+        )
         params = {"class_name": class_name, "path": path}
         with self.driver.session() as session:
-            parents = session.run(f"{match} MATCH (child)-[:INHERITS]->(parent:Class) RETURN DISTINCT parent.name as parent_class, parent.path as parent_file_path, parent.line_number as parent_line_number, parent.docstring as parent_docstring, parent.is_dependency as parent_is_dependency ORDER BY parent.is_dependency ASC, parent.name", **params).data()
-            children = session.run(f"{match} MATCH (grandchild:Class)-[:INHERITS]->(child) RETURN DISTINCT grandchild.name as child_class, grandchild.path as child_file_path, grandchild.line_number as child_line_number, grandchild.docstring as child_docstring, grandchild.is_dependency as child_is_dependency ORDER BY grandchild.is_dependency ASC, grandchild.name", **params).data()
-            methods = session.run(f"{match} MATCH (child)-[:CONTAINS]->(method:Function) RETURN DISTINCT method.name as method_name, method.path as method_file_path, method.line_number as method_line_number, method.args as method_args, method.docstring as method_docstring, method.is_dependency as method_is_dependency ORDER BY method.is_dependency ASC, method.line_number", **params).data()
-        return {"class_name": class_name, "parent_classes": parents, "child_classes": children, "methods": methods}
+            parents = session.run(
+                f"{match} MATCH (child)-[:INHERITS]->(parent:Class) RETURN DISTINCT parent.name as parent_class, parent.path as parent_file_path, parent.line_number as parent_line_number, parent.docstring as parent_docstring, parent.is_dependency as parent_is_dependency ORDER BY parent.is_dependency ASC, parent.name",
+                **params,
+            ).data()
+            children = session.run(
+                f"{match} MATCH (grandchild:Class)-[:INHERITS]->(child) RETURN DISTINCT grandchild.name as child_class, grandchild.path as child_file_path, grandchild.line_number as child_line_number, grandchild.docstring as child_docstring, grandchild.is_dependency as child_is_dependency ORDER BY grandchild.is_dependency ASC, grandchild.name",
+                **params,
+            ).data()
+            methods = session.run(
+                f"{match} MATCH (child)-[:CONTAINS]->(method:Function) RETURN DISTINCT method.name as method_name, method.path as method_file_path, method.line_number as method_line_number, method.args as method_args, method.docstring as method_docstring, method.is_dependency as method_is_dependency ORDER BY method.is_dependency ASC, method.line_number",
+                **params,
+            ).data()
+        return {
+            "class_name": class_name,
+            "parent_classes": parents,
+            "child_classes": children,
+            "methods": methods,
+        }
 
-    def get_cyclomatic_complexity(self, function_name: str, path: str = None, repo_id: Optional[str] = None) -> Optional[Dict]:
+    def get_cyclomatic_complexity(
+        self, function_name: str, path: str = None, repo_id: Optional[str] = None
+    ) -> Optional[Dict]:
         """Get the cyclomatic complexity score for a function."""
         with self.driver.session() as session:
             if path:
                 results = session.run(
                     "MATCH (f:Function {name: $name}) WHERE (f.path ENDS WITH $path OR f.path = $path) AND ($repo_id IS NULL OR f.repo = $repo_id) RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number",
-                    name=function_name, path=path, repo_id=repo_id,
+                    name=function_name,
+                    path=path,
+                    repo_id=repo_id,
                 ).data()
             else:
                 results = session.run(
                     "MATCH (f:Function {name: $name}) WHERE $repo_id IS NULL OR f.repo = $repo_id RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number",
-                    name=function_name, repo_id=repo_id,
+                    name=function_name,
+                    repo_id=repo_id,
                 ).data()
         return results[0] if results else None
 
-    def find_most_complex_functions(self, limit: int = 10, repo_id: Optional[str] = None) -> List[Dict]:
+    def find_most_complex_functions(
+        self, limit: int = 10, repo_id: Optional[str] = None
+    ) -> List[Dict]:
         """Find the top N most complex functions in the codebase (excluding dependencies)."""
         with self.driver.session() as session:
             return session.run(
@@ -703,14 +945,17 @@ class CodeSearchService:
                 RETURN f.name as function_name, f.path as path, f.cyclomatic_complexity as complexity, f.line_number as line_number
                 ORDER BY f.cyclomatic_complexity DESC LIMIT $limit
                 """,
-                limit=limit, repo_id=repo_id,
+                limit=limit,
+                repo_id=repo_id,
             ).data()
 
     # =========================================================================
     # Symbols at Lines
     # =========================================================================
 
-    def get_symbols_at_lines_by_relative_path(self, repo_id: str, relative_path: str, start_line: int, end_line: int) -> List[Dict[str, Any]]:
+    def get_symbols_at_lines_by_relative_path(
+        self, repo_id: str, relative_path: str, start_line: int, end_line: int
+    ) -> List[Dict[str, Any]]:
         """Find symbols overlapping a line range using repo-relative file path."""
         records, _, _ = self.db.run_query(
             """
@@ -728,7 +973,12 @@ class CodeSearchService:
                 n.source as source, n.docstring as docstring, f.path as file_path
             ORDER BY n.line_number
             """,
-            {"repo_id": repo_id, "relative_path": relative_path, "start_line": start_line, "end_line": end_line},
+            {
+                "repo_id": repo_id,
+                "relative_path": relative_path,
+                "start_line": start_line,
+                "end_line": end_line,
+            },
         )
         return [dict(r) for r in records]
 
@@ -736,7 +986,9 @@ class CodeSearchService:
     # Language Statistics
     # =========================================================================
 
-    def get_language_stats(self, language: Optional[str] = None, repo_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_language_stats(
+        self, language: Optional[str] = None, repo_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Get per-language file/function/class/variable counts.
 
         If language is provided, returns stats for that language only.
@@ -819,9 +1071,9 @@ class CodeSearchService:
 
     _SEMANTIC_INDEXES: List[tuple] = [
         ("function_semantic", "function"),
-        ("class_semantic",    "class"),
-        ("method_semantic",   "method"),
-        ("file_semantic",     "file"),
+        ("class_semantic", "class"),
+        ("method_semantic", "method"),
+        ("file_semantic", "file"),
     ]
 
     def semantic_search(
@@ -884,7 +1136,9 @@ class CodeSearchService:
             start_line = change.get("start_line", 1)
             end_line = change.get("end_line", 999999)
 
-            symbols = self.get_symbols_at_lines_by_relative_path(repo_id, file_path, start_line, end_line)
+            symbols = self.get_symbols_at_lines_by_relative_path(
+                repo_id, file_path, start_line, end_line
+            )
             for s in symbols:
                 s["change_file"] = file_path
             all_affected.extend(symbols)
@@ -902,7 +1156,13 @@ class CodeSearchService:
                     {"name": sym["name"], "repo_id": repo_id},
                 )
                 if records:
-                    all_callers.append({"symbol": sym["name"], "symbol_type": sym["type"], "callers": [dict(r) for r in records]})
+                    all_callers.append(
+                        {
+                            "symbol": sym["name"],
+                            "symbol_type": sym["type"],
+                            "callers": [dict(r) for r in records],
+                        }
+                    )
 
             for cls in [s for s in symbols if s["type"] == "class"]:
                 records, _, _ = self.db.run_query(
@@ -910,7 +1170,9 @@ class CodeSearchService:
                     {"name": cls["name"], "repo_id": repo_id},
                 )
                 if records:
-                    all_hierarchy.append({"class": cls["name"], "hierarchy": [dict(r) for r in records]})
+                    all_hierarchy.append(
+                        {"class": cls["name"], "hierarchy": [dict(r) for r in records]}
+                    )
 
             records, _, _ = self.db.run_query(
                 "MATCH (f:File) WHERE f.relative_path = $relative_path AND f.repo = $repo_id RETURN f.source_code as source_code LIMIT 1",
@@ -920,12 +1182,17 @@ class CodeSearchService:
                 file_sources[file_path] = records[0]["source_code"]
 
         return {
-            "affected_symbols": all_affected, "callers": all_callers,
-            "class_hierarchy": all_hierarchy, "file_sources": file_sources,
-            "total_affected": len(all_affected), "total_files": len(changes),
+            "affected_symbols": all_affected,
+            "callers": all_callers,
+            "class_hierarchy": all_hierarchy,
+            "file_sources": file_sources,
+            "total_affected": len(all_affected),
+            "total_files": len(changes),
         }
 
-    def get_diff_context_enhanced(self, repo_id: str, changes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def get_diff_context_enhanced(
+        self, repo_id: str, changes: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Build full relationship context for every changed symbol (used by the review pipeline)."""
         all_affected: List[Dict[str, Any]] = []
         all_callers: List[Dict[str, Any]] = []
@@ -958,7 +1225,12 @@ class CodeSearchService:
                     n.args AS args, f.path AS file_path
                 ORDER BY n.line_number
                 """,
-                {"repo_id": repo_id, "file_path": file_path, "start_line": start_line, "end_line": end_line},
+                {
+                    "repo_id": repo_id,
+                    "file_path": file_path,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                },
             )
             symbols = [dict(r) for r in records]
 
@@ -994,7 +1266,13 @@ class CodeSearchService:
                     )
                     callers_list = [dict(r) for r in records]
                     if callers_list:
-                        all_callers.append({"symbol": sym["name"], "symbol_type": sym["type"], "callers": callers_list})
+                        all_callers.append(
+                            {
+                                "symbol": sym["name"],
+                                "symbol_type": sym["type"],
+                                "callers": callers_list,
+                            }
+                        )
                 except Exception as e:
                     logger.warning("Error finding callers for %s: %s", sym["name"], e)
 
@@ -1053,13 +1331,33 @@ class CodeSearchService:
                     if func_results:
                         f = func_results[0]
                         if f.get("path") and repo_id in f.get("path", ""):
-                            all_imports.append({"name": imported_name, "type": "function", "source": f.get("source", ""), "path": f.get("path"), "line": f.get("line_number"), "docstring": f.get("docstring"), "from_file": file_path})
+                            all_imports.append(
+                                {
+                                    "name": imported_name,
+                                    "type": "function",
+                                    "source": f.get("source", ""),
+                                    "path": f.get("path"),
+                                    "line": f.get("line_number"),
+                                    "docstring": f.get("docstring"),
+                                    "from_file": file_path,
+                                }
+                            )
                     else:
                         cls_results = self.find_by_class_name(imported_name, fuzzy_search=False)
                         if cls_results:
                             c = cls_results[0]
                             if c.get("path") and repo_id in c.get("path", ""):
-                                all_imports.append({"name": imported_name, "type": "class", "source": c.get("source", ""), "path": c.get("path"), "line": c.get("line_number"), "docstring": c.get("docstring"), "from_file": file_path})
+                                all_imports.append(
+                                    {
+                                        "name": imported_name,
+                                        "type": "class",
+                                        "source": c.get("source", ""),
+                                        "path": c.get("path"),
+                                        "line": c.get("line_number"),
+                                        "docstring": c.get("docstring"),
+                                        "from_file": file_path,
+                                    }
+                                )
                 except Exception as e:
                     logger.warning("Error resolving import %s: %s", imported_name, e)
 
@@ -1068,14 +1366,24 @@ class CodeSearchService:
                 try:
                     h = self.find_class_hierarchy(cls["name"], cls.get("file_path"))
                     if h:
-                        all_hierarchy.append({"class": cls["name"], "parents": h.get("parent_classes", []), "children": h.get("child_classes", []), "methods": h.get("methods", [])})
+                        all_hierarchy.append(
+                            {
+                                "class": cls["name"],
+                                "parents": h.get("parent_classes", []),
+                                "children": h.get("child_classes", []),
+                                "methods": h.get("methods", []),
+                            }
+                        )
                 except Exception as e:
                     logger.warning("Error finding hierarchy for %s: %s", cls["name"], e)
 
         return {
-            "affected_symbols": all_affected, "callers": all_callers,
-            "imports": all_imports, "dependencies": all_dependencies,
+            "affected_symbols": all_affected,
+            "callers": all_callers,
+            "imports": all_imports,
+            "dependencies": all_dependencies,
             "class_hierarchy": all_hierarchy,
-            "total_affected": len(all_affected), "total_imports": len(all_imports),
+            "total_affected": len(all_affected),
+            "total_imports": len(all_imports),
             "total_files": len({c["file_path"] for c in changes}),
         }

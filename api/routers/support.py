@@ -1,7 +1,6 @@
 """Customer support router — public endpoint (no auth required)."""
 
 import logging
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, field_validator
@@ -69,7 +68,9 @@ async def submit_support_query(body: SupportQueryRequest) -> SupportQueryRespons
         )
     except Exception as exc:
         logger.exception("Failed to save customer query: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to submit support query. Please try again.")
+        raise HTTPException(
+            status_code=500, detail="Failed to submit support query. Please try again."
+        )
 
     return SupportQueryResponse(
         query_id=query_id,

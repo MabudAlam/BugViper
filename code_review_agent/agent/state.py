@@ -29,9 +29,7 @@ def _merge_sources(current: list[Source], update: list[Source]) -> list[Source]:
 class InputState:
     """The input state — what the outside world sends in."""
 
-    messages: Annotated[Sequence[AnyMessage], add_messages] = field(
-        default_factory=list
-    )
+    messages: Annotated[Sequence[AnyMessage], add_messages] = field(default_factory=list)
     """
     Conversation history. Accumulates:
       1. HumanMessage       — user question

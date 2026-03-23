@@ -1,23 +1,23 @@
-
 import asyncio
+import os
 import subprocess
 import tempfile
-import os
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+from common.debug_log import error_logger, info_logger, warning_logger
 from common.github_client import GitHubClient
 from common.languages import SUPPORTED_EXTENSIONS
 from db import Neo4jClient
-from ingestion_service.core.tree_sitter_router import GraphBuilder
 from ingestion_service.core.jobs import JobManager
-from common.debug_log import info_logger, error_logger, warning_logger
+from ingestion_service.core.tree_sitter_router import GraphBuilder
 
 
 @dataclass
 class IncrementalUpdateStats:
     """Statistics for incremental graph update."""
+
     files_added: int = 0
     files_modified: int = 0
     files_deleted: int = 0
@@ -50,12 +50,7 @@ class IncrementalGraphUpdater:
         """Check if file extension is supported for parsing."""
         return Path(filename).suffix in SUPPORTED_EXTENSIONS
 
-    async def _sync_repository(
-        self,
-        owner: str,
-        repo: str,
-        repo_path: str
-    ) -> Tuple[bool, str]:
+    async def _sync_repository(self, owner: str, repo: str, repo_path: str) -> Tuple[bool, str]:
         """
         Sync the local repository with remote (git pull or re-clone if needed).
 
@@ -75,7 +70,7 @@ class IncrementalGraphUpdater:
                         cwd=repo_path,
                         capture_output=True,
                         text=True,
-                        timeout=120
+                        timeout=120,
                     )
                     if result.returncode != 0:
                         warning_logger(f"[SYNC] git fetch failed: {result.stderr}")
@@ -86,7 +81,7 @@ class IncrementalGraphUpdater:
                         cwd=repo_path,
                         capture_output=True,
                         text=True,
-                        timeout=30
+                        timeout=30,
                     )
                     if result.returncode == 0:
                         default_branch = result.stdout.strip().replace("origin/", "")
@@ -99,7 +94,7 @@ class IncrementalGraphUpdater:
                         cwd=repo_path,
                         capture_output=True,
                         text=True,
-                        timeout=60
+                        timeout=60,
                     )
                     if result.returncode != 0:
                         warning_logger(f"[SYNC] git reset failed: {result.stderr}")
@@ -109,7 +104,7 @@ class IncrementalGraphUpdater:
                             cwd=repo_path,
                             capture_output=True,
                             text=True,
-                            timeout=120
+                            timeout=120,
                         )
 
                     if result.returncode == 0:
@@ -132,6 +127,7 @@ class IncrementalGraphUpdater:
             # Remove existing directory if it exists but is corrupted
             if os.path.exists(clone_path):
                 import shutil
+
                 shutil.rmtree(clone_path, ignore_errors=True)
 
             # Ensure parent directory exists
@@ -144,7 +140,7 @@ class IncrementalGraphUpdater:
                     ["git", "clone", "--depth", "1", clone_url, clone_path],
                     capture_output=True,
                     text=True,
-                    timeout=300
+                    timeout=300,
                 )
 
                 if result.returncode == 0:
@@ -167,20 +163,19 @@ class IncrementalGraphUpdater:
         """Check if a repository exists in the graph database."""
         repo_identifier = f"{owner}/{repo}"
         with self.driver.session() as session:
-            result = session.run("""
+            result = session.run(
+                """
                 MATCH (r:Repository {repo: $repo})
                 RETURN count(r) as cnt
-            """, repo=repo_identifier).single()
+            """,
+                repo=repo_identifier,
+            ).single()
             exists = result and result["cnt"] > 0
             info_logger(f"Repository {repo_identifier} exists in graph: {exists}")
             return exists
 
     async def _get_file_content_from_github(
-        self,
-        owner: str,
-        repo: str,
-        filepath: str,
-        ref: str = "HEAD"
+        self, owner: str, repo: str, filepath: str, ref: str = "HEAD"
     ) -> Optional[str]:
         """Fetch file content from GitHub."""
         try:
@@ -189,7 +184,9 @@ class IncrementalGraphUpdater:
             warning_logger(f"Could not fetch {filepath}: {e}")
             return None
 
-    def _delete_file_nodes_and_relationships(self, repo_identifier: str, relative_path: str) -> None:
+    def _delete_file_nodes_and_relationships(
+        self, repo_identifier: str, relative_path: str
+    ) -> None:
         """
         Delete a file and all its contained elements from the graph.
         Also cleans up orphaned directories.
@@ -202,34 +199,50 @@ class IncrementalGraphUpdater:
             info_logger(f"Deleting file from graph: {repo_identifier}:{relative_path}")
 
             # Get parent directories for cleanup
-            parents_res = session.run("""
+            parents_res = session.run(
+                """
                 MATCH (f:File {repo: $repo, path: $path})<-[:CONTAINS*]-(d:Directory)
                 RETURN d.path as path ORDER BY d.path DESC
-            """, repo=repo_identifier, path=relative_path)
+            """,
+                repo=repo_identifier,
+                path=relative_path,
+            )
             parent_paths = [record["path"] for record in parents_res]
 
             # Delete all elements contained by the file
-            session.run("""
+            session.run(
+                """
                 MATCH (f:File {repo: $repo, path: $path})
                 OPTIONAL MATCH (f)-[:CONTAINS*]->(element)
                 DETACH DELETE element
-            """, repo=repo_identifier, path=relative_path)
+            """,
+                repo=repo_identifier,
+                path=relative_path,
+            )
 
             # Delete the file node itself
-            session.run("""
+            session.run(
+                """
                 MATCH (f:File {repo: $repo, path: $path})
                 DETACH DELETE f
-            """, repo=repo_identifier, path=relative_path)
+            """,
+                repo=repo_identifier,
+                path=relative_path,
+            )
 
             info_logger(f"Deleted file and elements: {repo_identifier}:{relative_path}")
 
             # Clean up orphaned directories
             for dir_path in parent_paths:
-                session.run("""
+                session.run(
+                    """
                     MATCH (d:Directory {repo: $repo, path: $path})
                     WHERE NOT (d)-[:CONTAINS]->()
                     DETACH DELETE d
-                """, repo=repo_identifier, path=dir_path)
+                """,
+                    repo=repo_identifier,
+                    path=dir_path,
+                )
 
     def _delete_incoming_calls_to_file(self, repo_identifier: str, relative_path: str) -> int:
         """
@@ -245,13 +258,17 @@ class IncrementalGraphUpdater:
         with self.driver.session() as session:
             info_logger(f"Deleting incoming CALLS to: {repo_identifier}:{relative_path}")
 
-            result = session.run("""
+            result = session.run(
+                """
                 MATCH (caller)-[r:CALLS]->(callee)
                 WHERE callee.repo = $repo AND callee.path = $path
                   AND caller.path <> $path
                 DELETE r
                 RETURN count(r) as deleted_count
-            """, repo=repo_identifier, path=relative_path)
+            """,
+                repo=repo_identifier,
+                path=relative_path,
+            )
             record = result.single()
             deleted_count = record["deleted_count"] if record else 0
 
@@ -263,12 +280,16 @@ class IncrementalGraphUpdater:
         with self.driver.session() as session:
             info_logger(f"Finding callers into: {repo_identifier}:{relative_path}")
 
-            result = session.run("""
+            result = session.run(
+                """
                 MATCH (caller)-[:CALLS]->(callee)
                 WHERE callee.repo = $repo AND callee.path = $path
                   AND caller.path <> $path
                 RETURN DISTINCT caller.path as caller_path
-            """, repo=repo_identifier, path=relative_path)
+            """,
+                repo=repo_identifier,
+                path=relative_path,
+            )
             callers = [record["caller_path"] for record in result]
 
             info_logger(f"Found {len(callers)} files that call into this file")
@@ -279,21 +300,23 @@ class IncrementalGraphUpdater:
         with self.driver.session() as session:
             info_logger(f"Finding inheritors from: {repo_identifier}:{relative_path}")
 
-            result = session.run("""
+            result = session.run(
+                """
                 MATCH (child)-[:INHERITS]->(parent)
                 WHERE parent.repo = $repo AND parent.path = $path
                   AND child.path <> $path
                 RETURN DISTINCT child.path as child_path
-            """, repo=repo_identifier, path=relative_path)
+            """,
+                repo=repo_identifier,
+                path=relative_path,
+            )
             inheritors = [record["child_path"] for record in result]
 
             info_logger(f"Found {len(inheritors)} files that inherit from this file")
             return inheritors
 
     def _rebuild_imports_map_for_files(
-        self,
-        graph_builder: GraphBuilder,
-        file_paths: List[Path]
+        self, graph_builder: GraphBuilder, file_paths: List[Path]
     ) -> Dict:
         """Rebuild the imports map for a subset of files."""
         info_logger(f"Pre-scanning {len(file_paths)} files for exports")
@@ -310,12 +333,15 @@ class IncrementalGraphUpdater:
         with self.driver.session() as session:
             info_logger(f"Building imports_map from graph for repo: {repo_identifier}")
 
-            result = session.run("""
+            result = session.run(
+                """
                 MATCH (n)
                 WHERE (n:Function OR n:Class OR n:Trait OR n:Interface OR n:Struct)
                 AND n.repo = $repo
                 RETURN n.name as name, n.path as path
-            """, repo=repo_identifier)
+            """,
+                repo=repo_identifier,
+            )
 
             for record in result:
                 name = record["name"]
@@ -334,7 +360,7 @@ class IncrementalGraphUpdater:
         owner: str,
         repo: str,
         changed_files: List[Dict[str, Any]],
-        repo_local_path: Optional[str] = None
+        repo_local_path: Optional[str] = None,
     ) -> IncrementalUpdateStats:
         """
         Incrementally update the graph based on changed files.
@@ -502,14 +528,14 @@ class IncrementalGraphUpdater:
 
                 if "error" not in file_data:
                     # Add repo_identifier for relationship creation
-                    file_data['repo_identifier'] = repo_identifier
-                    graph_builder.add_file_to_graph(file_data, repo_identifier, existing_imports_map)
+                    file_data["repo_identifier"] = repo_identifier
+                    graph_builder.add_file_to_graph(
+                        file_data, repo_identifier, existing_imports_map
+                    )
                     new_file_data_list.append(file_data)
                     info_logger("  -> Added to graph")
                 else:
-                    stats.errors.append(
-                        f"Parse error for {relative_path}: {file_data['error']}"
-                    )
+                    stats.errors.append(f"Parse error for {relative_path}: {file_data['error']}")
 
             except Exception as e:
                 error_msg = f"Error processing {file_info['relative_path']}: {str(e)}"
@@ -523,9 +549,7 @@ class IncrementalGraphUpdater:
                 graph_builder._create_all_inheritance_links(
                     new_file_data_list, existing_imports_map
                 )
-                graph_builder._create_all_function_calls(
-                    new_file_data_list, existing_imports_map
-                )
+                graph_builder._create_all_function_calls(new_file_data_list, existing_imports_map)
                 info_logger(f"  -> Rebuilt relationships for {len(new_file_data_list)} files")
             except Exception as e:
                 error_msg = f"Error rebuilding relationships: {str(e)}"
@@ -546,7 +570,7 @@ class IncrementalGraphUpdater:
             try:
                 file_data = graph_builder.parse_file(local_path_obj, dep_abs_path)
                 if "error" not in file_data:
-                    file_data['repo_identifier'] = repo_identifier
+                    file_data["repo_identifier"] = repo_identifier
                     dependent_file_data_list.append(file_data)
             except Exception as e:
                 warning_logger(f"  Could not re-parse {dep_relative_path}: {e}")
@@ -564,6 +588,7 @@ class IncrementalGraphUpdater:
         if os.getenv("OPENROUTER_API_KEY") and (files_to_add or files_to_modify):
             try:
                 from common.embedder import embed_nodes_in_neo4j
+
                 embed_stats = embed_nodes_in_neo4j(self.neo4j_client)
                 for label, count in embed_stats.items():
                     if count:
@@ -591,7 +616,7 @@ async def ingest_merged_pr(
     repo: str,
     pr_number: int,
     neo4j_client: Neo4jClient,
-    repo_local_path: Optional[str] = None
+    repo_local_path: Optional[str] = None,
 ) -> IncrementalUpdateStats:
     """
     Handle a code push (PR merge or direct push) by incrementally updating the graph.
@@ -614,7 +639,6 @@ async def ingest_merged_pr(
 
     gh = GitHubClient()
 
-
     info_logger(f"Calling GitHub API: gh.get_pr_files('{owner}', '{repo}', {pr_number})")
     pr_files_payload = await gh.get_pr_files(owner, repo, pr_number)
 
@@ -624,17 +648,14 @@ async def ingest_merged_pr(
         status = file.get("status")
         additions = file.get("additions", 0)
         deletions = file.get("deletions", 0)
-        info_logger(f"  [{idx+1}] {filename}")
+        info_logger(f"  [{idx + 1}] {filename}")
         info_logger(f"      status={status}, +{additions}/-{deletions} lines")
 
     # Perform incremental update
     info_logger("Creating IncrementalGraphUpdater and starting update...")
     updater = IncrementalGraphUpdater(neo4j_client, gh)
     stats = await updater.update_graph_incrementally(
-        owner=owner,
-        repo=repo,
-        changed_files=pr_files_payload,
-        repo_local_path=repo_local_path
+        owner=owner, repo=repo, changed_files=pr_files_payload, repo_local_path=repo_local_path
     )
 
     info_logger("=" * 70)
@@ -655,7 +676,7 @@ async def ingest_direct_push(
     before_sha: str,
     after_sha: str,
     neo4j_client: Neo4jClient,
-    repo_local_path: Optional[str] = None
+    repo_local_path: Optional[str] = None,
 ) -> IncrementalUpdateStats:
     """
     Handle a direct push (not via PR) by comparing commits.
@@ -707,7 +728,6 @@ async def ingest_direct_push(
         for f in compare_data.get("files", [])
     ]
 
-
     info_logger(f"GitHub API returned {len(changed_files)} changed files:")
     for idx, file in enumerate(changed_files):
         filename = file.get("filename")
@@ -715,7 +735,7 @@ async def ingest_direct_push(
         prev = file.get("previous_filename")
         additions = file.get("additions", 0)
         deletions = file.get("deletions", 0)
-        info_logger(f"  [{idx+1}] {filename}")
+        info_logger(f"  [{idx + 1}] {filename}")
         info_logger(f"      status={status}, +{additions}/-{deletions} lines")
         if prev:
             info_logger(f"      previous_filename={prev}")
@@ -724,10 +744,7 @@ async def ingest_direct_push(
     info_logger("Creating IncrementalGraphUpdater and starting update...")
     updater = IncrementalGraphUpdater(neo4j_client, gh)
     stats = await updater.update_graph_incrementally(
-        owner=owner,
-        repo=repo,
-        changed_files=changed_files,
-        repo_local_path=repo_local_path
+        owner=owner, repo=repo, changed_files=changed_files, repo_local_path=repo_local_path
     )
 
     info_logger("=" * 70)

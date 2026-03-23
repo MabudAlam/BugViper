@@ -10,7 +10,9 @@ def _lang_hint(file_path: str) -> str:
     return EXT_TO_LANG.get(Path(file_path).suffix.lower(), "")
 
 
-def build_graph_context_section(graph_context: dict[str, Any], changed_files: set[str] | None = None) -> str:
+def build_graph_context_section(
+    graph_context: dict[str, Any], changed_files: set[str] | None = None
+) -> str:
     """Build a markdown section from graph context for the LLM prompt.
 
     Args:
@@ -28,11 +30,12 @@ def build_graph_context_section(graph_context: dict[str, Any], changed_files: se
     # Only keep symbols from files NOT in the PR diff.
     # Files in the diff already have full post-PR source in the prompt.
     affected = [
-        s for s in affected
-        if (s.get("change_file") or s.get("file_path", "")) not in _changed
+        s for s in affected if (s.get("change_file") or s.get("file_path", "")) not in _changed
     ]
     if affected:
-        parts.append(f"**{len(affected)} symbol(s) from dependent files (pre-PR graph snapshot — for call-graph context only):**")
+        parts.append(
+            f"**{len(affected)} symbol(s) from dependent files (pre-PR graph snapshot — for call-graph context only):**"
+        )
         parts.append("")
 
         for sym in affected[:20]:
@@ -104,9 +107,7 @@ def build_graph_context_section(graph_context: dict[str, Any], changed_files: se
                 caller_path = c.get("caller_path", "?")
                 call_line = c.get("call_line", "")
                 line_info = f" at line {call_line}" if call_line else ""
-                parts.append(
-                    f"  - `{caller_name}` ({caller_type}) in `{caller_path}`{line_info}"
-                )
+                parts.append(f"  - `{caller_name}` ({caller_type}) in `{caller_path}`{line_info}")
         parts.append("")
 
     # ── Dependencies: what the changed symbols call ───────────────────────────
@@ -123,9 +124,7 @@ def build_graph_context_section(graph_context: dict[str, Any], changed_files: se
                 called_path = d.get("called_path") or "?"
                 call_line = d.get("call_line", "")
                 line_info = f" (line {call_line})" if call_line else ""
-                parts.append(
-                    f"  - `{called_name}` ({called_type}) in `{called_path}`{line_info}"
-                )
+                parts.append(f"  - `{called_name}` ({called_type}) in `{called_path}`{line_info}")
         parts.append("")
 
     # ── Imports: in-repo symbols imported by changed files ───────────────────
@@ -164,19 +163,13 @@ def build_graph_context_section(graph_context: dict[str, Any], changed_files: se
 
             parts.append(f"#### `{cls_name}`")
             if parents:
-                parent_names = ", ".join(
-                    p.get("parent_class", "?") for p in parents[:3]
-                )
+                parent_names = ", ".join(p.get("parent_class", "?") for p in parents[:3])
                 parts.append(f"  Inherits from: `{parent_names}`")
             if children:
-                child_names = ", ".join(
-                    c.get("child_class", "?") for c in children[:3]
-                )
+                child_names = ", ".join(c.get("child_class", "?") for c in children[:3])
                 parts.append(f"  Inherited by: `{child_names}`")
             if methods:
-                method_sigs = ", ".join(
-                    f"`{m.get('method_name', '?')}`" for m in methods[:6]
-                )
+                method_sigs = ", ".join(f"`{m.get('method_name', '?')}`" for m in methods[:6])
                 parts.append(f"  Methods: {method_sigs}")
         parts.append("")
 

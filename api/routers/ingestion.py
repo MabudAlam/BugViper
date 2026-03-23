@@ -5,17 +5,16 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.dependencies import get_neo4j_client, get_current_user
+from api.dependencies import get_current_user, get_neo4j_client
 from api.models.schemas import (
     GitHubIngestRequest,
     IngestionJobResponse,
     JobStatusResponse,
 )
-from api.services.firebase_service import firebase_service
-from common.github_client import get_github_client
-
 from api.services.cloud_tasks_service import CloudTasksService
+from api.services.firebase_service import firebase_service
 from common.firebase_models import RepoIngestionError, RepoIngestionUpdate, RepoMetadata
+from common.github_client import get_github_client
 from common.job_models import (
     IngestionJobStats,
     IngestionTaskPayload,
@@ -53,11 +52,14 @@ async def ingest_github_repository(
                 age_minutes = (datetime.now(timezone.utc) - created_dt).total_seconds() / 60
                 if age_minutes > 10:
                     job_tracker.update_status(
-                        existing.job_id, JobStatus.FAILED,
+                        existing.job_id,
+                        JobStatus.FAILED,
                         error_message="Job timed out waiting to start (stale)",
                     )
                     stale = True
-                    logger.warning("Stale job %s marked FAILED (age=%.1f min)", existing.job_id, age_minutes)
+                    logger.warning(
+                        "Stale job %s marked FAILED (age=%.1f min)", existing.job_id, age_minutes
+                    )
             except Exception:
                 pass
 
@@ -75,7 +77,9 @@ async def ingest_github_repository(
         gh = get_github_client()
         gh_meta = await gh.get_repository_info(request.owner, request.repo_name)
     except Exception:
-        logger.warning("Could not fetch GitHub metadata for %s/%s", request.owner, request.repo_name)
+        logger.warning(
+            "Could not fetch GitHub metadata for %s/%s", request.owner, request.repo_name
+        )
 
     # ── Write initial repo doc to Firestore (status: pending) ─────────────
     try:
@@ -104,7 +108,11 @@ async def ingest_github_repository(
     except Exception as exc:
         logger.warning(
             "Failed to write initial Firestore repo doc (uid=%s owner=%s repo=%s branch=%s): %s",
-            uid, request.owner, request.repo_name, request.branch, exc,
+            uid,
+            request.owner,
+            request.repo_name,
+            request.branch,
+            exc,
         )
 
     job_id = str(uuid.uuid4())
@@ -153,7 +161,9 @@ async def ingest_github_repository(
                 job_tracker.update_status(job_id, JobStatus.COMPLETED, stats=job_stats)
                 try:
                     firebase_service.upsert_repo_metadata(
-                        uid, request.owner, request.repo_name,
+                        uid,
+                        request.owner,
+                        request.repo_name,
                         RepoIngestionUpdate(
                             ingestion_status="ingested",
                             ingested_at=datetime.now(timezone.utc).isoformat(),
@@ -170,11 +180,17 @@ async def ingest_github_repository(
                 logger.info("Local ingestion completed for %s/%s", request.owner, request.repo_name)
 
             except Exception as exc:
-                logger.exception("Local ingestion failed for %s/%s", request.owner, request.repo_name)
-                job_tracker.update_status(job_id, JobStatus.FAILED, error_message=f"{type(exc).__name__}: {exc}")
+                logger.exception(
+                    "Local ingestion failed for %s/%s", request.owner, request.repo_name
+                )
+                job_tracker.update_status(
+                    job_id, JobStatus.FAILED, error_message=f"{type(exc).__name__}: {exc}"
+                )
                 try:
                     firebase_service.upsert_repo_metadata(
-                        uid, request.owner, request.repo_name,
+                        uid,
+                        request.owner,
+                        request.repo_name,
                         RepoIngestionError(ingestion_status="failed", error_message=str(exc)),
                     )
                 except Exception as fb_exc:
@@ -196,9 +212,7 @@ async def ingest_github_repository(
         # Dispatch to Cloud Tasks → ingestion service (uid is in payload for worker to use)
         task_name = cloud_tasks.dispatch_ingestion(payload)
         if task_name:
-            job_tracker.update_status(
-                job_id, JobStatus.DISPATCHED, cloud_task_name=task_name
-            )
+            job_tracker.update_status(job_id, JobStatus.DISPATCHED, cloud_task_name=task_name)
         else:
             job_tracker.update_status(
                 job_id,
@@ -257,6 +271,7 @@ async def embed_repository(
     Use this to recover from a failed embedding step after ingestion.
     """
     import os
+
     from common.embedder import embed_nodes_in_neo4j
 
     if not os.getenv("OPENROUTER_API_KEY"):
@@ -269,7 +284,9 @@ async def embed_repository(
             "repo_id": f"{owner}/{repo_name}",
             "nodes_embedded": nodes_embedded,
             "breakdown": {label: count for label, count in embed_stats.items() if count},
-            "message": f"Embedded {nodes_embedded} nodes successfully" if nodes_embedded else "All nodes already had embeddings",
+            "message": f"Embedded {nodes_embedded} nodes successfully"
+            if nodes_embedded
+            else "All nodes already had embeddings",
         }
     except Exception as exc:
         logger.exception("Re-embedding failed for %s/%s", owner, repo_name)

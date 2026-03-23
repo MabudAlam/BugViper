@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal, Optional, Sequence
+from typing import Annotated, Literal, Sequence
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph
@@ -13,7 +13,6 @@ from typing_extensions import TypedDict
 
 from code_review_agent.agent.tools import get_tools
 from code_review_agent.agent.utils import load_chat_model
-from code_review_agent.models.agent_schemas import AgentFindings
 from db.code_serarch_layer import CodeSearchService
 
 MAX_TOOL_ROUNDS = 10
@@ -22,13 +21,6 @@ MAX_TOOL_ROUNDS = 10
 class ReviewExplorerState(TypedDict):
     messages: Annotated[Sequence[AnyMessage], add_messages]
     tool_rounds: int
-
-
-class ReviewAgentState(TypedDict):
-    """State for the Phase-2 Review Agent, including structured findings."""
-    messages: Annotated[Sequence[AnyMessage], add_messages]
-    tool_rounds: int
-    findings: Optional[AgentFindings]
 
 
 def _slim_messages(messages: Sequence[AnyMessage]) -> list[AnyMessage]:
@@ -65,7 +57,10 @@ def build_review_explorer(
             else ""
         )
         response: AIMessage = llm.invoke(
-            [{"role": "system", "content": formatted + repo_note}, *_slim_messages(state["messages"])]
+            [
+                {"role": "system", "content": formatted + repo_note},
+                *_slim_messages(state["messages"]),
+            ]
         )
         return {"messages": [response]}
 
@@ -93,68 +88,3 @@ def build_review_explorer(
     builder.add_edge("increment_rounds", "llm_node")
 
     return builder.compile(name="ReviewExplorer")
-
-
-def build_review_agent(
-    query_service: CodeSearchService,
-    system_prompt: str,
-    model: str,
-    repo_id: str | None = None,
-    max_rounds: int = 5,
-):
-    """Build a reasoning-model Review Agent with structured output (Phase 2)."""
-    tools = get_tools(query_service, repo_id=repo_id)
-    llm_react = load_chat_model(model, timeout=300).bind_tools(tools)
-    llm_structured = load_chat_model(model, timeout=300).with_structured_output(AgentFindings, method="json_schema", strict=True)
-
-    repo_note = (
-        f"\n\nActive repository: **{repo_id}** — all tools are scoped to this repo."
-        if repo_id
-        else ""
-    )
-    full_system = system_prompt + repo_note
-
-    def llm_node(state: ReviewAgentState) -> dict:
-        """ReAct reasoning node — reason and decide tool calls."""
-        if state["tool_rounds"] >= max_rounds:
-            return {}
-
-        response: AIMessage = llm_react.invoke(
-            [{"role": "system", "content": full_system}, *state["messages"]]
-        )
-        return {"messages": [response]}
-
-    def should_continue(state: ReviewAgentState) -> Literal["tools", "synthesize"]:
-        """Route to tool execution or final structured synthesis."""
-        last = state["messages"][-1]
-        if (
-            isinstance(last, AIMessage)
-            and last.tool_calls
-            and state["tool_rounds"] < max_rounds
-        ):
-            return "tools"
-        return "synthesize"
-
-    def increment_rounds(state: ReviewAgentState) -> dict:
-        return {"tool_rounds": state["tool_rounds"] + 1}
-
-    def synthesize_node(state: ReviewAgentState) -> dict:
-        """Terminal node — produces validated AgentFindings via structured output."""
-        findings: AgentFindings = llm_structured.invoke(
-            [{"role": "system", "content": full_system}, *state["messages"]]
-        )
-        return {"findings": findings}
-
-    builder = StateGraph(ReviewAgentState)
-    builder.add_node("llm_node", llm_node)
-    builder.add_node("tools", ToolNode(tools))
-    builder.add_node("increment_rounds", increment_rounds)
-    builder.add_node("synthesize", synthesize_node)
-
-    builder.set_entry_point("llm_node")
-    builder.add_conditional_edges("llm_node", should_continue)
-    builder.add_edge("tools", "increment_rounds")
-    builder.add_edge("increment_rounds", "llm_node")
-    builder.add_edge("synthesize", "__end__")
-
-    return builder.compile(name="ReviewAgent")

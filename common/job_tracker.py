@@ -1,7 +1,6 @@
 """Firestore-backed job tracking for ingestion jobs."""
 
 import logging
-import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -90,7 +89,11 @@ class JobTrackerService:
 
     def find_active_job(self, owner: str, repo_name: str) -> Optional[IngestionJob]:
         """Find a non-terminal job for the given owner/repo (prevent duplicates)."""
-        active_statuses = [JobStatus.PENDING.value, JobStatus.DISPATCHED.value, JobStatus.RUNNING.value]
+        active_statuses = [
+            JobStatus.PENDING.value,
+            JobStatus.DISPATCHED.value,
+            JobStatus.RUNNING.value,
+        ]
         docs = (
             self._db.collection(COLLECTION)
             .where("owner", "==", owner)

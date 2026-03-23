@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from dotenv import load_dotenv
 
 # Load environment variables BEFORE any imports that use them (e.g. Firebase)
@@ -6,19 +7,20 @@ load_dotenv()
 import logging
 import os
 from contextlib import asynccontextmanager
+
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import auth, ingestion, query, repository, webhook, rag, support
-from api.services.firebase_service import firebase_service  # noqa: F401 — init on import
 from api.middleware.firebase_auth import FirebaseAuthMiddleware
-import uvicorn
+from api.routers import auth, ingestion, query, rag, repository, support, webhook
+from api.services.firebase_service import firebase_service  # noqa: F401 — init on import
 
 logger = logging.getLogger(__name__)
 
 
 def _load_allowed_origins() -> list[str]:
-  
+
     raw = os.getenv("API_ALLOWED_ORIGINS", "").strip()
     if not raw:
         logger.warning(
@@ -83,50 +85,19 @@ app.add_middleware(
 app.add_middleware(FirebaseAuthMiddleware)
 
 # Include routers
-app.include_router(
-    ingestion.router,
-    prefix="/api/v1/ingest",
-    tags=["Ingestion"]
-)
+app.include_router(ingestion.router, prefix="/api/v1/ingest", tags=["Ingestion"])
 
-app.include_router(
-    query.router,
-    prefix="/api/v1/query",
-    tags=["Query"]
-)
+app.include_router(query.router, prefix="/api/v1/query", tags=["Query"])
 
-app.include_router(
-    repository.router,
-    prefix="/api/v1/repos",
-    tags=["Repository"]
-)
+app.include_router(repository.router, prefix="/api/v1/repos", tags=["Repository"])
 
-app.include_router(
-    webhook.router,
-    prefix="/api/v1/webhook",
-    tags=["Webhook"]
-)
+app.include_router(webhook.router, prefix="/api/v1/webhook", tags=["Webhook"])
 
-app.include_router(
-    auth.router,
-    prefix="/api/v1/auth",
-    tags=["Auth"]
-)
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 
-app.include_router(
-    rag.router,
-    prefix="/api/v1/rag",
-    tags=["Agent"]
-)
+app.include_router(rag.router, prefix="/api/v1/rag", tags=["Agent"])
 
-app.include_router(
-    support.router,
-    prefix="/api/v1/support",
-    tags=["Support"]
-)
-
-
-
+app.include_router(support.router, prefix="/api/v1/support", tags=["Support"])
 
 
 def run_server():
@@ -135,12 +106,7 @@ def run_server():
 
     This function is used as an entry point for the CLI command.
     """
-    uvicorn.run(
-        "api.app:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True
-    )
+    uvicorn.run("api.app:app", host="0.0.0.0", port=8000, reload=True)
 
 
 if __name__ == "__main__":
