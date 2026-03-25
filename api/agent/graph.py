@@ -24,11 +24,14 @@ def build_graph(
     llm = load_chat_model(ctx.model).bind_tools(tools)
 
     def LLM_Node(state: State):
-        repo_context = (
-            f"\n\n---\nActive repository: **{repo_id}** — all tools are already scoped to this repo."
-            if repo_id
-            else "\n\n---\nNo repository selected — searches run across the entire graph."
-        )
+        if repo_id:
+            repo_context = (
+                "\n\n---\n"
+                f"Active repository: **{repo_id}** — "
+                "all tools are already scoped to this repo."
+            )
+        else:
+            repo_context = "\n\n---\nNo repository selected — searches run across the entire graph."
         system_prompt = (
             ctx.system_prompt.format(system_time=datetime.now(tz=UTC).isoformat()) + repo_context
         )

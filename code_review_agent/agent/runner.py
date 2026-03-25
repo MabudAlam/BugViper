@@ -3,9 +3,10 @@
 Pipeline:
   1. ReAct exploration  — Explorer Agent uses Neo4j tools to gather context.
                           Capped at MAX_TOOL_ROUNDS to stop deterministically.
-  2. Review Agent       — Reasoning model receives all Explorer context, reasons
-                          deeply, optionally verifies doubts with tools, then
-                          produces a validated AgentFindings via structured output.
+                          Receives PR-specific investigation goals in system prompt.
+  2. Review Agent       — Reasoning model receives diff + file contents + explored
+                          context + investigation goals, then produces structured
+                          AgentFindings via structured output.
                           No JSON text parsing anywhere.
 
 Static analysis (lint service) runs in parallel with this pipeline from the
@@ -14,8 +15,8 @@ caller — results are merged before the final comment is posted.
 
 from __future__ import annotations
 
+import json
 import logging
-import os
 from datetime import UTC, datetime
 
 from langchain_core.messages import HumanMessage
@@ -36,14 +37,26 @@ logger = logging.getLogger(__name__)
 async def _run_review_agent(
     model: str,
     explored_messages: list,
+    pr_context: str | None = None,
+    output_dir: str | None = None,
 ) -> tuple[AgentFindings, int]:
-    """Phase 2: Single LLM call via OpenRouter structured output."""
+    """Phase 2: Single LLM call via OpenRouter structured output.
 
+    Uses OpenRouter's structured outputs feature to ensure the model returns
+    valid JSON matching the AgentFindings schema.
+
+    See: https://openrouter.ai/docs/guides/features/structured-outputs
+
+    Args:
+        model: Model name for synthesis (must support structured outputs)
+        explored_messages: Messages from Explorer (including original HumanMessage)
+        pr_context: Optional PR-specific context (diff summary, changed symbols)
+    """
 
     schema = AgentFindings.model_json_schema()
-    system_prompt = REVIEW_AGENT_PROMPT.format(
-        system_time=datetime.now(tz=UTC).isoformat(),
-        schema=schema,
+    schema_str = json.dumps(schema)
+    system_prompt = REVIEW_AGENT_PROMPT.replace("{schema}", schema_str).replace(
+        "{system_time}", datetime.now(tz=UTC).isoformat()
     )
 
     # Extract raw content from explored_messages for prompt
@@ -59,34 +72,93 @@ async def _run_review_agent(
 
     context_str = "\n".join(content_lines)
 
+    # Add PR context if provided
+    context_section = ""
+    if pr_context:
+        context_section = f"\n\n--- PR CONTEXT ---\n{pr_context}\n"
+
     # Construct the final prompt with system instructions
     final_prompt = (
-        f"{system_prompt}\n\n"
+        f"{system_prompt}\n"
+        f"{context_section}"
         f"--- EXPLORED CONTEXT ---\n{context_str}\n\n"
         "You have the full PR context above. Produce the structured code review.\n"
         "You MUST output ONLY valid JSON matching the exact schema."
     )
 
-   
-    logger.info("Executing Phase 2 via direct OpenRouter SDK structured output call")
+    logger.info("Executing Phase 2 via OpenRouter structured output")
+    logger.info(
+        "Phase 2 prompt: %d chars (system=%d, pr_context=%d, explored=%d)",
+        len(final_prompt),
+        len(system_prompt),
+        len(context_section) if context_section else 0,
+        len(context_str),
+    )
+    logger.debug("Phase 2 final prompt preview: %s", final_prompt[:500])
+
+    # Write final prompt to output directory for debugging
+    if output_dir:
+        import os
+
+        os.makedirs(output_dir, exist_ok=True)
+        prompt_file = os.path.join(output_dir, "07_final_review_prompt.md")
+        with open(prompt_file, "w") as f:
+            f.write("# Final Review Agent Prompt\n\n")
+            f.write("## Metadata\n")
+            f.write(f"- Model: {model}\n")
+            f.write(f"- System prompt chars: {len(system_prompt)}\n")
+            f.write(f"- PR context chars: {len(context_section) if context_section else 0}\n")
+            f.write(f"- Explored context chars: {len(context_str)}\n")
+            f.write(f"- Total prompt chars: {len(final_prompt)}\n\n")
+            f.write("---\n\n")
+            f.write(final_prompt)
+        logger.info("Wrote final prompt to %s", prompt_file)
 
     try:
         async with OpenRouter(api_key=os.getenv("OPENROUTER_API_KEY")) as client:
+            # Use OpenRouter's structured output feature
+            # See: https://openrouter.ai/docs/guides/features/structured-outputs
             response = await client.chat.send_async(
                 model=model,
                 messages=[{"role": "user", "content": final_prompt}],
                 response_format={
                     "type": "json_schema",
-                    "json_schema": {"strict": True, "name": "AgentFindings", "schema": schema},
+                    "json_schema": {
+                        "name": "AgentFindings",
+                        "strict": True,
+                        "schema": schema,
+                    },
                 },
-
             )
-        content = response.choices[0].message.content
+        raw_response = response.json()
+        logger.debug(f"OpenRouter response: {raw_response}")
+
+        data = raw_response if isinstance(raw_response, dict) else json.loads(raw_response)
+        if not isinstance(data, dict) or "choices" not in data:
+            logger.error(f"Unexpected response structure: {type(data)}")
+            return AgentFindings(walk_through=[], issues=[], positive_findings=[]), 0
+
+        content = data["choices"][0]["message"]["content"]
+        if content is None:
+            logger.error("Model returned None content")
+            return AgentFindings(walk_through=[], issues=[], positive_findings=[]), 0
+
+        if content.strip().startswith("```"):
+            lines = content.strip().split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            content = "\n".join(lines)
+
         findings = AgentFindings.model_validate_json(content)
-        logger.info(f"AgentFindings: {findings}")
+        logger.info(
+            "AgentFindings: %d issues, %d positives",
+            len(findings.issues),
+            len(findings.positive_findings),
+        )
     except Exception as e:
-        logger.error(f"Failed to parse AgentFindings or call OpenRouter: {e}")
-        # Return empty findings on fatal error
+        logger.error(f"Failed to parse AgentFindings: {e}")
         return AgentFindings(walk_through=[], issues=[], positive_findings=[]), 0
 
     return findings, 0
@@ -97,23 +169,34 @@ async def run_review(
     repo_id: str,
     pr_number: int,
     query_service: CodeSearchService,
+    explorer_goals: str | None = None,
+    pr_context: str | None = None,
+    output_dir: str | None = None,
 ) -> ReviewResults:
     """Two-phase PR review: explore context with tools, then reason and synthesize.
 
     Phase 1 — ReAct exploration (Explorer Agent):
         Explorer agent iteratively calls Neo4j tools to build context.
+        Receives PR-specific investigation goals in system prompt.
         Falls back to get_file_source when the graph has no indexed symbols.
         Capped at MAX_TOOL_ROUNDS so accumulated messages always return cleanly.
         Uses config.review_model (cheap/fast — optimised for many tool calls).
 
     Phase 2 — Review Agent (Reasoning Model):
         Receives all Explorer messages as context.
+        Receives PR-specific context (diff summary, changed symbols).
         Reasons deeply via the model's internal chain-of-thought/thinking.
-        Can call tools (same set as Explorer) to verify specific doubts.
-        Capped at config.review_agent_max_rounds (default 5).
+        Produces a validated AgentFindings via structured output.
         Uses config.synthesis_model (reasoning model, e.g. Gemini 2.5 Pro).
-        Produces a validated AgentFindings via with_structured_output — no JSON
-        text parsing, no regex, no manual extraction.
+
+    Args:
+        review_prompt: Full review prompt (diff + files + AST context)
+        repo_id: Repository identifier (owner/repo)
+        pr_number: PR number
+        query_service: Neo4j query service
+        explorer_goals: PR-specific investigation goals (injected into Explorer system prompt)
+        pr_context: PR summary context for Review Agent (changed symbols, complexity hints)
+        output_dir: Optional directory to write debug files (final prompt, etc.)
     """
     explore_model = config.review_model
     synthesis_model = config.synthesis_model
@@ -132,6 +215,7 @@ async def run_review(
         system_prompt=REVIEW_EXPLORER_PROMPT,
         model=explore_model,
         repo_id=repo_id,
+        explorer_goals=explorer_goals,  # PR-specific goals injected into system prompt
     )
 
     try:
@@ -161,6 +245,8 @@ async def run_review(
         findings, review_agent_rounds_used = await _run_review_agent(
             model=synthesis_model,
             explored_messages=explored_messages,
+            pr_context=pr_context,  # PR-specific context for synthesis
+            output_dir=output_dir,  # For debug output
         )
     except Exception:
         logger.exception("Review Agent failed critically.")

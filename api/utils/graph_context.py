@@ -34,7 +34,8 @@ def build_graph_context_section(
     ]
     if affected:
         parts.append(
-            f"**{len(affected)} symbol(s) from dependent files (pre-PR graph snapshot — for call-graph context only):**"
+            f"**{len(affected)} symbol(s) from dependent files "
+            "(pre-PR graph snapshot — for call-graph context only):**"
         )
         parts.append("")
 

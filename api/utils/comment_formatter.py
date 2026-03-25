@@ -32,7 +32,8 @@ def _render_static_section(lint_issues: list[Issue]) -> list[str]:
     lines.append("### 🔬 Static Analysis")
     lines.append("")
     lines.append(
-        f"*{len(lint_issues)} finding(s) from {len(by_tool)} tool(s) — deterministic, confidence 10/10*"
+        f"*{len(lint_issues)} finding(s) from {len(by_tool)} tool(s) — "
+        "deterministic, confidence 10/10*"
     )
     lines.append("")
 
@@ -88,6 +89,47 @@ _LANG_MAP = {
 def _file_lang(path: str) -> str:
     ext = path.rsplit(".", 1)[-1] if "." in path else ""
     return _LANG_MAP.get(ext, ext)
+
+
+def _ai_fix_to_code_block(ai_fix: str, file_ext: str) -> str | None:
+    """Convert a unified-diff ai_fix into a human-readable code block.
+
+    Extracts only the '+' lines (new code) and formats them as a clean code snippet.
+    Returns None for complex or malformed diffs.
+    """
+    raw = ai_fix.strip()
+    lines = raw.splitlines()
+
+    # Reject malformed diffs
+    for line in lines:
+        if line.startswith("-+") or line.startswith("+-"):
+            return None
+
+    # Extract only the new lines (lines starting with '+')
+    plus_lines = [line[1:] for line in lines if line.startswith("+") and not line.startswith("+++")]
+    if not plus_lines:
+        return None
+
+    # Detect language from file extension
+    lang_map = {
+        "py": "python",
+        "ts": "typescript",
+        "tsx": "typescript",
+        "js": "javascript",
+        "jsx": "javascript",
+        "rb": "ruby",
+        "go": "go",
+        "rs": "rust",
+        "java": "java",
+        "cs": "csharp",
+        "cpp": "cpp",
+        "c": "c",
+    }
+    lang = lang_map.get(file_ext, file_ext)
+
+    # Join with proper indentation
+    code = "\n".join(plus_lines)
+    return f"```{lang}\n{code}\n```"
 
 
 def _ai_fix_to_suggestion(ai_fix: str) -> str | None:
@@ -174,11 +216,21 @@ def _render_issue_block(issue: Issue) -> list[str]:
             lines.append("")
             lines.append("</details>")
         else:
+            # Strip any existing code block markers from ai_fix
+            raw_fix = issue.ai_fix.strip()
+            if raw_fix.startswith("```"):
+                # Remove opening code block
+                first_newline = raw_fix.find("\n")
+                if first_newline != -1:
+                    raw_fix = raw_fix[first_newline + 1 :]
+            if raw_fix.endswith("```"):
+                # Remove closing code block
+                raw_fix = raw_fix[:-3].rstrip()
             lines.append("<details>")
             lines.append("<summary>🔧 Suggested fix (diff)</summary>")
             lines.append("")
             lines.append("```diff")
-            lines.append(issue.ai_fix.strip("\n"))
+            lines.append(raw_fix.strip())
             lines.append("```")
             lines.append("")
             lines.append("</details>")
@@ -213,16 +265,12 @@ def _render_issues_by_file(issues: list[Issue]) -> list[str]:
 
 
 def format_inline_comment(issue: Issue) -> str:
-    """Format one issue as an inline PR review comment body.
-
-    If the issue has an ai_fix, converts it to a GitHub suggestion block
-    so the PR author can apply it with one click.
-    """
+    """Format one issue as an inline PR review comment body."""
     lang = _file_lang(issue.file)
     issue_type = getattr(issue, "issue_type", None) or "Potential issue"
 
     lines: list[str] = [
-        f"⚠️ {issue_type}",
+        f"⚠️{issue_type}",
         "",
         f"**{issue.title}**",
         "",
@@ -236,22 +284,26 @@ def format_inline_comment(issue: Issue) -> str:
         lines += ["", f"**Suggestion:** {issue.suggestion}"]
 
     if issue.ai_fix:
-        suggestion = _ai_fix_to_suggestion(issue.ai_fix)
-        if suggestion:
-            lines += ["", suggestion]
-        else:
-            lines += [
-                "",
-                "<details>",
-                "<summary>🐛 Proposed fix (diff)</summary>",
-                "",
-                "```diff",
-                issue.ai_fix.strip(),
-                "```",
-                "",
-                "</details>",
-            ]
-    elif issue.code_snippet:
+        # ai_fix is now the corrected code, not a diff
+        fix_text = issue.ai_fix.strip()
+        # Remove any surrounding code blocks if present
+        if fix_text.startswith("```"):
+            first_newline = fix_text.find("\n")
+            if first_newline != -1:
+                fix_text = fix_text[first_newline + 1 :]
+        if fix_text.endswith("```"):
+            fix_text = fix_text[:-3].rstrip()
+
+        lines += [
+            "",
+            "**Suggested fix:**",
+            "",
+            f"```{lang}",
+            fix_text,
+            "```",
+        ]
+
+    if issue.code_snippet and not issue.ai_fix:
         lines += ["", f"```{lang}", issue.code_snippet.strip(), "```"]
 
     ai_agent_prompt = getattr(issue, "ai_agent_prompt", None)
@@ -262,7 +314,11 @@ def format_inline_comment(issue: Issue) -> str:
             "",
             "**🤖 Prompt for AI Agents**",
             "",
+            "Copy this to give to an AI agent to fix the issue:",
+            "",
+            "```",
             ai_agent_prompt,
+            "```",
         ]
 
     lines += ["", f"*Category: `{issue.category}` · Confidence: {issue.confidence}/10*"]
@@ -311,6 +367,9 @@ def _render_debug_section(raw_agent_json: str, debug_info: dict) -> list[str]:
         truncated = len(raw_agent_json) > _MAX_JSON
         lines.append("**Raw synthesizer output (JSON):**")
         lines.append("")
+        # Escape embedded code blocks to prevent markdown breakage
+        # Replace triple backticks with escaped version
+        display = display.replace("```", "\\`\\`\\`")
         lines.append("```json")
         lines.append(display)
         if truncated:
@@ -352,7 +411,7 @@ def format_review_summary(
     # ── Header ────────────────────────────────────────────────────────────────
     parts.append("## 🐍 BugViper AI Code Review")
     parts.append("")
-    parts.append(f"**PR**: #{pr_number} | **Model**: `{config.review_model}`")
+    parts.append(f"**PR**: #{pr_number} | **Model**: `{config.synthesis_model}`")
     parts.append("")
 
     high_conf_actionable = [i for i in open_issues + new_issues if i.confidence >= 7]
@@ -424,7 +483,8 @@ def format_review_summary(
             )
             issue_type = getattr(i, "issue_type", None) or "Potential issue"
             parts.append(
-                f"| `{i.file}` | {line_ref} | {status_icon} {issue_type} | {i.title} | {i.confidence}/10 |"
+                f"| `{i.file}` | {line_ref} | {status_icon} {issue_type} "
+                f"| {i.title} | {i.confidence}/10 |"
             )
         parts.append("")
         parts.append("</details>")
@@ -440,18 +500,28 @@ def format_review_summary(
 
     # ── Nitpicks toggle (all <7 confidence actionable issues) ─────────────────
     if nitpicks:
-        parts.append("<details>")
-        parts.append(
-            f"<summary>🔍 Nitpicks & Low-confidence ({len(nitpicks)} issues, confidence &lt; 7)</summary>"
-        )
+        parts.append(f"🔍 **Nitpicks & Low-confidence** ({len(nitpicks)})")
         parts.append("")
         parts.append(
-            "*These findings have lower confidence and may be false positives. Review at your discretion.*"
+            "*These findings have lower confidence and may be false positives. "
+            "Review at your discretion.*"
         )
         parts.append("")
-        for line in _render_issues_by_file(nitpicks):
-            parts.append(line)
-        parts.append("</details>")
+        for issue in nitpicks:
+            lines = _render_issue_block(issue)
+            parts.append("<details>")
+            summary = (
+                f"<summary>{_line_range(issue)}: ⚠️ "
+                f"{getattr(issue, 'issue_type', 'Issue') or 'Issue'} — "
+                f"{issue.title} "
+                f"[{issue.confidence}/10]</summary>"
+            )
+            parts.append(summary)
+            parts.append("")
+            for line in lines:
+                parts.append(line)
+            parts.append("</details>")
+            parts.append("")
         parts.append("")
 
     # ── Positive findings ─────────────────────────────────────────────────────
@@ -483,7 +553,7 @@ def format_review_summary(
     parts.append("")
     parts.append(
         f"*🤖 Generated by [BugViper](https://github.com/Pavel401/BugViper)"
-        f" | Powered by `{config.review_model}`*"
+        f" | Powered by `{config.synthesis_model}`*"
     )
 
     return "\n".join(parts)
@@ -512,7 +582,7 @@ def format_github_comment(
     # ── Header ────────────────────────────────────────────────────────────────
     parts.append("## 🐍 BugViper AI Code Review")
     parts.append("")
-    parts.append(f"**PR**: #{pr_number} | **Model**: {config.review_model}")
+    parts.append(f"**PR**: #{pr_number} | **Model**: {config.synthesis_model}")
     parts.append("")
 
     run_summary_parts = []
@@ -593,11 +663,13 @@ def format_github_comment(
     if all_nitpicks:
         parts.append("<details>")
         parts.append(
-            f"<summary>🔍 Nitpicks & Low-confidence ({len(all_nitpicks)} issues, confidence &lt; 7)</summary>"
+            f"<summary>🔍 Nitpicks & Low-confidence "
+            f"({len(all_nitpicks)} issues, confidence &lt; 7)</summary>"
         )
         parts.append("")
         parts.append(
-            "*These findings have lower confidence and may be false positives. Review at your discretion.*"
+            "*These findings have lower confidence and may be false positives. "
+            "Review at your discretion.*"
         )
         parts.append("")
         for line in _render_issues_by_file(all_nitpicks):
@@ -610,7 +682,8 @@ def format_github_comment(
         parts.append("")
     elif not fixed_issues and not open_high and not new_high and all_nitpicks:
         parts.append(
-            "✅ **No significant issues found.** Only low-confidence observations (see Nitpicks above)."
+            "✅ **No significant issues found.** "
+            "Only low-confidence observations (see Nitpicks above)."
         )
         parts.append("")
 
@@ -639,7 +712,7 @@ def format_github_comment(
     parts.append("")
     parts.append(
         f"*🤖 Generated by [BugViper](https://github.com/Pavel401/BugViper)"
-        f" | Powered by {config.review_model}*"
+        f" | Powered by {config.synthesis_model}*"
     )
 
     return "\n".join(parts)

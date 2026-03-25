@@ -442,7 +442,7 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         source = result.get("source_code") or result.get("source") or ""
         lines = source.splitlines()
         header = f"File: {file_path}  ({len(lines)} lines)\n" + "-" * 60
-        numbered = "\n".join(f"{i + 1:>4} │ {l}" for i, l in enumerate(lines))
+        numbered = "\n".join(f"{i + 1:>4} │ {line}" for i, line in enumerate(lines))
         return f"{header}\n{numbered}", [_src(file_path, None, typ="file")]
 
     # ── 18. Language statistics ───────────────────────────────────────────────

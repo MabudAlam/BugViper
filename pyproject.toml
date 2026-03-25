@@ -85,6 +85,18 @@ target-version = "py313"
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
+[tool.ruff.lint.per-file-ignores]
+"api/agent/prompts.py" = ["E501"]
+"code_review_agent/agent/prompts.py" = ["E501"]
+"code_review_agent/agent/review_prompt.py" = ["E501"]
+"db/*.py" = ["E501"]
+"ingestion_service/**/*.py" = ["E501"]
+"api/agent/tools.py" = ["E501"]
+"code_review_agent/agent/tools.py" = ["E501"]
+"code_review_agent/models/agent_schemas.py" = ["E501"]
+"code_review_agent/prompts.py" = ["E501"]
+"common/embedder.py" = ["E501"]
+
 [tool.black]
 line-length = 100
 target-version = ["py313"]

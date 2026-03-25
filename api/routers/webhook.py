@@ -185,7 +185,8 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
                 owner,
                 repo_name,
                 pr_number,
-                "⏳ **BugViper is already reviewing this PR.** Please wait until the current review completes before requesting another one!",
+                "⏳ **BugViper is already reviewing this PR.** "
+                "Please wait until the current review completes before requesting another one!",
             )
             return {"status": "ignored", "reason": "review already running"}
 

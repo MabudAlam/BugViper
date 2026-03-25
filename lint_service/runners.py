@@ -25,8 +25,9 @@ import json
 import logging
 import shutil
 import subprocess
-import defusedxml.ElementTree as ET
 from pathlib import Path
+
+import defusedxml.ElementTree as ET
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,3 @@
-"""LangGraph pipelines for PR context exploration and review synthesis."""
 
 from __future__ import annotations
 
@@ -41,8 +40,17 @@ def build_review_explorer(
     system_prompt: str,
     model: str,
     repo_id: str | None = None,
+    explorer_goals: str | None = None,
 ):
-    """Build a tool-limited ReAct graph for PR context exploration (Phase 1)."""
+    """Build a tool-limited ReAct graph for PR context exploration (Phase 1).
+
+    Args:
+        query_service: Neo4j query service for code search
+        system_prompt: Base system prompt for the Explorer
+        model: Model name for the LLM
+        repo_id: Repository ID to scope queries
+        explorer_goals: PR-specific investigation goals (injected into system prompt)
+    """
     tools = get_tools(query_service, repo_id=repo_id)
     llm = load_chat_model(model).bind_tools(tools)
 
@@ -56,9 +64,15 @@ def build_review_explorer(
             if repo_id
             else ""
         )
+
+        # Inject PR-specific goals if provided
+        goals_section = ""
+        if explorer_goals:
+            goals_section = f"\n\n---\n\n## PR-Specific Investigation Goals\n\n{explorer_goals}"
+
         response: AIMessage = llm.invoke(
             [
-                {"role": "system", "content": formatted + repo_note},
+                {"role": "system", "content": formatted + repo_note + goals_section},
                 *_slim_messages(state["messages"]),
             ]
         )

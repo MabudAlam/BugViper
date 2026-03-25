@@ -174,7 +174,9 @@ def embed_nodes_in_neo4j(db: Neo4jClient) -> dict[str, int]:
     logger.info(
         "Embedding %d nodes total (%s) → %d OpenAI API call(s)",
         total,
-        ", ".join(f"{labels.count(l)} {l}" for l, _ in _NODE_TYPES if labels.count(l) > 0),
+        ", ".join(
+            f"{labels.count(label)} {label}" for label, _ in _NODE_TYPES if labels.count(label) > 0
+        ),
         (total + BATCH_SIZE - 1) // BATCH_SIZE,  # ceiling division
     )
 
