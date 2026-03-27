@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Request
 
 from api.services.cloud_tasks_service import CloudTasksService
-from api.services.review_service import execute_pr_review
+from api.services.review_service import review_pipeline
 from common.github_client import get_github_client
 from common.job_models import IncrementalPRPayload, IncrementalPushPayload, PRReviewPayload
 
@@ -195,7 +195,7 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
         cloud_tasks.dispatch_pr_review(review_payload)
     else:
         # Local dev fallback — runs in-process after response is sent
-        background_tasks.add_task(execute_pr_review, owner, repo_name, pr_number)
+        background_tasks.add_task(review_pipeline, owner, repo_name, pr_number)
 
     return {"status": "processing", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
 

@@ -166,7 +166,7 @@ Array of strings, one per changed file:
 Array of issue objects. Each issue MUST have ALL these fields filled:
 
 ```json
-{
+{{
   "issue_type": "Bug",
   "category": "bug",
   "title": "Division by zero when calculating average",
@@ -176,12 +176,12 @@ Array of issue objects. Each issue MUST have ALL these fields filled:
   "description": "When the list is empty, len(items) returns 0, causing ZeroDivisionError. This crashes the API for new users.",
   "suggestion": "Add guard clause: if not items: return 0",
   "impact": "API returns HTTP 500 for users with no data.",
-  "code_snippet": "total = sum(t.amount for t in transactions)\ncount = len(transactions)\naverage = total / count",
+  "code_snippet": "total = sum(t.amount for t in transactions)\\ncount = len(transactions)\\naverage = total / count",
   "confidence": 9,
-  "ai_fix": "if not transactions:\n    return {\"average\": 0, \"count\": 0}\n\ntotal = sum(t.amount for t in transactions)\ncount = len(transactions)\naverage = total / count",
+  "ai_fix": "if not transactions:\\n    return {{\"average\": 0, \"count\": 0}}\\n\\ntotal = sum(t.amount for t in transactions)\\ncount = len(transactions)\\naverage = total / count",
   "ai_agent_prompt": "In services/payment.py line 42-44, add guard clause before division: if not transactions: return empty result.",
   "status": "new"
-}
+}}
 ```
 
 ---
@@ -197,7 +197,7 @@ Array of issue objects. Each issue MUST have ALL these fields filled:
 7. Keep description, suggestion, impact concise (1-2 sentences each)
 8. Confidence 5-9 (never 10)
 
-Output must match this schema: {schema}
+Output must match the schema defined by the ToolStrategy.
 
 System time: {system_time}
 """

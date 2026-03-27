@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -14,7 +13,7 @@ from code_review_agent.agent.tools import get_tools
 from code_review_agent.agent.utils import load_chat_model
 from db.code_serarch_layer import CodeSearchService
 
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 5  # Reduced from 10 for cost optimization
 
 
 class ReviewExplorerState(TypedDict):
@@ -80,6 +79,16 @@ def build_review_explorer(
 
     def should_continue(state: ReviewExplorerState) -> Literal["tools", "__end__"]:
         last = state["messages"][-1]
+        tool_rounds = state["tool_rounds"]
+
+        # Smart termination: if we have substantial findings, stop early
+        if tool_rounds >= 3:
+            if hasattr(last, "content") and last.content:
+                content = str(last.content).lower()
+                # If we found callers, dependencies, or class info, stop early
+                if any(kw in content for kw in ["caller", "found", "definition", "hierarchy"]):
+                    return "__end__"
+
         if (
             isinstance(last, AIMessage)
             and last.tool_calls
