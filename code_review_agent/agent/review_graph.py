@@ -1,29 +1,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal, Sequence
+from typing import Literal
 
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage
 from langgraph.graph import StateGraph
-from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from typing_extensions import TypedDict
 
+from code_review_agent.agent.state import ReviewExplorerState
 from code_review_agent.agent.tools import get_tools
 from code_review_agent.agent.utils import load_chat_model
 from db.code_serarch_layer import CodeSearchService
 
-MAX_TOOL_ROUNDS = 5  # Reduced from 10 for cost optimization
+MAX_TOOL_ROUNDS = 5
 
 
-class ReviewExplorerState(TypedDict):
-    messages: Annotated[Sequence[AnyMessage], add_messages]
-    tool_rounds: int
-
-
-def _slim_messages(messages: Sequence[AnyMessage]) -> list[AnyMessage]:
+def _slim_messages(messages):
     """Return a token-efficient view of the message history by blanking AI reasoning text."""
-    slimmed: list[AnyMessage] = []
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    slimmed = []
     for msg in messages:
         if isinstance(msg, HumanMessage) and not slimmed:
             slimmed.append(msg)
@@ -64,7 +60,6 @@ def build_review_explorer(
             else ""
         )
 
-        # Inject PR-specific goals if provided
         goals_section = ""
         if explorer_goals:
             goals_section = f"\n\n---\n\n## PR-Specific Investigation Goals\n\n{explorer_goals}"
@@ -81,11 +76,9 @@ def build_review_explorer(
         last = state["messages"][-1]
         tool_rounds = state["tool_rounds"]
 
-        # Smart termination: if we have substantial findings, stop early
         if tool_rounds >= 3:
             if hasattr(last, "content") and last.content:
                 content = str(last.content).lower()
-                # If we found callers, dependencies, or class info, stop early
                 if any(kw in content for kw in ["caller", "found", "definition", "hierarchy"]):
                     return "__end__"
 

@@ -8,7 +8,7 @@ import logging
 
 from fastapi import FastAPI
 
-from api.services.review_service import execute_pr_review, review_pipeline
+from api.services.review_service import review_pipeline
 from common.job_models import PRReviewPayload
 
 logging.basicConfig(level=logging.INFO)

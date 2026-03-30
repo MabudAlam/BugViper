@@ -1,24 +1,22 @@
 """Main agentic review pipeline."""
 
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from langchain.agents import create_agent
-from langchain.agents.structured_output import ToolStrategy
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from api.models.ast_results import ParsedFile
-from code_review_agent.agent.review_agent import FileReviewLLMOutput, build_review_agent
+from code_review_agent.agent.graph import build_review_graph
 from code_review_agent.agent.review_graph import build_review_explorer
-from code_review_agent.agent.review_prompt import REVIEW_AGENT_PROMPT, REVIEW_EXPLORER_PROMPT
-from code_review_agent.agent.tools import get_tools
-from code_review_agent.agent.utils import load_chat_model
+from code_review_agent.agent.review_prompt import REVIEW_EXPLORER_PROMPT
 from code_review_agent.config import config, token_limits
-from code_review_agent.models.file_review import AggregatedReviewResult, FileReviewResult
-from common.debug_writer import make_review_dir, write_step
+from code_review_agent.models.file_review import (
+    AggregatedReviewResult,
+    FileReviewLLMOutput,
+    FileReviewResult,
+)
+from common.debug_writer import write_step
 from common.languages import EXT_TO_LANG
 from db.client import Neo4jClient, get_neo4j_client
 from db.code_serarch_layer import CodeSearchService
@@ -74,8 +72,9 @@ def _build_ast_summary_for_file(file_path: str, content: str, ast: Any) -> str:
     if ast.call_sites:
         lines.append(f"\n## Call Sites ({len(ast.call_sites)})")
         for call in ast.call_sites[:15]:
+            ctx = call.context if call.context else "function"
             lines.append(
-                f"- `{call.full_name}()` at line {call.line_number} (in {call.class_context}.{call.context if call.context else 'function'})"
+                f"- `{call.full_name}()` at line {call.line_number} (in {call.class_context}.{ctx})"
             )
 
     return "\n".join(lines[:100])
@@ -106,6 +105,43 @@ def _format_previous_issues(previous_issues: List[dict]) -> str:
     return "\n".join(lines)
 
 
+def _render_definitions_section(
+    class_definitions: Optional[List[dict]] = None,
+    function_definitions: Optional[List[dict]] = None,
+) -> str:
+    """Render class and function definitions as markdown sections."""
+    parts = []
+    if class_definitions:
+        parts.append("## Class Definitions")
+        for cls_def in class_definitions:
+            name = cls_def.get("name", "Unknown")
+            source = cls_def.get("source_code") or cls_def.get("source", "")
+            docstring = cls_def.get("docstring") or ""
+            path = cls_def.get("path", "")
+            parts.append(f"### `{name}` ({path})")
+            if docstring:
+                parts.append(f"Docstring: {docstring}")
+            parts.append(f"```python\n{source}\n```")
+            parts.append("")
+        parts.append("")
+
+    if function_definitions:
+        parts.append("## Function Definitions")
+        for fn_def in function_definitions:
+            name = fn_def.get("name", "Unknown")
+            source = fn_def.get("source_code") or fn_def.get("source", "")
+            docstring = fn_def.get("docstring") or ""
+            path = fn_def.get("path", "")
+            parts.append(f"### `{name}` ({path})")
+            if docstring:
+                parts.append(f"Docstring: {docstring}")
+            parts.append(f"```python\n{source}\n```")
+            parts.append("")
+        parts.append("")
+
+    return "\n".join(parts)
+
+
 def _build_file_context(
     file_path: str,
     full_diff: str,
@@ -113,38 +149,44 @@ def _build_file_context(
     file_ast: Any,
     previous_issues: str,
     explorer_context: str,
+    class_definitions: Optional[List[dict]] = None,
+    function_definitions: Optional[List[dict]] = None,
 ) -> str:
     """Build the full file context for the review prompt."""
     ast_summary = _build_ast_summary_for_file(file_path, full_file_content, file_ast)
 
-    context = f"""\
-## File Under Review: {file_path}
+    parts = [
+        f"## File Under Review: {file_path}",
+        "",
+        "## Full Unified Diff",
+        "```diff",
+        full_diff or "(no diff available)",
+        "```",
+        "",
+        "## AST Summary",
+        ast_summary or "(No AST)",
+        "",
+        "## Previous Issues",
+        previous_issues or "No previous issues for this file",
+        "",
+        "## Explorer Context (Neo4j Graph Intelligence)",
+        explorer_context or "No external context available",
+    ]
 
-## Full Unified Diff
-```diff
-{full_diff or "(no diff available)"}
-```
-
-## AST Summary
-{ast_summary}
-
-## Previous Issues
-{previous_issues or "No previous issues for this file"}
-
-## Explorer Context (Neo4j Graph Intelligence)
-{explorer_context or "No external context available"}
-"""
+    definitions_section = _render_definitions_section(class_definitions, function_definitions)
+    if definitions_section:
+        parts.append("")
+        parts.append(definitions_section)
 
     if full_file_content:
         file_lang = _get_file_language(file_path)
-        context += f"""
-## Complete Post-PR File State
-```{file_lang}
-{full_file_content or "(no file content available)"}
-```
-"""
+        parts.append("")
+        parts.append("## Complete Post-PR File State")
+        parts.append(f"```{file_lang}")
+        parts.append(full_file_content or "(no file content available)")
+        parts.append("```")
 
-    return context
+    return "\n".join(parts)
 
 
 def _build_explorer_prompt(
@@ -154,6 +196,8 @@ def _build_explorer_prompt(
     full_diff: str,
     ast_summary: str,
     file_content: str,
+    class_definations: Optional[List[dict]] = None,
+    function_definations: Optional[List[dict]] = None,
 ) -> str:
     """Build prompt for Explorer agent."""
     parts = [
@@ -173,12 +217,22 @@ def _build_explorer_prompt(
         file_content,
         "```",
         "",
-        "## Task",
-        "1. Investigate changed functions/classes using Neo4j tools",
-        "2. Find callers and dependencies",
-        "3. Check for bugs, security issues, performance problems",
-        "4. Report findings for the Review Agent",
     ]
+
+    definitions_section = _render_definitions_section(class_definations, function_definations)
+    if definitions_section:
+        parts.append("")
+        parts.append(definitions_section)
+
+    parts.extend(
+        [
+            "## Task",
+            "1. Investigate changed functions/classes using Neo4j tools",
+            "2. Find callers and dependencies",
+            "3. Check for bugs, security issues, performance problems",
+            "4. Report findings for the Review Agent",
+        ]
+    )
     return "\n".join(parts)
 
 
@@ -193,6 +247,9 @@ async def execute_agentic_review(
     parsed_files: Optional[List[ParsedFile]] = None,
     file_diffs: Optional[Dict[str, str]] = None,
     previous_issues_by_file: Optional[Dict[str, List[dict]]] = None,
+    review_dir: Optional[Path] = None,
+    class_definations: Optional[List[dict]] = None,
+    function_definations: Optional[List[dict]] = None,
 ) -> AggregatedReviewResult:
     """Execute agentic per-file code review.
 
@@ -204,7 +261,6 @@ async def execute_agentic_review(
     """
     logger.info("Starting agentic review for %s/%s#%s", owner, repo, pr_number)
 
-    review_dir = make_review_dir(owner, repo, pr_number)
     repo_id = f"{owner}/{repo}"
 
     if neo4j is None:
@@ -229,134 +285,50 @@ async def execute_agentic_review(
         content = pr_files.get(file_path, "")
         ast = asts_by_file.get(file_path)
         full_diff = _build_file_diff_from_patch(file_path, pr_patches.get(file_path, ""))
-        enable_explorer = config.enable_explorer
+        safe_filename = file_path.replace("/", "_").replace(".", "_")
 
-        explorer_prompt = ""
-        if enable_explorer:
-            explorer_prompt = _build_explorer_prompt(
+        file_class_defs = class_definations or []
+        file_fn_defs = function_definations or []
+
+        file_previous_issues = (
+            previous_issues_by_file.get(file_path, []) if previous_issues_by_file else []
+        )
+        formatted_prev_issues = _format_previous_issues(file_previous_issues)
+
+        if config.enable_explorer:
+            result = await _review_file_with_explorer(
+                file_path=file_path,
+                content=content,
+                ast=ast,
+                full_diff=full_diff,
+                safe_filename=safe_filename,
                 repo_id=repo_id,
                 pr_number=pr_number,
-                file_path=file_path,
-                full_diff=full_diff,
-                ast_summary=_build_ast_summary_for_file(file_path, content, ast) if ast else "",
-                file_content=content,
-            )
-
-        safe_filename = file_path.replace("/", "_").replace(".", "_")
-        explored_context = ""
-        tool_rounds = 0
-
-        if enable_explorer:
-            logger.info("Running Explorer for %s...", file_path)
-            write_step(
-                review_dir,
-                f"03_explorer_prompt_{safe_filename}.md",
-                f"# Explorer Prompt: {file_path}\n\n{explorer_prompt}",
-            )
-            explorer = build_review_explorer(
                 query_service=query_service,
-                system_prompt=REVIEW_EXPLORER_PROMPT,
-                model=config.review_model,
-                repo_id=repo_id,
-                explorer_goals=f"Investigate changed file: {file_path}",
+                review_dir=review_dir,
+                formatted_prev_issues=formatted_prev_issues,
+                file_previous_issues=file_previous_issues,
+                file_class_defs=file_class_defs,
+                file_fn_defs=file_fn_defs,
             )
-
-            try:
-                explorer_result = await explorer.ainvoke(
-                    {"messages": [HumanMessage(content=explorer_prompt)], "tool_rounds": 0}
-                )
-                explored_messages = list(explorer_result.get("messages", []))
-                tool_rounds = explorer_result.get("tool_rounds", 0)
-                for msg in explored_messages:
-                    if hasattr(msg, "content") and msg.content:
-                        explored_context += f"\n\n{msg.content}"
-                if len(explored_context) > token_limits.explorer_context_max_chars:
-                    explored_context = (
-                        explored_context[: token_limits.explorer_context_max_chars]
-                        + "\n... (truncated)"
-                    )
-            except Exception:
-                logger.exception("Explorer failed for %s", file_path)
-
-            write_step(
-                review_dir,
-                f"04_explorer_output_{safe_filename}.md",
-                f"# Explorer Output: {file_path}\n**Tool rounds:** {tool_rounds}\n\n{explored_context}",
-            )
-
-        try:
-            # file_previous_issues = (
-            #     previous_issues_by_file.get(file_path, []) if previous_issues_by_file else []
-            # )
-            # formatted_prev_issues = _format_previous_issues(file_previous_issues)
-
-            agent = build_review_agent(query_service=query_service, repo_id=repo_id)
-
-            file_previous_issues = (
-                previous_issues_by_file.get(file_path, []) if previous_issues_by_file else []
-            )
-            formatted_prev_issues = _format_previous_issues(file_previous_issues)
-
-            file_context = _build_file_context(
+        else:
+            result = await _review_file_without_explorer(
                 file_path=file_path,
+                content=content,
+                ast=ast,
                 full_diff=full_diff,
-                full_file_content=content,
-                file_ast=ast,
-                previous_issues=formatted_prev_issues,
-                explorer_context=explored_context,
+                safe_filename=safe_filename,
+                repo_id=repo_id,
+                query_service=query_service,
+                review_dir=review_dir,
+                formatted_prev_issues=formatted_prev_issues,
+                file_previous_issues=file_previous_issues,
+                file_class_defs=file_class_defs,
+                file_fn_defs=file_fn_defs,
             )
 
-            write_step(
-                review_dir,
-                f"05_review_prompt_{safe_filename}.md",
-                f"# Review Agent Prompt: {file_path}\n\n{file_context}",
-            )
-
-            result = await agent.ainvoke({"messages": [HumanMessage(content=file_context)]})
-
-            structured_response = result.get("structured_response")
-            if structured_response is None:
-                raise ValueError(f"Agent returned no structured_response for {file_path}")
-
-            response: FileReviewLLMOutput = structured_response
-            walk_through = response.walk_through or []
-            issues = [issue.model_dump() for issue in response.issues]
-            positive_findings = response.positive_findings or []
-
-            previous_status = {}
-            for prev in file_previous_issues:
-                issue_id = (
-                    f"{prev.get('file', '')}:{prev.get('line_start', '')}:{prev.get('title', '')}"
-                )
-                matched = False
-                for issue in issues:
-                    if (
-                        issue.get("file") == prev.get("file")
-                        and issue.get("line_start") == prev.get("line_start")
-                        and issue.get("title") == prev.get("title")
-                    ):
-                        previous_status[issue_id] = issue.get("status", "still_open")
-                        matched = True
-                        break
-                if not matched:
-                    previous_status[issue_id] = "fixed"
-
-            file_result = FileReviewResult(
-                file_path=file_path,
-                issues=issues,
-                walk_through_entry=walk_through[0] if walk_through else f"{file_path} — Modified",
-                positive_findings=positive_findings,
-                previous_issues_status=previous_status,
-                raw_agent_output=(
-                    response.model_dump_json(indent=2)
-                    if hasattr(response, "model_dump_json")
-                    else ""
-                ),
-            )
-            valid_results.append(file_result)
-
-        except Exception as e:
-            logger.error("File review failed for %s: %s", file_path, e)
+        if result:
+            valid_results.append(result)
 
     logger.info("File reviews complete: %d successful", len(valid_results))
 
@@ -364,7 +336,7 @@ async def execute_agentic_review(
 
     write_step(
         review_dir,
-        "05_aggregated_results.md",
+        "05_aggregated.md",
         f"# Aggregated Results\n\n## Summary\n{aggregated.summary or 'No summary'}\n\n"
         f"## Issues ({len(aggregated.issues)})\n"
         + "\n".join(
@@ -384,6 +356,213 @@ async def execute_agentic_review(
     )
 
     return aggregated
+
+
+async def _review_file_with_explorer(
+    file_path: str,
+    content: str,
+    ast: Any,
+    full_diff: str,
+    safe_filename: str,
+    repo_id: str,
+    pr_number: int,
+    query_service: CodeSearchService,
+    review_dir: Path | None,
+    formatted_prev_issues: str,
+    file_previous_issues: List[dict],
+    file_class_defs: List[dict],
+    file_fn_defs: List[dict],
+) -> FileReviewResult | None:
+    """Review a single file with the Explorer agent enabled."""
+    logger.info("Running Explorer for %s...", file_path)
+
+    explorer_prompt = _build_explorer_prompt(
+        repo_id=repo_id,
+        pr_number=pr_number,
+        file_path=file_path,
+        full_diff=full_diff,
+        ast_summary=_build_ast_summary_for_file(file_path, content, ast) if ast else "",
+        file_content=content,
+        class_definations=file_class_defs,
+        function_definations=file_fn_defs,
+    )
+
+    if review_dir:
+        write_step(
+            review_dir,
+            f"03_explorer_prompt_{safe_filename}.md",
+            f"# Explorer Prompt: {file_path}\n\n{explorer_prompt}",
+        )
+
+    explored_context = ""
+    tool_rounds = 0
+
+    try:
+        explorer = build_review_explorer(
+            query_service=query_service,
+            system_prompt=REVIEW_EXPLORER_PROMPT,
+            model=config.review_model,
+            repo_id=repo_id,
+            explorer_goals=f"Investigate changed file: {file_path}",
+        )
+        explorer_result = await explorer.ainvoke(
+            {"messages": [HumanMessage(content=explorer_prompt)], "tool_rounds": 0}
+        )
+        explored_messages = list(explorer_result.get("messages", []))
+        tool_rounds = explorer_result.get("tool_rounds", 0)
+        for msg in explored_messages:
+            if hasattr(msg, "content") and msg.content:
+                explored_context += f"\n\n{msg.content}"
+        if len(explored_context) > token_limits.explorer_context_max_chars:
+            explored_context = (
+                explored_context[: token_limits.explorer_context_max_chars] + "\n... (truncated)"
+            )
+    except Exception:
+        logger.exception("Explorer failed for %s", file_path)
+
+    if review_dir:
+        write_step(
+            review_dir,
+            f"04_explorer_output_{safe_filename}.md",
+            f"# Explorer Output: {file_path}\n**Tool rounds:** {tool_rounds}\n\n{explored_context}",
+        )
+
+    return await _run_review_agent(
+        file_path=file_path,
+        content=content,
+        ast=ast,
+        full_diff=full_diff,
+        safe_filename=safe_filename,
+        repo_id=repo_id,
+        query_service=query_service,
+        review_dir=review_dir,
+        formatted_prev_issues=formatted_prev_issues,
+        file_previous_issues=file_previous_issues,
+        explored_context=explored_context,
+        file_class_defs=file_class_defs,
+        file_fn_defs=file_fn_defs,
+    )
+
+
+async def _review_file_without_explorer(
+    file_path: str,
+    content: str,
+    ast: Any,
+    full_diff: str,
+    safe_filename: str,
+    repo_id: str,
+    query_service: CodeSearchService,
+    review_dir: Path | None,
+    formatted_prev_issues: str,
+    file_previous_issues: List[dict],
+    file_class_defs: List[dict],
+    file_fn_defs: List[dict],
+) -> FileReviewResult | None:
+    """Review a single file without the Explorer agent."""
+    logger.info("Reviewing %s without explorer", file_path)
+
+    return await _run_review_agent(
+        file_path=file_path,
+        content=content,
+        ast=ast,
+        full_diff=full_diff,
+        safe_filename=safe_filename,
+        repo_id=repo_id,
+        query_service=query_service,
+        review_dir=review_dir,
+        formatted_prev_issues=formatted_prev_issues,
+        file_previous_issues=file_previous_issues,
+        explored_context="",
+        file_class_defs=file_class_defs,
+        file_fn_defs=file_fn_defs,
+    )
+
+
+async def _run_review_agent(
+    file_path: str,
+    content: str,
+    ast: Any,
+    full_diff: str,
+    safe_filename: str,
+    repo_id: str,
+    query_service: CodeSearchService,
+    review_dir: Path | None,
+    formatted_prev_issues: str,
+    file_previous_issues: List[dict],
+    explored_context: str,
+    file_class_defs: List[dict],
+    file_fn_defs: List[dict],
+) -> FileReviewResult | None:
+    """Common review logic used by both explorer and non-explorer paths."""
+    try:
+        agent = build_review_graph(query_service=query_service, repo_id=repo_id)
+
+        file_context = _build_file_context(
+            file_path=file_path,
+            full_diff=full_diff,
+            full_file_content=content,
+            file_ast=ast,
+            previous_issues=formatted_prev_issues,
+            explorer_context=explored_context,
+            class_definitions=file_class_defs,
+            function_definitions=file_fn_defs,
+        )
+
+        if review_dir:
+            write_step(
+                review_dir,
+                f"04_review_prompt_{safe_filename}.md",
+                f"# Review Agent Prompt: {file_path}\n\n{file_context}",
+            )
+
+        result = await agent.ainvoke({"messages": [HumanMessage(content=file_context)]})
+
+        structured_response = result.get("structured_response")
+        if structured_response is None:
+            logger.warning("No structured_response, returning empty result")
+            structured_response = FileReviewLLMOutput(
+                walk_through=[f"{file_path} — Review could not be completed"],
+                issues=[],
+                positive_findings=[],
+            )
+
+        response: FileReviewLLMOutput = structured_response
+        walk_through = response.walk_through or []
+        issues = [issue.model_dump() for issue in response.issues]
+        positive_findings = response.positive_findings or []
+
+        previous_status = {}
+        for prev in file_previous_issues:
+            issue_id = (
+                f"{prev.get('file', '')}:{prev.get('line_start', '')}:{prev.get('title', '')}"
+            )
+            matched = False
+            for issue in issues:
+                if (
+                    issue.get("file") == prev.get("file")
+                    and issue.get("line_start") == prev.get("line_start")
+                    and issue.get("title") == prev.get("title")
+                ):
+                    previous_status[issue_id] = issue.get("status", "still_open")
+                    matched = True
+                    break
+            if not matched:
+                previous_status[issue_id] = "fixed"
+
+        return FileReviewResult(
+            file_path=file_path,
+            issues=issues,
+            walk_through_entry=walk_through[0] if walk_through else f"{file_path} — Modified",
+            positive_findings=positive_findings,
+            previous_issues_status=previous_status,
+            raw_agent_output=(
+                response.model_dump_json(indent=2) if hasattr(response, "model_dump_json") else ""
+            ),
+        )
+
+    except Exception as e:
+        logger.error("File review failed for %s: %s", file_path, e)
+        return None
 
 
 def aggregate_file_reviews(
@@ -435,8 +614,13 @@ def aggregate_file_reviews(
     new_issues = len([i for i in all_issues if i.get("status") == "new"])
     still_open_issues = len([i for i in all_issues if i.get("status") == "still_open"])
 
+    summary = (
+        f"Reviewed {total_files} files. Found {total_issues} issues "
+        f"({new_issues} new, {still_open_issues} still open, {len(previous_fixed)} fixed)."
+    )
+
     return AggregatedReviewResult(
-        summary=f"Reviewed {total_files} files. Found {total_issues} issues ({new_issues} new, {still_open_issues} still open, {len(previous_fixed)} fixed).",
+        summary=summary,
         issues=all_issues,
         walk_through=all_walk_through,
         positive_findings=all_positive_findings,
