@@ -43,7 +43,7 @@ async def review_pipeline(
     - Parallel execution
     - Neo4j context per file
     """
-    uid = firebase_service.lookup_uid_by_github_username(owner)
+    uid = firebase_service.find_project_owner_id(owner)
     repo_id = f"{owner}/{repo}"
     if neo4j is None:
         neo4j = get_neo4j_client()

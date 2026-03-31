@@ -173,7 +173,7 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
     from api.services.firebase_service import firebase_service
     from common.firebase_models import PrReviewStatus
 
-    uid = firebase_service.lookup_uid_by_github_username(owner)
+    uid = firebase_service.find_project_owner_id(owner)
     if uid:
         pr_meta = firebase_service.get_pr_metadata(uid, owner, repo_name, pr_number)
         if pr_meta and pr_meta.get("reviewStatus") == PrReviewStatus.RUNNING.value:

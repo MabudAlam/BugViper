@@ -226,7 +226,7 @@ class BugViperFirebaseService:
         docs = self._db.collection("users").document(uid).collection("repos").stream()
         return [doc.to_dict() for doc in docs]
 
-    def lookup_uid_by_github_username(self, github_username: str) -> Optional[str]:
+    def find_project_owner_id(self, github_username: str) -> Optional[str]:
         """Return the Firebase UID for a given GitHub username, or None if not found."""
         docs = (
             self._db.collection("users")
