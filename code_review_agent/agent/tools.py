@@ -136,7 +136,9 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
             file_path: Path to the file to search in.
         Returns: function location, docstring, and source snippet.
         """
-        results = query_service.find_by_function_name(function_name, fuzzy=False, repo_id=repo_id)
+        results = query_service.find_by_function_name(
+            function_name, fuzzy_search=False, repo_id=repo_id
+        )
         if not results:
             return f"Function '{function_name}' not found in graph.", []
         matches = [r for r in results if file_path in (r.get("path") or "")]
