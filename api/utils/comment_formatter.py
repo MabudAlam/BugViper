@@ -325,7 +325,7 @@ def format_inline_comment(issue: Issue) -> str:
     return "\n".join(lines)
 
 
-def _render_debug_section(raw_agent_json: str, debug_info: dict) -> list[str]:
+def _render_debug_section(raw_agent_outputs: dict[str, str], debug_info: dict) -> list[str]:
     """Render a collapsible debug section with agent JSON + full lint dump."""
     lines: list[str] = []
     lines.append("<details>")
@@ -360,22 +360,24 @@ def _render_debug_section(raw_agent_json: str, debug_info: dict) -> list[str]:
             )
         lines.append("")
 
-    # Raw agent JSON
+    # Raw agent JSON outputs per file
     _MAX_JSON = 25_000
-    if raw_agent_json:
-        display = raw_agent_json[:_MAX_JSON]
-        truncated = len(raw_agent_json) > _MAX_JSON
-        lines.append("**Raw synthesizer output (JSON):**")
+    if raw_agent_outputs:
+        lines.append("**Raw Agent Output (JSON):**")
         lines.append("")
-        # Escape embedded code blocks to prevent markdown breakage
-        # Replace triple backticks with escaped version
-        display = display.replace("```", "\\`\\`\\`")
-        lines.append("```json")
-        lines.append(display)
-        if truncated:
-            lines.append("# ... truncated")
-        lines.append("```")
-        lines.append("")
+        for file_path, raw_json in raw_agent_outputs.items():
+            lines.append(f"### `{file_path}`")
+            lines.append("")
+            display = raw_json[:_MAX_JSON]
+            truncated = len(raw_json) > _MAX_JSON
+            # Escape embedded code blocks to prevent markdown breakage
+            display = display.replace("```", "\\`\\`\\`")
+            lines.append("```json")
+            lines.append(display)
+            if truncated:
+                lines.append("# ... truncated")
+            lines.append("```")
+            lines.append("")
 
     lines.append("</details>")
     lines.append("")
@@ -391,7 +393,7 @@ def format_review_summary(
     walk_through: list[str] | None = None,
     inline_posted: int = 0,
     inline_skipped: int = 0,
-    raw_agent_json: str = "",
+    raw_agent_outputs: dict[str, str] | None = None,
     debug_info: dict | None = None,
 ) -> str:
     """Format the top-level PR review body (overview only).
@@ -544,8 +546,8 @@ def format_review_summary(
         parts.append(line)
 
     # ── Debug section ─────────────────────────────────────────────────────────
-    if raw_agent_json or debug_info:
-        for line in _render_debug_section(raw_agent_json, debug_info or {}):
+    if raw_agent_outputs or debug_info:
+        for line in _render_debug_section(raw_agent_outputs or {}, debug_info or {}):
             parts.append(line)
 
     # ── Footer ────────────────────────────────────────────────────────────────
@@ -566,7 +568,7 @@ def format_github_comment(
     lint_issues: list[Issue] | None = None,
     files_changed_summary: list[FileSummary] | None = None,
     walk_through: list[str] | None = None,
-    raw_agent_json: str = "",
+    raw_agent_outputs: dict[str, str] | None = None,
     debug_info: dict | None = None,
 ) -> str:
     """Format a ReconciledReview into a GitHub PR comment (CodeRabbit-style)."""
@@ -703,8 +705,8 @@ def format_github_comment(
         parts.append("")
 
     # ── Debug section ─────────────────────────────────────────────────────────
-    if raw_agent_json or debug_info:
-        for line in _render_debug_section(raw_agent_json, debug_info or {}):
+    if raw_agent_outputs or debug_info:
+        for line in _render_debug_section(raw_agent_outputs or {}, debug_info or {}):
             parts.append(line)
 
     # ── Footer ────────────────────────────────────────────────────────────────

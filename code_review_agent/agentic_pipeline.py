@@ -527,7 +527,7 @@ async def _run_review_agent(
             )
 
         response: FileReviewLLMOutput = structured_response
-        walk_through = response.walk_through or []
+        walk_through = response.walk_through or ""
         issues = [issue.model_dump() for issue in response.issues]
         positive_findings = response.positive_findings or []
 
@@ -552,7 +552,7 @@ async def _run_review_agent(
         return FileReviewResult(
             file_path=file_path,
             issues=issues,
-            walk_through_entry=walk_through[0] if walk_through else f"{file_path} — Modified",
+            walk_through_entry=walk_through if walk_through else f"{file_path} — Modified",
             positive_findings=positive_findings,
             previous_issues_status=previous_status,
             raw_agent_output=(
@@ -614,6 +614,12 @@ def aggregate_file_reviews(
     new_issues = len([i for i in all_issues if i.get("status") == "new"])
     still_open_issues = len([i for i in all_issues if i.get("status") == "still_open"])
 
+    # Collect raw agent outputs per file
+    raw_agent_outputs = {}
+    for result in file_results:
+        if result.raw_agent_output:
+            raw_agent_outputs[result.file_path] = result.raw_agent_output
+
     summary = (
         f"Reviewed {total_files} files. Found {total_issues} issues "
         f"({new_issues} new, {still_open_issues} still open, {len(previous_fixed)} fixed)."
@@ -630,4 +636,5 @@ def aggregate_file_reviews(
         still_open_issues=still_open_issues,
         previous_fixed=previous_fixed,
         total_tool_rounds=0,
+        raw_agent_outputs=raw_agent_outputs,
     )

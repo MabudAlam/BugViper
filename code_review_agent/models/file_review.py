@@ -25,7 +25,7 @@ class IssueDetail(BaseModel):
 class FileReviewLLMOutput(BaseModel):
     """Structured output schema for the LLM per-file review."""
 
-    walk_through: list[str] = Field(description="One entry describing what changed in this file")
+    walk_through: str = Field(description="One sentence describing what changed in this file")
     issues: list[IssueDetail] = Field(default_factory=list, description="Issues found in this file")
     positive_findings: list[str] = Field(
         default_factory=list, description="Good patterns found in the code"
@@ -74,6 +74,7 @@ class AggregatedReviewResult(BaseModel):
     total_files_reviewed: int = Field(default=0, description="Number of files reviewed")
     total_tool_rounds: int = Field(default=0, description="Total tool rounds used by all agents")
     summary: str = Field(default="", description="Brief summary of the review")
-    raw_agent_output: str = Field(
-        default="", description="Raw JSON output from the review agent for debugging"
+    raw_agent_outputs: dict[str, str] = Field(
+        default_factory=dict,
+        description="Raw JSON output from each file review, keyed by file path",
     )

@@ -431,7 +431,7 @@ async def review_pipeline(
             walk_through=walk_through,
             inline_posted=inline_posted,
             inline_skipped=inline_skipped,
-            raw_agent_json=aggregated.raw_agent_output,
+            raw_agent_outputs=aggregated.raw_agent_outputs,
             debug_info=debug_info,
         )
 

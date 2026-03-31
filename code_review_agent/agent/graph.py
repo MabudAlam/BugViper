@@ -1,12 +1,8 @@
-from __future__ import annotations
+"""Review Agent using LangGraph create_react_agent with structured output."""
 
 import logging
 from datetime import UTC, datetime
-from typing import Optional
 
-from langchain_core.messages import AIMessage
-from langchain_core.tools import BaseTool, tool
-from langgraph.graph import MessagesState
 from langgraph.prebuilt import create_react_agent
 
 from code_review_agent.agent.tools import get_tools
@@ -17,34 +13,18 @@ from db.code_serarch_layer import CodeSearchService
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT_TEMPLATE = """\
-You are BugViper, a senior code reviewer. Find real bugs in the diff — logic errors, security issues, production problems.
+SYSTEM_PROMPT_TEMPLATE = """You are BugViper, an expert code reviewer.
+Find real bugs in the code changes.
 
----
+## Your Task
 
-## PREVIOUS ISSUES TRACKING
+Review the provided code changes and produce a structured analysis
+using the FileReviewLLMOutput format.
 
-If a "Previous Review Findings" section exists in the prompt:
-
-1. **READ THE CURRENT CODE IN THE DIFF** to see if the issue is already handled
-2. Mark `status: fixed` if:
-   - The code NOW has a guard clause (`if x:`, `if x else default`)
-   - The code NOW has a default value (`x or 0`, `x or []`)
-   - The code NOW has try/except handling
-   - A validation was added
-3. Mark `status: still_open` ONLY if the problem is still NOT addressed
-4. New issues you discover → `status: new`
-
----
-
-## BUG PATTERNS TO CHECK
-
-**BEFORE reporting any issue, check if the code already handles it:**
-- Look for `or 0`, `if x else`, `if x is not None`, `try/except` blocks
-- If the edge case IS already handled, DO NOT report it
+## Bug Patterns to Check
 
 **Correctness:**
-- Division by zero, modulo by zero (NOT already guarded by if/else)
+- Division by zero, modulo by zero (check for guards)
 - Null/None dereference WITHOUT guards
 - Off-by-one in loops/indices
 - Wrong operator (== vs =, and vs or)
@@ -65,99 +45,49 @@ If a "Previous Review Findings" section exists in the prompt:
 - Bare except: swallowing exceptions
 - Empty except blocks
 
----
+## Tools Available
 
-## TOOLS AVAILABLE
-
-You have 4 tools to verify code:
-- **verify_finding** — read code around a line to verify a potential issue
+You have tools to verify findings:
+- **verify_finding** — read code around a line to verify potential issues
 - **get_function_callers** — find who calls a function (impact analysis)
-- **get_function_info** — get function source + complexity score
+- **get_function_info** — get function source + complexity
 - **find_function_in_file** — find a function in a specific file
 
-**ALWAYS use tools to verify facts before reporting issues.**
+ALWAYS use tools to verify facts before reporting issues.
 
----
+## Previous Issues Tracking
 
-## FINAL OUTPUT
+If "Previous Issues" section exists:
+1. Check if already fixed (guard clause added, default value, try/except added)
+2. Mark status: "fixed" if resolved, "still_open" if not addressed
+3. New issues discovered → status: "new"
 
-When you have finished your investigation, call the `submit_review` tool with your findings.
+## Output Format
 
-IMPORTANT: After calling `submit_review`, do NOT add any additional text. Just return the structured data.
+When finished with your analysis, provide your findings in the
+FileReviewLLMOutput structured format.
 
 System time: {system_time}
 """
-
-
-class ReviewState(MessagesState):
-    remaining_steps: int = 10
-    structured_response: Optional[FileReviewLLMOutput] = None
-    sources: list = []
-
-
-def post_model_hook(state: ReviewState) -> dict:
-    """Extract structured response from submit_review tool call."""
-    last = state["messages"][-1]
-    if isinstance(last, AIMessage) and hasattr(last, "tool_calls") and last.tool_calls:
-        for tool_call in last.tool_calls:
-            if tool_call["name"] == "submit_review":
-                return {"structured_response": FileReviewLLMOutput(**tool_call["args"])}
-    return {}
-
-
-def create_submit_review_tool() -> BaseTool:
-    """Create the submit_review tool from the Pydantic model."""
-
-    @tool("submit_review")
-    def submit_review(
-        walk_through: list[str],
-        issues: list[dict],
-        positive_findings: list[str],
-    ) -> dict:
-        """Submit your final code review findings.
-
-        Call this tool when you have finished investigating the code and are ready
-        to submit your review. This should be your FINAL action.
-
-        Args:
-            walk_through: List of one-sentence descriptions of what changed in each file.
-            issues: List of issues found. Each issue must have: issue_type, category,
-                    title, file, line_start, line_end, description, suggestion, impact,
-                    code_snippet, confidence (5-9), ai_fix, ai_agent_prompt, status.
-            positive_findings: List of 3-6 good patterns found in the code.
-
-        Returns:
-            The structured review data.
-        """
-        return {
-            "walk_through": walk_through,
-            "issues": issues,
-            "positive_findings": positive_findings,
-        }
-
-    return submit_review
 
 
 def build_review_graph(
     query_service: CodeSearchService,
     repo_id: str | None = None,
 ):
-    """Build the Review Agent using create_react_agent with Pydantic tool.
+    """Build the Review Agent using create_react_agent with structured output.
 
-    The agent uses the submit_review tool to provide structured output.
-    This avoids the extra LLM call that response_format requires.
+    Uses response_format for automatic structured output handling.
+    The agent's result['structured_response'] will contain FileReviewLLMOutput.
 
     Args:
         query_service: Neo4j query service for code search
         repo_id: Repository ID to scope queries
 
     Returns:
-        Compiled ReAct agent with structured output via tool
+        Compiled ReAct agent that returns structured review output
     """
-    code_tools: list[BaseTool] = get_tools(query_service, repo_id=repo_id)
-    submit_tool = create_submit_review_tool()
-
-    all_tools = code_tools + [submit_tool]
+    code_tools = get_tools(query_service, repo_id=repo_id)
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(system_time=datetime.now(tz=UTC).isoformat())
 
@@ -168,10 +98,9 @@ def build_review_graph(
 
     agent = create_react_agent(
         model=load_chat_model(config.review_model),
-        tools=all_tools,
+        tools=code_tools,
         prompt=system_prompt,
-        state_schema=ReviewState,
-        post_model_hook=post_model_hook,
+        response_format=FileReviewLLMOutput,
     )
 
     return agent
