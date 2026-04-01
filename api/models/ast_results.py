@@ -1,54 +1,60 @@
-from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+from pydantic import BaseModel, Field
 
-@dataclass
-class CallSite:
+
+class CallSite(BaseModel):
     """A function/method call site within a file."""
 
     name: str
     full_name: str
     line_number: int
-    args: List[str] = field(default_factory=list)
-    context: str = ""  # Parent function name
-    context_type: str = ""  # "function_definition" | "class_definition" | None
-    class_context: str = ""  # Class name if called from a method
+    args: List[str] = Field(default_factory=list)
+    context: str = ""
+    context_type: str = ""
+    class_context: str = ""
+
+    def toDict(self) -> Dict[str, Any]:
+        return self.model_dump()
 
 
-@dataclass
-class FunctionDef:
+class FunctionDef(BaseModel):
     """A function or method definition."""
 
     name: str
     line_number: int
     end_line: int
-    args: List[str] = field(default_factory=list)
+    args: List[str] = Field(default_factory=list)
     cyclomatic_complexity: int = 1
-    context: str = ""  # Parent function name (if nested)
-    context_type: str = ""  # "function_definition" | "class_definition" | None
-    class_context: str = ""  # Class name if this is a method
-    decorators: List[str] = field(default_factory=list)
+    context: str = ""
+    context_type: str = ""
+    class_context: str = ""
+    decorators: List[str] = Field(default_factory=list)
     docstring: str | None = None
     source: str = ""
     is_method: bool = False
 
+    def toDict(self) -> Dict[str, Any]:
+        return self.model_dump()
 
-@dataclass
-class ClassDef:
+
+class ClassDef(BaseModel):
     """A class definition."""
 
     name: str
     line_number: int
     end_line: int
-    bases: List[str] = field(default_factory=list)
-    context: str = ""  # Parent context (if nested)
-    decorators: List[str] = field(default_factory=list)
+    bases: List[str] = Field(default_factory=list)
+    context: str = ""
+    decorators: List[str] = Field(default_factory=list)
     docstring: str | None = None
     source: str = ""
 
+    def toDict(self) -> Dict[str, Any]:
+        return self.model_dump()
 
-@dataclass
-class Import:
+
+class Import(BaseModel):
     """An import statement."""
 
     name: str
@@ -56,30 +62,37 @@ class Import:
     line_number: int
     alias: str | None = None
 
+    def toDict(self) -> Dict[str, Any]:
+        return self.model_dump()
 
-@dataclass
-class ParsedFile:
+
+class ParsedFile(BaseModel):
     """Result of parsing a single file with full AST extraction."""
 
     path: str
     language: str
-    functions: List[FunctionDef] = field(default_factory=list)
-    classes: List[ClassDef] = field(default_factory=list)
-    imports: List[Import] = field(default_factory=list)
-    call_sites: List[CallSite] = field(default_factory=list)
+    functions: List[FunctionDef] = Field(default_factory=list)
+    classes: List[ClassDef] = Field(default_factory=list)
+    imports: List[Import] = Field(default_factory=list)
+    call_sites: List[CallSite] = Field(default_factory=list)
     error: str | None = None
 
+    def toDict(self) -> Dict[str, Any]:
+        return self.model_dump()
 
-@dataclass
-class ASTSummary:
+
+class ASTSummary(BaseModel):
     """Structured summary for the Explorer agent."""
 
-    functions: List[Dict[str, Any]] = field(default_factory=list)
-    classes: List[Dict[str, Any]] = field(default_factory=list)
-    imports: List[Dict[str, Any]] = field(default_factory=list)
-    internal_call_graph: Dict[str, Dict] = field(default_factory=dict)
-    external_calls: List[Dict[str, Any]] = field(default_factory=list)
-    stats: Dict[str, int] = field(default_factory=dict)
+    functions: List[Dict[str, Any]] = Field(default_factory=list)
+    classes: List[Dict[str, Any]] = Field(default_factory=list)
+    imports: List[Dict[str, Any]] = Field(default_factory=list)
+    internal_call_graph: Dict[str, Dict] = Field(default_factory=dict)
+    external_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    stats: Dict[str, int] = Field(default_factory=dict)
+
+    def toDict(self) -> Dict[str, Any]:
+        return self.model_dump()
 
 
 def compute_external_calls(parsed_files: List[ParsedFile]) -> Dict[str, List[CallSite]]:
@@ -112,7 +125,6 @@ def build_call_graph(parsed_files: List[ParsedFile]) -> Dict[str, Dict]:
     Returns:
         Dict mapping function_key -> {"calls": [...], "file": str, "name": str}
     """
-    # Map function names to their locations
     func_locations: Dict[str, List[tuple]] = {}
     for pf in parsed_files:
         for f in pf.functions:
@@ -120,7 +132,6 @@ def build_call_graph(parsed_files: List[ParsedFile]) -> Dict[str, Dict]:
                 func_locations[f.name] = []
             func_locations[f.name].append((pf.path, f.class_context, f.context))
 
-    # Build call graph
     call_graph: Dict[str, Dict] = {}
     for pf in parsed_files:
         for f in pf.functions:
@@ -128,20 +139,16 @@ def build_call_graph(parsed_files: List[ParsedFile]) -> Dict[str, Dict]:
             if key not in call_graph:
                 call_graph[key] = {"calls": [], "file": pf.path, "name": f.name}
 
-    # Track calls
     for pf in parsed_files:
         for call in pf.call_sites:
-            # Find the function containing this call
             caller_name = call.context
             caller_class = call.class_context
 
-            # Match caller function
             for f in pf.functions:
                 if f.name == caller_name and f.class_context == caller_class:
                     caller_key = f"{pf.path}:{f.name}"
                     callee_name = call.name
 
-                    # Only track internal calls
                     if callee_name in func_locations:
                         call_graph[caller_key]["calls"].append(
                             {
@@ -185,7 +192,7 @@ def summarize_for_explorer(parsed_files: List[ParsedFile]) -> ASTSummary:
                     "complexity": f.cyclomatic_complexity,
                     "class_context": f.class_context,
                     "docstring": f.docstring,
-                    "source": f.source,  # Full source, truncation handled in review_service
+                    "source": f.source,
                     "is_method": f.is_method,
                 }
             )
@@ -199,7 +206,7 @@ def summarize_for_explorer(parsed_files: List[ParsedFile]) -> ASTSummary:
                     "end_line": c.end_line,
                     "bases": c.bases,
                     "docstring": c.docstring,
-                    "source": c.source,  # Full source, truncation handled in review_service
+                    "source": c.source,
                 }
             )
 
@@ -214,11 +221,10 @@ def summarize_for_explorer(parsed_files: List[ParsedFile]) -> ASTSummary:
                 }
             )
 
-    # Group external calls by name with caller context
     external_calls_summary = []
     for name, calls in external_calls.items():
         caller_contexts = []
-        for call in calls[:15]:  # Keep reasonable limit for caller contexts
+        for call in calls[:15]:
             caller_contexts.append(
                 {
                     "caller": call.context,
@@ -234,7 +240,6 @@ def summarize_for_explorer(parsed_files: List[ParsedFile]) -> ASTSummary:
             }
         )
 
-    # Sort by call count (most-called external symbols first)
     external_calls_summary.sort(key=lambda x: x["call_count"], reverse=True)
 
     return ASTSummary(
@@ -242,7 +247,7 @@ def summarize_for_explorer(parsed_files: List[ParsedFile]) -> ASTSummary:
         classes=all_classes,
         imports=all_imports,
         internal_call_graph=call_graph,
-        external_calls=external_calls_summary[:100],  # Keep more, filter in review_service
+        external_calls=external_calls_summary[:100],
         stats={
             "total_functions": len(all_functions),
             "total_classes": len(all_classes),
@@ -250,3 +255,9 @@ def summarize_for_explorer(parsed_files: List[ParsedFile]) -> ASTSummary:
             "total_external_calls": len(external_calls),
         },
     )
+
+
+class ASTParserResultForEachFile(BaseModel):
+    """Structured result of AST parsing for each file, to be stored in DB."""
+
+    class_defs: List[ClassDef] = Field(default_factory=list)

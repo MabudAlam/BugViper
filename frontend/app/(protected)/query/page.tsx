@@ -25,6 +25,8 @@ interface SearchHit {
   line_number?: number;
   match_line?: string;
   score?: number;
+  source_code?: string | null;
+  docstring?: string | null;
 }
 
 interface PeekLine {
@@ -157,6 +159,8 @@ function SearchHitCard({ hit }: { hit: SearchHit }) {
   const filename = hit.path ? hit.path.split("/").pop() : null;
   const dirPath  = hit.path && filename ? hit.path.slice(0, hit.path.length - filename.length - 1) : null;
   const hasLine  = hit.line_number != null && hit.line_number > 0;
+  const hasSource = Boolean(hit.source_code);
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="group rounded-lg border border-border bg-card px-4 py-3 space-y-1.5 hover:border-primary/40 transition-colors">
@@ -172,6 +176,11 @@ function SearchHitCard({ hit }: { hit: SearchHit }) {
           </span>
         )}
       </div>
+
+      {/* Docstring */}
+      {hit.docstring && (
+        <p className="text-xs text-muted-foreground italic line-clamp-2">{hit.docstring}</p>
+      )}
 
       {/* Path */}
       {hit.path && (
@@ -189,8 +198,23 @@ function SearchHitCard({ hit }: { hit: SearchHit }) {
         <pre className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1 overflow-x-auto">{hit.name}</pre>
       )}
 
-      {/* Peek */}
-      {hit.path && hasLine && (
+      {/* Source code */}
+      {hasSource && (
+        <div className="space-y-1.5">
+          <button
+            className="text-xs text-primary underline-offset-2 hover:underline"
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? "▲ hide code" : "▼ show code"}
+          </button>
+          {expanded && (
+            <CodeBlock code={hit.source_code!} startLine={hit.line_number ?? 1} maxHeight="max-h-72" />
+          )}
+        </div>
+      )}
+
+      {/* Peek fallback when no stored source */}
+      {!hasSource && hit.path && hasLine && (
         <PeekViewer path={hit.path} anchorLine={hit.line_number!} />
       )}
     </div>

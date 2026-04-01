@@ -579,7 +579,6 @@ class CodeSearchService:
 
         try:
             if repo_id:
-                # Scoped search: filter by repo_id on the File node
                 query = """
                     CALL db.index.fulltext.queryNodes('code_search', $search_term)
                     YIELD node, score
@@ -592,6 +591,8 @@ class CodeSearchService:
                         node.name as name,
                         coalesce(f.path, node.path) as path,
                         coalesce(node.line_number, 0) as line_number,
+                        coalesce(node.source_code, node.source) as source_code,
+                        node.docstring as docstring,
                         score
                     ORDER BY score DESC
                     LIMIT 20
@@ -609,6 +610,8 @@ class CodeSearchService:
                     "name": r["name"],
                     "path": r["path"],
                     "line_number": r["line_number"],
+                    "source_code": r.get("source_code"),
+                    "docstring": r.get("docstring"),
                     "score": r["score"],
                 }
                 for r in records

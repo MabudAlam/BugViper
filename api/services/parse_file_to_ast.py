@@ -1,10 +1,9 @@
+import logging
 from pathlib import Path
 
 from api.models.ast_results import CallSite, ClassDef, FunctionDef, Import, ParsedFile
 from common.languages import EXT_TO_LANG
 from common.tree_sitter_manager import _get_lang_parser
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +109,12 @@ def _ast_parse_file_full(file_path: str, source: str) -> ParsedFile:
                     line_number=call.get("line_number", 0),
                     args=call.get("args", []),
                     context=context_info[0] if context_info[0] else "",
-                    context_type=context_info[1] if len(context_info) > 1 else "",
-                    class_context=call.get("class_context") or "",
+                    context_type=context_info[1]
+                    if len(context_info) > 1 and context_info[1]
+                    else "",
+                    class_context=str(call.get("class_context"))
+                    if call.get("class_context")
+                    else "",
                 )
             )
 

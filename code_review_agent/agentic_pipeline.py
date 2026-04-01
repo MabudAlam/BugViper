@@ -17,6 +17,11 @@ from code_review_agent.models.file_review import (
     FileReviewResult,
 )
 from common.debug_writer import write_step
+from common.diff_line_mapper import (
+    format_file_with_line_numbers,
+    get_hunk_ranges,
+    get_valid_comment_lines,
+)
 from common.languages import EXT_TO_LANG
 from db.client import Neo4jClient, get_neo4j_client
 from db.code_serarch_layer import CodeSearchService
@@ -36,6 +41,33 @@ def _build_file_diff_from_patch(file_path: str, patch: str) -> str:
         return f"(No diff for {file_path})"
     header = f"diff --git a/{file_path} b/{file_path}\n--- a/{file_path}\n+++ b/{file_path}\n"
     return header + patch
+
+
+def _build_hunk_ranges_section(diff_text: str) -> str:
+    """Build a section describing which line ranges are part of the diff hunks."""
+    hunk_ranges = get_hunk_ranges(diff_text)
+    valid_lines = get_valid_comment_lines(diff_text)
+
+    if not hunk_ranges:
+        return ""
+
+    lines = ["## Diff Hunk Line Ranges", ""]
+    lines.append("Line ranges in the POST-PR file that are part of the diff:")
+
+    for file_path, ranges in sorted(hunk_ranges.items()):
+        range_parts = [str(s) if s == e else f"{s}-{e}" for s, e in ranges]
+        lines.append(f"- `{file_path}` hunk ranges: {', '.join(range_parts)}")
+
+        # Also show valid comment lines for this file
+        file_valid = valid_lines.get(file_path, set())
+        if file_valid:
+            sorted_valid = sorted(file_valid)
+            lines.append(f"  Valid comment lines: {sorted_valid}")
+
+    lines.append("")
+    lines.append("**Within hunk ranges → inline comment. Outside hunk ranges → regular comment.**")
+
+    return "\n".join(lines)
 
 
 def _build_ast_summary_for_file(file_path: str, content: str, ast: Any) -> str:
@@ -112,7 +144,8 @@ def _render_definitions_section(
     """Render class and function definitions as markdown sections."""
     parts = []
     if class_definitions:
-        parts.append("## Class Definitions")
+        names_list = ", ".join(f"`{c.get('name', 'Unknown')}`" for c in class_definitions)
+        parts.append(f"## Class Definitions: {names_list}")
         for cls_def in class_definitions:
             name = cls_def.get("name", "Unknown")
             source = cls_def.get("source_code") or cls_def.get("source", "")
@@ -126,7 +159,8 @@ def _render_definitions_section(
         parts.append("")
 
     if function_definitions:
-        parts.append("## Function Definitions")
+        names_list = ", ".join(f"`{f.get('name', 'Unknown')}`" for f in function_definitions)
+        parts.append(f"## Function Definitions: {names_list}")
         for fn_def in function_definitions:
             name = fn_def.get("name", "Unknown")
             source = fn_def.get("source_code") or fn_def.get("source", "")
@@ -158,10 +192,17 @@ def _build_file_context(
     parts = [
         f"## File Under Review: {file_path}",
         "",
-        "## Full Unified Diff",
+        "## Raw Unified Diff",
         "```diff",
         full_diff or "(no diff available)",
         "```",
+        "",
+        "## POST-PR File Content (with line numbers)",
+        "```",
+        format_file_with_line_numbers(full_file_content) or "(no file content available)",
+        "```",
+        "",
+        _build_hunk_ranges_section(full_diff),
         "",
         "## AST Summary",
         ast_summary or "(No AST)",
@@ -177,14 +218,6 @@ def _build_file_context(
     if definitions_section:
         parts.append("")
         parts.append(definitions_section)
-
-    if full_file_content:
-        file_lang = _get_file_language(file_path)
-        parts.append("")
-        parts.append("## Complete Post-PR File State")
-        parts.append(f"```{file_lang}")
-        parts.append(full_file_content or "(no file content available)")
-        parts.append("```")
 
     return "\n".join(parts)
 
@@ -515,9 +548,9 @@ async def _run_review_agent(
                 f"# Review Agent Prompt: {file_path}\n\n{file_context}",
             )
 
-        result = await agent.ainvoke({"messages": [HumanMessage(content=file_context)]})
+        # result = await agent.ainvoke({"messages": [HumanMessage(content=file_context)]})
 
-        structured_response = result.get("structured_response")
+        # structured_response = result.get("structured_response")
         if structured_response is None:
             logger.warning("No structured_response, returning empty result")
             structured_response = FileReviewLLMOutput(

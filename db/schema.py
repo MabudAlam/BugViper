@@ -748,6 +748,8 @@ CYPHER_QUERIES = {
             node.name as name,
             coalesce(f.path, node.path) as path,
             coalesce(node.line_number, 0) as line_number,
+            coalesce(node.source_code, node.source) as source_code,
+            node.docstring as docstring,
             score
         ORDER BY score DESC
         LIMIT 20
