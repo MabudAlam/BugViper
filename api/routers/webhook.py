@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Request
 
 from api.services.cloud_tasks_service import CloudTasksService
+from api.services.code_review_commands import extract_review_command, is_bot_mentioned
 from api.services.review_service import review_pipeline
 from common.github_client import get_github_client
 from common.job_models import IncrementalPRPayload, IncrementalPushPayload, PRReviewPayload
@@ -155,20 +156,43 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
     if payload.get("action") != "created":
         return {"status": "ignored", "reason": "not a new comment"}
 
-    issue = payload.get("issue", {})
-    if not issue.get("pull_request"):
-        return {"status": "ignored", "reason": "comment is not on a pull request"}
-
-    comment_body = payload.get("comment", {}).get("body", "")
-    if "@bugviper" not in comment_body.lower():
-        return {"status": "ignored", "reason": "no @bugviper mention"}
-
     repo_info = payload.get("repository", {})
+    issue = payload.get("issue", {})
+    comment = payload.get("comment", {})
+
+    commenter_type = comment.get("user", {}).get("type", "")
+    commenter_login = comment.get("user", {}).get("login", "")
+
+    if commenter_type == "Bot" or "[bot]" in commenter_login:
+        return {"status": "ignored", "reason": "comment from bot"}
+
     owner = repo_info.get("owner", {}).get("login", "")
     repo_name = repo_info.get("name", "")
     pr_number = issue.get("number")
 
-    logger.info("Review triggered: %s/%s#%s", owner, repo_name, pr_number)
+    if not issue.get("pull_request"):
+        return {"status": "ignored", "reason": "comment is not on a pull request"}
+
+    comment_body = comment.get("body", "")
+
+    if not is_bot_mentioned(comment_body):
+        return {"status": "ignored", "reason": "@bugviper not mentioned"}
+
+    review_type = extract_review_command(comment_body)
+
+    if review_type is None:
+        gh = get_github_client()
+        await gh.post_comment(
+            owner,
+            repo_name,
+            pr_number,
+            "❓ **Unrecognized command.** To trigger a review, mention @bugviper with:\n\n"
+            "• `@bugviper review` — incremental review of new changes\n"
+            "• `@bugviper review complete` — complete review of all files",
+        )
+        return {"status": "ignored", "reason": "unrecognized command"}
+
+    logger.info("Review triggered: %s/%s#%s (%s)", owner, repo_name, pr_number, review_type.value)
 
     from api.services.firebase_service import firebase_service
     from common.firebase_models import PrReviewStatus
