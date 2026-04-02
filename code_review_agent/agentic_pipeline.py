@@ -138,51 +138,27 @@ def _format_previous_issues(previous_issues: List[dict]) -> str:
 
 
 def _render_definitions_section(
-    class_definitions: Optional[List[dict]] = None,
-    function_definitions: Optional[List[dict]] = None,
-    import_definitions: Optional[List[dict]] = None,
+    code_samples: Optional[Dict[str, List[dict]]] = None,
 ) -> str:
-    """Render class and function definitions as markdown sections."""
+    """Render code samples (classes, functions, imports) as markdown sections."""
+    if not code_samples:
+        return ""
+
     parts = []
-    if class_definitions:
-        names_list = ", ".join(f"`{c.get('name', 'Unknown')}`" for c in class_definitions)
-        parts.append(f"## Class Definitions: {names_list}")
-        for cls_def in class_definitions:
-            name = cls_def.get("name", "Unknown")
-            source = cls_def.get("source_code") or cls_def.get("source", "")
-            docstring = cls_def.get("docstring") or ""
-            path = cls_def.get("path", "")
-            parts.append(f"### `{name}` ({path})")
-            if docstring:
-                parts.append(f"Docstring: {docstring}")
-            parts.append(f"```python\n{source}\n```")
-            parts.append("")
-        parts.append("")
+    for sample_type, samples in code_samples.items():
+        if not samples:
+            continue
 
-    if function_definitions:
-        names_list = ", ".join(f"`{f.get('name', 'Unknown')}`" for f in function_definitions)
-        parts.append(f"## Function Definitions: {names_list}")
-        for fn_def in function_definitions:
-            name = fn_def.get("name", "Unknown")
-            source = fn_def.get("source_code") or fn_def.get("source", "")
-            docstring = fn_def.get("docstring") or ""
-            path = fn_def.get("path", "")
-            parts.append(f"### `{name}` ({path})")
-            if docstring:
-                parts.append(f"Docstring: {docstring}")
-            parts.append(f"```python\n{source}\n```")
-            parts.append("")
-        parts.append("")
+        type_label = sample_type.capitalize()
+        names_list = ", ".join(f"`{s.get('name', 'Unknown')}`" for s in samples)
+        parts.append(f"## {type_label} Definitions: {names_list}")
 
-    if import_definitions:
-        names_list = ", ".join(f"`{i.get('name', 'Unknown')}`" for i in import_definitions)
-        parts.append(f"## Import Definitions: {names_list}")
-        for imp_def in import_definitions:
-            name = imp_def.get("name", "Unknown")
-            file_path = imp_def.get("file", "")
-            docstring = imp_def.get("docstring") or ""
-            source = imp_def.get("source_code") or ""
-            parts.append(f"### `{name}` ({file_path})")
+        for sample in samples:
+            name = sample.get("name", "Unknown")
+            source = sample.get("source_code") or ""
+            docstring = sample.get("docstring") or ""
+            path = sample.get("path", "")
+            parts.append(f"### `{name}` ({path})")
             if docstring:
                 parts.append(f"Docstring: {docstring}")
             if source:
@@ -200,9 +176,7 @@ def _build_file_context(
     file_ast: Any,
     previous_issues: str,
     explorer_context: str,
-    class_definitions: Optional[List[dict]] = None,
-    function_definitions: Optional[List[dict]] = None,
-    import_definitions: Optional[List[dict]] = None,
+    code_samples: Optional[Dict[str, List[dict]]] = None,
 ) -> str:
     """Build the full file context for the review prompt."""
     ast_summary = _build_ast_summary_for_file(file_path, full_file_content, file_ast)
@@ -233,9 +207,7 @@ def _build_file_context(
         "Context from code search and graph queries about this file and related entities",
     ]
 
-    definitions_section = _render_definitions_section(
-        class_definitions, function_definitions, import_definitions
-    )
+    definitions_section = _render_definitions_section(code_samples)
     if definitions_section:
         parts.append("")
         parts.append(definitions_section)
@@ -250,8 +222,7 @@ def _build_explorer_prompt(
     full_diff: str,
     ast_summary: str,
     file_content: str,
-    class_definations: Optional[List[dict]] = None,
-    function_definations: Optional[List[dict]] = None,
+    code_samples: Optional[Dict[str, List[dict]]] = None,
 ) -> str:
     """Build prompt for Explorer agent."""
     parts = [
@@ -273,7 +244,7 @@ def _build_explorer_prompt(
         "",
     ]
 
-    definitions_section = _render_definitions_section(class_definations, function_definations)
+    definitions_section = _render_definitions_section(code_samples)
     if definitions_section:
         parts.append("")
         parts.append(definitions_section)
@@ -302,9 +273,7 @@ async def execute_agentic_review(
     file_diffs: Optional[Dict[str, str]] = None,
     previous_issues_by_file: Optional[Dict[str, List[dict]]] = None,
     review_dir: Optional[Path] = None,
-    class_definations: Optional[List[dict]] = None,
-    function_definations: Optional[List[dict]] = None,
-    import_definitions: Optional[List[dict]] = None,
+    code_samples_by_file: Optional[Dict[str, Dict[str, List[dict]]]] = None,
 ) -> AggregatedReviewResult:
     """Execute agentic per-file code review.
 
@@ -342,8 +311,11 @@ async def execute_agentic_review(
         full_diff = _build_file_diff_from_patch(file_path, pr_patches.get(file_path, ""))
         safe_filename = file_path.replace("/", "_").replace(".", "_")
 
-        file_class_defs = class_definations or []
-        file_fn_defs = function_definations or []
+        file_code_samples = (
+            code_samples_by_file.get(file_path, {"classes": [], "functions": [], "imports": []})
+            if code_samples_by_file
+            else {"classes": [], "functions": [], "imports": []}
+        )
 
         file_previous_issues = (
             previous_issues_by_file.get(file_path, []) if previous_issues_by_file else []
@@ -363,8 +335,7 @@ async def execute_agentic_review(
                 review_dir=review_dir,
                 formatted_prev_issues=formatted_prev_issues,
                 file_previous_issues=file_previous_issues,
-                file_class_defs=file_class_defs,
-                file_fn_defs=file_fn_defs,
+                file_code_samples=file_code_samples,
             )
         else:
             result = await _review_file_without_explorer(
@@ -378,9 +349,7 @@ async def execute_agentic_review(
                 review_dir=review_dir,
                 formatted_prev_issues=formatted_prev_issues,
                 file_previous_issues=file_previous_issues,
-                file_class_defs=file_class_defs,
-                file_fn_defs=file_fn_defs,
-                import_definitions=import_definitions,
+                file_code_samples=file_code_samples,
             )
 
         if result:
@@ -426,8 +395,7 @@ async def _review_file_with_explorer(
     review_dir: Path | None,
     formatted_prev_issues: str,
     file_previous_issues: List[dict],
-    file_class_defs: List[dict],
-    file_fn_defs: List[dict],
+    file_code_samples: Dict[str, List[dict]],
 ) -> FileReviewResult | None:
     """Review a single file with the Explorer agent enabled."""
     logger.info("Running Explorer for %s...", file_path)
@@ -439,8 +407,7 @@ async def _review_file_with_explorer(
         full_diff=full_diff,
         ast_summary=_build_ast_summary_for_file(file_path, content, ast) if ast else "",
         file_content=content,
-        class_definations=file_class_defs,
-        function_definations=file_fn_defs,
+        code_samples=file_code_samples,
     )
 
     if review_dir:
@@ -495,8 +462,7 @@ async def _review_file_with_explorer(
         formatted_prev_issues=formatted_prev_issues,
         file_previous_issues=file_previous_issues,
         explored_context=explored_context,
-        file_class_defs=file_class_defs,
-        file_fn_defs=file_fn_defs,
+        file_code_samples=file_code_samples,
     )
 
 
@@ -511,9 +477,7 @@ async def _review_file_without_explorer(
     review_dir: Path | None,
     formatted_prev_issues: str,
     file_previous_issues: List[dict],
-    file_class_defs: List[dict],
-    file_fn_defs: List[dict],
-    import_definitions: Optional[List[dict]] = None,
+    file_code_samples: Dict[str, List[dict]],
 ) -> FileReviewResult | None:
     """Review a single file without the Explorer agent."""
     logger.info("Reviewing %s without explorer", file_path)
@@ -530,9 +494,7 @@ async def _review_file_without_explorer(
         formatted_prev_issues=formatted_prev_issues,
         file_previous_issues=file_previous_issues,
         explored_context="",
-        file_class_defs=file_class_defs,
-        file_fn_defs=file_fn_defs,
-        import_definitions=import_definitions,
+        file_code_samples=file_code_samples,
     )
 
 
@@ -548,9 +510,7 @@ async def _run_review_agent(
     formatted_prev_issues: str,
     file_previous_issues: List[dict],
     explored_context: str,
-    file_class_defs: List[dict],
-    file_fn_defs: List[dict],
-    import_definitions: Optional[List[dict]] = None,
+    file_code_samples: Dict[str, List[dict]],
 ) -> FileReviewResult | None:
     """Common review logic used by both explorer and non-explorer paths."""
     try:
@@ -563,9 +523,7 @@ async def _run_review_agent(
             file_ast=ast,
             previous_issues=formatted_prev_issues,
             explorer_context=explored_context,
-            class_definitions=file_class_defs,
-            function_definitions=file_fn_defs,
-            import_definitions=import_definitions,
+            code_samples=file_code_samples,
         )
 
         if review_dir:

@@ -137,30 +137,54 @@ async def review_pipeline(
             json.dumps([pf.toDict() for pf in parsed_files], indent=2),
         )
 
-        class_definations = []
-        function_definations = []
-
-        import_definitions = []
+        code_samples_by_file: dict[str, dict[str, list[dict]]] = {
+            pf.path: {"classes": [], "functions": [], "imports": []} for pf in parsed_files
+        }
 
         for pf in parsed_files:
-            imports = pf.imports
-            for imp in imports:
-                import_name = imp.name
+            all_names: set[str] = set()
 
-                query_result = query_service.search_code(import_name)
-                if query_result:
-                    for each_result in query_result:
-                        source_code = each_result.get("source_code", "")
-                        docstring = each_result.get("docstring", "")
+            for cls in pf.classes:
+                all_names.add(cls.name)
+            for fn in pf.functions:
+                all_names.add(fn.name)
+            for call in pf.call_sites:
+                all_names.add(call.name)
+            for imp in pf.imports:
+                all_names.add(imp.name)
 
-                        import_definitions.append(
-                            {
-                                "name": import_name,
-                                "file": pf.path,
-                                "docstring": docstring,
-                                "source_code": source_code,
-                            }
-                        )
+            for name in all_names:
+                query_result = query_service.search_code(name)
+                if not query_result:
+                    continue
+
+                for each_result in query_result:
+                    result_path = each_result.get("path", pf.path)
+                    result_type = each_result.get("type", "")
+                    source_code = each_result.get("source_code", "")
+                    docstring = each_result.get("docstring", "")
+
+                    sample = {
+                        "name": name,
+                        "file": result_path,
+                        "docstring": docstring,
+                        "source_code": source_code,
+                    }
+
+                    if result_type == "class" or (
+                        result_type not in ("function", "import")
+                        and name in {c.name for c in pf.classes}
+                    ):
+                        code_samples_by_file[pf.path]["classes"].append(sample)
+                    elif result_type == "function" or (
+                        result_type not in ("class", "import")
+                        and name in {fn.name for fn in pf.functions}
+                    ):
+                        code_samples_by_file[pf.path]["functions"].append(sample)
+                    elif result_type == "import" or name in {i.name for i in pf.imports}:
+                        code_samples_by_file[pf.path]["imports"].append(sample)
+                    else:
+                        code_samples_by_file[pf.path]["functions"].append(sample)
 
         # Run agentic review (lazy import to avoid circular dependency)
         from code_review_agent.agentic_pipeline import execute_agentic_review
@@ -176,9 +200,7 @@ async def review_pipeline(
             pr_info=pr_info,
             file_diffs=file_diffs,
             review_dir=review_dir,
-            class_definations=class_definations,
-            function_definations=function_definations,
-            import_definitions=import_definitions,
+            code_samples_by_file=code_samples_by_file,
         )
 
         # Run lint in parallel
