@@ -582,7 +582,9 @@ async def _run_review_agent(
         return FileReviewResult(
             file_path=file_path,
             issues=issues,
-            walk_through_entry=walk_through if walk_through else f"{file_path} — Modified",
+            walk_through_entry=(
+                f"{file_path} — {walk_through}" if walk_through else f"{file_path} — Modified"
+            ),
             positive_findings=positive_findings,
             previous_issues_status=previous_status,
             raw_agent_output=(
