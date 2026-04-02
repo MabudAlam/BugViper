@@ -47,7 +47,9 @@ async def review_pipeline(
     - Parallel execution
     - Neo4j context per file
     """
-    uid = firebase_service.find_project_owner_id(owner)
+    project_owner = firebase_service.find_project_owner_id(owner)
+
+    logger.info("The Owner UId is %s", project_owner)
     repo_id = f"{owner}/{repo}"
     if neo4j is None:
         neo4j = get_neo4j_client()
@@ -64,9 +66,9 @@ async def review_pipeline(
 
     query_service = CodeSearchService(neo4j)
 
-    if uid:
+    if project_owner:
         firebase_service.upsert_pr_metadata(
-            uid,
+            project_owner,
             owner,
             repo,
             pr_number,
@@ -89,9 +91,9 @@ async def review_pipeline(
 
         if not diff_text:
             logger.warning("Empty diff — skipping review")
-            if uid:
+            if project_owner:
                 firebase_service.upsert_pr_metadata(
-                    uid,
+                    project_owner,
                     owner,
                     repo,
                     pr_number,
@@ -189,7 +191,7 @@ async def review_pipeline(
         # Run agentic review (lazy import to avoid circular dependency)
         from code_review_agent.agentic_pipeline import execute_agentic_review
 
-        aggregated = await execute_agentic_review(
+        code_review_results = await execute_agentic_review(
             owner=owner,
             repo=repo,
             pr_number=pr_number,
@@ -208,25 +210,26 @@ async def review_pipeline(
         lint_issues = [i for i in lint_issues_raw if i.file in pr_files]
 
         # Convert issues
-        llm_issues = [Issue(**i) for i in aggregated.issues]
+        llm_issues = [Issue(**i) for i in code_review_results.issues]
 
         # Build walkthrough
-        walk_through = aggregated.walk_through or []
+        walk_through = code_review_results.walk_through or []
         for fp in files_changed:
             if not any(fp in entry for entry in walk_through):
                 walk_through.append(f"{fp} — Modified")
 
         # Save to Firestore
-        if uid:
+        if project_owner:
+
             firebase_service.save_review_run(
-                uid,
+                project_owner,
                 owner,
                 repo,
                 pr_number,
                 ReviewRunData(
                     issues=[i.model_dump() for i in lint_issues + llm_issues],
-                    positive_findings=aggregated.positive_findings,
-                    summary=aggregated.summary,
+                    positive_findings=code_review_results.positive_findings,
+                    summary=code_review_results.summary,
                     files_changed=files_changed,
                     repo_id=repo_id,
                     pr_number=pr_number,
@@ -313,15 +316,15 @@ async def review_pipeline(
         # Post review comment
         reconciled = ReconciledReview(
             issues=llm_issues,
-            positive_findings=aggregated.positive_findings,
-            summary=aggregated.summary,
+            positive_findings=code_review_results.positive_findings,
+            summary=code_review_results.summary,
         )
 
         debug_info = {
-            "tool_rounds_used": aggregated.total_tool_rounds,
+            "tool_rounds_used": code_review_results.total_tool_rounds,
             "lint_raw_count": len(lint_issues_raw),
             "lint_on_diff_count": len(lint_issues),
-            "files_reviewed": aggregated.total_files_reviewed,
+            "files_reviewed": code_review_results.total_files_reviewed,
         }
 
         review_body = format_review_summary(
@@ -332,7 +335,7 @@ async def review_pipeline(
             walk_through=walk_through,
             inline_posted=inline_posted,
             inline_skipped=inline_skipped,
-            raw_agent_outputs=aggregated.raw_agent_outputs,
+            raw_agent_outputs=code_review_results.raw_agent_outputs,
             debug_info=debug_info,
         )
 
@@ -351,9 +354,9 @@ async def review_pipeline(
             )
             await gh.post_comment(owner, repo, pr_number, fallback)
 
-        if uid:
+        if project_owner:
             firebase_service.upsert_pr_metadata(
-                uid,
+                project_owner,
                 owner,
                 repo,
                 pr_number,
@@ -379,9 +382,9 @@ async def review_pipeline(
             )
         except Exception:
             pass
-        if uid:
+        if project_owner:
             firebase_service.upsert_pr_metadata(
-                uid,
+                project_owner,
                 owner,
                 repo,
                 pr_number,
