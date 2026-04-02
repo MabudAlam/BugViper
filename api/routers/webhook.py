@@ -9,6 +9,8 @@ from api.services.code_review_commands import extract_review_command, is_bot_men
 from api.services.review_service import review_pipeline
 from common.github_client import get_github_client
 from common.job_models import IncrementalPRPayload, IncrementalPushPayload, PRReviewPayload
+from api.services.firebase_service import firebase_service
+from common.firebase_models import PrReviewStatus
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +176,21 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
         return {"status": "ignored", "reason": "comment is not on a pull request"}
 
     comment_body = comment.get("body", "")
+    uid = firebase_service.find_project_owner_id(owner)
+    isRepoIndexed = firebase_service.checkIfRepoIndexedOrNot(uid=uid, owner=owner, repo=repo_name)
+
+    if not isRepoIndexed:
+        gh = get_github_client()
+        await gh.post_comment(
+            owner,
+            repo_name,
+            pr_number,
+            "⚠️ **Repository not indexed.** Please ingest the repository before requesting reviews:\n\n"
+            "1. Go to the BugViper dashboard:\n"
+            "2. Find your project and click 'Ingest Repository'\n"
+            "3. Wait a few minutes for indexing to complete, then try mentioning @bugviper again!",
+        )
+        return {"status": "ignored", "reason": "repository not indexed"}
 
     if not is_bot_mentioned(comment_body):
         return {"status": "ignored", "reason": "@bugviper not mentioned"}
@@ -194,10 +211,6 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
 
     logger.info("Review triggered: %s/%s#%s (%s)", owner, repo_name, pr_number, review_type.value)
 
-    from api.services.firebase_service import firebase_service
-    from common.firebase_models import PrReviewStatus
-
-    uid = firebase_service.find_project_owner_id(owner)
     if uid:
         pr_meta = firebase_service.get_pr_metadata(uid, owner, repo_name, pr_number)
         if pr_meta and pr_meta.get("reviewStatus") == PrReviewStatus.RUNNING.value:
