@@ -140,6 +140,7 @@ def _format_previous_issues(previous_issues: List[dict]) -> str:
 def _render_definitions_section(
     class_definitions: Optional[List[dict]] = None,
     function_definitions: Optional[List[dict]] = None,
+    import_definitions: Optional[List[dict]] = None,
 ) -> str:
     """Render class and function definitions as markdown sections."""
     parts = []
@@ -173,6 +174,22 @@ def _render_definitions_section(
             parts.append("")
         parts.append("")
 
+    if import_definitions:
+        names_list = ", ".join(f"`{i.get('name', 'Unknown')}`" for i in import_definitions)
+        parts.append(f"## Import Definitions: {names_list}")
+        for imp_def in import_definitions:
+            name = imp_def.get("name", "Unknown")
+            file_path = imp_def.get("file", "")
+            docstring = imp_def.get("docstring") or ""
+            source = imp_def.get("source_code") or ""
+            parts.append(f"### `{name}` ({file_path})")
+            if docstring:
+                parts.append(f"Docstring: {docstring}")
+            if source:
+                parts.append(f"```python\n{source}\n```")
+            parts.append("")
+        parts.append("")
+
     return "\n".join(parts)
 
 
@@ -185,6 +202,7 @@ def _build_file_context(
     explorer_context: str,
     class_definitions: Optional[List[dict]] = None,
     function_definitions: Optional[List[dict]] = None,
+    import_definitions: Optional[List[dict]] = None,
 ) -> str:
     """Build the full file context for the review prompt."""
     ast_summary = _build_ast_summary_for_file(file_path, full_file_content, file_ast)
@@ -212,9 +230,12 @@ def _build_file_context(
         "",
         "## Explorer Context (Neo4j Graph Intelligence)",
         explorer_context or "No external context available",
+        "Context from code search and graph queries about this file and related entities",
     ]
 
-    definitions_section = _render_definitions_section(class_definitions, function_definitions)
+    definitions_section = _render_definitions_section(
+        class_definitions, function_definitions, import_definitions
+    )
     if definitions_section:
         parts.append("")
         parts.append(definitions_section)
@@ -283,6 +304,7 @@ async def execute_agentic_review(
     review_dir: Optional[Path] = None,
     class_definations: Optional[List[dict]] = None,
     function_definations: Optional[List[dict]] = None,
+    import_definitions: Optional[List[dict]] = None,
 ) -> AggregatedReviewResult:
     """Execute agentic per-file code review.
 
@@ -358,6 +380,7 @@ async def execute_agentic_review(
                 file_previous_issues=file_previous_issues,
                 file_class_defs=file_class_defs,
                 file_fn_defs=file_fn_defs,
+                import_definitions=import_definitions,
             )
 
         if result:
@@ -490,6 +513,7 @@ async def _review_file_without_explorer(
     file_previous_issues: List[dict],
     file_class_defs: List[dict],
     file_fn_defs: List[dict],
+    import_definitions: Optional[List[dict]] = None,
 ) -> FileReviewResult | None:
     """Review a single file without the Explorer agent."""
     logger.info("Reviewing %s without explorer", file_path)
@@ -508,6 +532,7 @@ async def _review_file_without_explorer(
         explored_context="",
         file_class_defs=file_class_defs,
         file_fn_defs=file_fn_defs,
+        import_definitions=import_definitions,
     )
 
 
@@ -525,6 +550,7 @@ async def _run_review_agent(
     explored_context: str,
     file_class_defs: List[dict],
     file_fn_defs: List[dict],
+    import_definitions: Optional[List[dict]] = None,
 ) -> FileReviewResult | None:
     """Common review logic used by both explorer and non-explorer paths."""
     try:
@@ -539,6 +565,7 @@ async def _run_review_agent(
             explorer_context=explored_context,
             class_definitions=file_class_defs,
             function_definitions=file_fn_defs,
+            import_definitions=import_definitions,
         )
 
         if review_dir:
@@ -548,21 +575,33 @@ async def _run_review_agent(
                 f"# Review Agent Prompt: {file_path}\n\n{file_context}",
             )
 
-        # result = await agent.ainvoke({"messages": [HumanMessage(content=file_context)]})
+        result = await agent.ainvoke({"messages": [HumanMessage(content=file_context)]})
 
-        # structured_response = result.get("structured_response")
+        structured_response = result.get("structured_response")
         if structured_response is None:
             logger.warning("No structured_response, returning empty result")
             structured_response = FileReviewLLMOutput(
-                walk_through=[f"{file_path} — Review could not be completed"],
+                walk_through=f"{file_path} — Review could not be completed",
                 issues=[],
                 positive_findings=[],
             )
 
         response: FileReviewLLMOutput = structured_response
-        walk_through = response.walk_through or ""
+        raw_walk = response.walk_through
+        if isinstance(raw_walk, list):
+            walk_through = "; ".join(str(w) for w in raw_walk) if raw_walk else ""
+        else:
+            walk_through = raw_walk or ""
         issues = [issue.model_dump() for issue in response.issues]
-        positive_findings = response.positive_findings or []
+        raw_findings = response.positive_findings or []
+        positive_findings: list[str] = []
+        for pf in raw_findings:
+            if isinstance(pf, list):
+                positive_findings.extend(str(item) for item in pf)
+            elif isinstance(pf, str):
+                positive_findings.append(pf)
+            else:
+                positive_findings.append(str(pf))
 
         previous_status = {}
         for prev in file_previous_issues:

@@ -62,6 +62,8 @@ async def review_pipeline(
 
     review_dir = make_review_dir(owner, repo, pr_number)
 
+    query_service = CodeSearchService(neo4j)
+
     if uid:
         firebase_service.upsert_pr_metadata(
             uid,
@@ -138,6 +140,28 @@ async def review_pipeline(
         class_definations = []
         function_definations = []
 
+        import_definitions = []
+
+        for pf in parsed_files:
+            imports = pf.imports
+            for imp in imports:
+                import_name = imp.name
+
+                query_result = query_service.search_code(import_name)
+                if query_result:
+                    for each_result in query_result:
+                        source_code = each_result.get("source_code", "")
+                        docstring = each_result.get("docstring", "")
+
+                        import_definitions.append(
+                            {
+                                "name": import_name,
+                                "file": pf.path,
+                                "docstring": docstring,
+                                "source_code": source_code,
+                            }
+                        )
+
         # Run agentic review (lazy import to avoid circular dependency)
         from code_review_agent.agentic_pipeline import execute_agentic_review
 
@@ -154,6 +178,7 @@ async def review_pipeline(
             review_dir=review_dir,
             class_definations=class_definations,
             function_definations=function_definations,
+            import_definitions=import_definitions,
         )
 
         # Run lint in parallel
