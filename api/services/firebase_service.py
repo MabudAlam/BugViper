@@ -7,7 +7,7 @@ from typing import Any, Optional
 from pydantic import BaseModel
 
 from common.firebase_init import _initialize_firebase
-from common.firebase_models import FirebaseUserData, FirebaseUserProfile
+from common.firebase_models import FirebaseUserData, FirebaseUserProfile, PRMetadata
 
 
 def _to_dict(data: BaseModel | dict[str, Any]) -> dict[str, Any]:
@@ -16,9 +16,8 @@ def _to_dict(data: BaseModel | dict[str, Any]) -> dict[str, Any]:
         return data.model_dump(by_alias=True, exclude_none=True)
     return data
 
+
 logger = logging.getLogger(__name__)
-
-
 
 
 class BugViperFirebaseService:
@@ -169,7 +168,6 @@ class BugViperFirebaseService:
             return None
         return doc.to_dict().get("githubAccessToken")
 
-
     # ── Repo metadata ─────────────────────────────────────────────────────
 
     def upsert_repo_metadata(
@@ -193,12 +191,7 @@ class BugViperFirebaseService:
         """
         repo_key = f"{owner}_{repo}"
         now = datetime.now(timezone.utc).isoformat()
-        doc_ref = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .document(repo_key)
-        )
+        doc_ref = self._db.collection("users").document(uid).collection("repos").document(repo_key)
         doc = doc_ref.get()
         payload = {**_to_dict(data), "updatedAt": now}
         if doc.exists:
@@ -212,23 +205,14 @@ class BugViperFirebaseService:
         """Fetch the repo metadata document. Returns None if not found."""
         repo_key = f"{owner}_{repo}"
         doc = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .document(repo_key)
-            .get()
+            self._db.collection("users").document(uid).collection("repos").document(repo_key).get()
         )
         return doc.to_dict() if doc.exists else None
 
     def delete_repo_metadata(self, uid: str, owner: str, repo: str) -> None:
         """Delete the repo metadata document and all subcollections (prs, reviews)."""
         repo_key = f"{owner}_{repo}"
-        repo_ref = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .document(repo_key)
-        )
+        repo_ref = self._db.collection("users").document(uid).collection("repos").document(repo_key)
         # Delete prs subcollection and their reviews
         for pr_doc in repo_ref.collection("prs").stream():
             for review_doc in pr_doc.reference.collection("reviews").stream():
@@ -239,17 +223,10 @@ class BugViperFirebaseService:
 
     def list_repos(self, uid: str) -> list[dict]:
         """List all ingested repos for a user."""
-        docs = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .stream()
-        )
+        docs = self._db.collection("users").document(uid).collection("repos").stream()
         return [doc.to_dict() for doc in docs]
 
-    # ── User lookup by GitHub username ────────────────────────────────────
-
-    def lookup_uid_by_github_username(self, github_username: str) -> Optional[str]:
+    def find_project_owner_id(self, github_username: str) -> Optional[str]:
         """Return the Firebase UID for a given GitHub username, or None if not found."""
         docs = (
             self._db.collection("users")
@@ -259,9 +236,8 @@ class BugViperFirebaseService:
         )
         for doc in docs:
             return doc.id
-        return None
 
-    # ── PR metadata ────────────────────────────────────────────────────────
+        return None
 
     def upsert_pr_metadata(
         self,
@@ -269,17 +245,20 @@ class BugViperFirebaseService:
         owner: str,
         repo: str,
         pr_number: int,
-        pr_data: BaseModel | dict[str, Any],
+        pr_data: PRMetadata,
     ) -> None:
         """
         Create or update the PR metadata document.
 
         Path: users/{uid}/repos/{owner}_{repo}/prs/{pr_number}
 
-        Accepts a PRMetadata model or a plain dict.
+        Accepts a PRMetadata model instance.
         """
         repo_key = f"{owner}_{repo}"
         now = datetime.now(timezone.utc).isoformat()
+
+        pr_data.updated_at = now
+
         doc_ref = (
             self._db.collection("users")
             .document(uid)
@@ -289,14 +268,37 @@ class BugViperFirebaseService:
             .document(str(pr_number))
         )
         doc = doc_ref.get()
-        payload = {**_to_dict(pr_data), "updatedAt": now}
         if doc.exists:
+            payload = pr_data.model_dump(by_alias=True, exclude_none=True)
+            # Avoid overwriting creation date and tracked metrics on an update
+            payload.pop("createdAt", None)
+            payload.pop("reviewCount", None)
+            payload.pop("openIssueCount", None)
             doc_ref.update(payload)
         else:
-            payload["createdAt"] = now
-            payload["reviewCount"] = 0
-            payload["openIssueCount"] = 0
+            pr_data.created_at = now
+            payload = pr_data.model_dump(by_alias=True, exclude_none=True)
             doc_ref.set(payload)
+
+    def get_pr_metadata(
+        self,
+        uid: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> Optional[dict]:
+        """Fetch the PR metadata document. Returns None if not found."""
+        repo_key = f"{owner}_{repo}"
+        doc = (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("prs")
+            .document(str(pr_number))
+            .get()
+        )
+        return doc.to_dict() if doc.exists else None
 
     # ── Review runs ────────────────────────────────────────────────────────
 
@@ -317,7 +319,9 @@ class BugViperFirebaseService:
         Returns the run document ID (e.g. "run_2").
         """
         if not isinstance(pr_number, int) or pr_number <= 0:
-            raise ValueError(f"save_review_run: pr_number must be a positive int, got {pr_number!r}")
+            raise ValueError(
+                f"save_review_run: pr_number must be a positive int, got {pr_number!r}"
+            )
 
         repo_key = f"{owner}_{repo}"
         now = datetime.now(timezone.utc).isoformat()
@@ -344,11 +348,13 @@ class BugViperFirebaseService:
         open_count = len([i for i in run_dict.get("issues", []) if i.get("status") != "fixed"])
         pr_doc = pr_ref.get()
         if pr_doc.exists:
-            pr_ref.update({
-                "reviewCount": run_number,
-                "openIssueCount": open_count,
-                "lastReviewedAt": now,
-            })
+            pr_ref.update(
+                {
+                    "reviewCount": run_number,
+                    "openIssueCount": open_count,
+                    "lastReviewedAt": now,
+                }
+            )
 
         logger.info(f"Saved review run {run_id} for {owner}/{repo}#{pr_number}")
         return run_id
@@ -371,17 +377,19 @@ class BugViperFirebaseService:
         """
         now = datetime.now(timezone.utc).isoformat()
         doc_ref = self._db.collection("customer_queries").document()
-        doc_ref.set({
-            "name": name,
-            "email": email,
-            "subject": subject,
-            "category": category,
-            "message": message,
-            "priority": priority,
-            "status": "open",
-            "createdAt": now,
-            "updatedAt": now,
-        })
+        doc_ref.set(
+            {
+                "name": name,
+                "email": email,
+                "subject": subject,
+                "category": category,
+                "message": message,
+                "priority": priority,
+                "status": "open",
+                "createdAt": now,
+                "updatedAt": now,
+            }
+        )
         logger.info("Saved customer query %s from %s", doc_ref.id, email)
         return doc_ref.id
 

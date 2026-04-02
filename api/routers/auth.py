@@ -15,11 +15,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-
-
 class LoginRequest(BaseModel):
     github_access_token: str
-
 
 
 class UserProfile(BaseModel):

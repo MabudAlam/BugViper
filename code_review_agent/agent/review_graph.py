@@ -1,30 +1,33 @@
-"""LangGraph explorer graph for PR review context-gathering.
-
-Uses a TypedDict state with a `tool_rounds` counter so the graph stops
-deterministically after MAX_TOOL_ROUNDS without relying on recursion limits.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal, Sequence
+from typing import Literal
 
-from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages import AIMessage
 from langgraph.graph import StateGraph
-from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from typing_extensions import TypedDict
 
+from code_review_agent.agent.state import ReviewExplorerState
 from code_review_agent.agent.tools import get_tools
 from code_review_agent.agent.utils import load_chat_model
 from db.code_serarch_layer import CodeSearchService
 
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 5
 
 
-class ReviewExplorerState(TypedDict):
-    messages: Annotated[Sequence[AnyMessage], add_messages]
-    tool_rounds: int
+def _slim_messages(messages):
+    """Return a token-efficient view of the message history by blanking AI reasoning text."""
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    slimmed = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage) and not slimmed:
+            slimmed.append(msg)
+        elif isinstance(msg, AIMessage) and msg.tool_calls:
+            slimmed.append(msg.model_copy(update={"content": ""}))
+        elif isinstance(msg, ToolMessage):
+            slimmed.append(msg)
+    return slimmed
 
 
 def build_review_explorer(
@@ -32,18 +35,21 @@ def build_review_explorer(
     system_prompt: str,
     model: str,
     repo_id: str | None = None,
+    explorer_goals: str | None = None,
 ):
-    """Build a tool-limited ReAct graph for PR context exploration.
+    """Build a tool-limited ReAct graph for PR context exploration (Phase 1).
 
-    Stops after MAX_TOOL_ROUNDS tool invocations instead of relying on
-    LangGraph's recursion limit, so we always get the accumulated messages
-    back even if the model is tool-happy.
+    Args:
+        query_service: Neo4j query service for code search
+        system_prompt: Base system prompt for the Explorer
+        model: Model name for the LLM
+        repo_id: Repository ID to scope queries
+        explorer_goals: PR-specific investigation goals (injected into system prompt)
     """
     tools = get_tools(query_service, repo_id=repo_id)
     llm = load_chat_model(model).bind_tools(tools)
 
     def llm_node(state: ReviewExplorerState) -> dict:
-        # If we've used all tool rounds, don't make another LLM call — just end.
         if state["tool_rounds"] >= MAX_TOOL_ROUNDS:
             return {}
 
@@ -53,13 +59,29 @@ def build_review_explorer(
             if repo_id
             else ""
         )
+
+        goals_section = ""
+        if explorer_goals:
+            goals_section = f"\n\n---\n\n## PR-Specific Investigation Goals\n\n{explorer_goals}"
+
         response: AIMessage = llm.invoke(
-            [{"role": "system", "content": formatted + repo_note}, *state["messages"]]
+            [
+                {"role": "system", "content": formatted + repo_note + goals_section},
+                *_slim_messages(state["messages"]),
+            ]
         )
         return {"messages": [response]}
 
     def should_continue(state: ReviewExplorerState) -> Literal["tools", "__end__"]:
         last = state["messages"][-1]
+        tool_rounds = state["tool_rounds"]
+
+        if tool_rounds >= 3:
+            if hasattr(last, "content") and last.content:
+                content = str(last.content).lower()
+                if any(kw in content for kw in ["caller", "found", "definition", "hierarchy"]):
+                    return "__end__"
+
         if (
             isinstance(last, AIMessage)
             and last.tool_calls

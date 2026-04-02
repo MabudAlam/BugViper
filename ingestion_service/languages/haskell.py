@@ -1,12 +1,12 @@
-from importlib.metadata import files
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-import re
-from common import debug_log, info_logger, error_logger, warning_logger, debug_logger
+
+from common import error_logger, warning_logger
 from common.tree_sitter_manager import execute_query
 
 HASKELL_QUERIES = {
-    "functions":"""
+    "functions": """
         [
         (function_declaration
             name: (simple_identifier) @name
@@ -17,7 +17,7 @@ HASKELL_QUERIES = {
         ) @init_node
         ]
     """,
-    "classes":"""
+    "classes": """
     [
         (class_declaration
             name: (type_identifier) @name
@@ -36,13 +36,13 @@ HASKELL_QUERIES = {
         ) @protocol
     ]
     """,
-    "imports":"""
+    "imports": """
         (import_declaration) @import
     """,
-    "calls":"""
+    "calls": """
         (call_expression) @call_node
     """,
-    "variables":"""
+    "variables": """
         (property_declaration
             (variable_declaration
                 (simple_identifier) @name
@@ -50,25 +50,29 @@ HASKELL_QUERIES = {
         ) @variable
     """,
 }
+
+
 class HaskellLangTreeSitterParser:
-    def __init__(self,generic_parser_wrapper: Any):
-        self.generic_parser_wrapper= generic_parser_wrapper
-        self.language_name="haskell"
-        self.language= generic_parser_wrapper.language
-        self.parser= generic_parser_wrapper.parser
-        
-    def parse(self,path: Path, is_dependency: bool= False, index_source: bool= False)->Dict[str,Any]:
+    def __init__(self, generic_parser_wrapper: Any):
+        self.generic_parser_wrapper = generic_parser_wrapper
+        self.language_name = "haskell"
+        self.language = generic_parser_wrapper.language
+        self.parser = generic_parser_wrapper.parser
+
+    def parse(
+        self, path: Path, is_dependency: bool = False, index_source: bool = False
+    ) -> Dict[str, Any]:
         try:
             self.index_source = index_source
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                source_code= f.read()
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                source_code = f.read()
             if not source_code.strip():
                 warning_logger(f"Empty or whitespace-only file: {path}")
                 return {
-                    "path":str(path),
-                    "functions":[],
-                    "classes":[],
-                    "variables":[],
+                    "path": str(path),
+                    "functions": [],
+                    "classes": [],
+                    "variables": [],
                     "imports": [],
                     "function_calls": [],
                     "is_dependency": is_dependency,
@@ -77,18 +81,19 @@ class HaskellLangTreeSitterParser:
             tree = self.parser.parse(bytes(source_code, "utf8"))
 
             parsed_functions = []
-            parsed_classes= []
-            parsed_variables= []
+            parsed_classes = []
+            parsed_variables = []
             parsed_imports = []
             parsed_calls = []
 
             # parse variables first to populate for inference
-            if 'variables' in HASKELL_QUERIES:
-                results = execute_query(self.language, HASKELL_QUERIES['variables'], tree.root_node)
+            if "variables" in HASKELL_QUERIES:
+                results = execute_query(self.language, HASKELL_QUERIES["variables"], tree.root_node)
                 parsed_variables = self._parse_variables(results, source_code, path)
 
             for capture_name, query in HASKELL_QUERIES.items():
-                if capture_name == 'variables' : continue
+                if capture_name == "variables":
+                    continue
                 results = execute_query(self.language, query, tree.root_node)
 
                 if capture_name == "functions":
@@ -98,7 +103,9 @@ class HaskellLangTreeSitterParser:
                 elif capture_name == "imports":
                     parsed_classes.extend(self._parse_imports(results, source_code))
                 elif capture_name == "calls":
-                    parsed_classes.extend(self._parse_calls(results, source_code, path, parsed_variables))
+                    parsed_classes.extend(
+                        self._parse_calls(results, source_code, path, parsed_variables)
+                    )
 
             return {
                 "path": str(path),
@@ -122,47 +129,35 @@ class HaskellLangTreeSitterParser:
                 "is_dependency": is_dependency,
                 "lang": self.language_name,
             }
-    
+
     def _get_parent_context(self, node: Any) -> Tuple[Optional[str], Optional[str], Optional[int]]:
         curr = node.parent
         while curr:
-            if curr.type in ('class_declaration',):
+            if curr.type in ("class_declaration",):
                 name_node = None
                 for child in curr.children:
                     if child.type == "simple_identifier":
                         name_node = child
                         break
                     return (
-                        self._get_node_text(name_node) if name_node else None, 
+                        self._get_node_text(name_node) if name_node else None,
                         curr.type,
-                        curr.start_point[0] + 1
+                        curr.start_point[0] + 1,
                     )
             if curr.type in ("class_declaration", "object_declaration"):
                 for child in curr.children:
                     if child.type in ("simple_identifier", "type_identifier"):
-                        return (
-                            self._get_node_text(child),
-                            curr.type,
-                            curr.start_point[0] + 1
-                        )
+                        return (self._get_node_text(child), curr.type, curr.start_point[0] + 1)
                 # check for secondary constructors
                 if curr.type == "secondary_constructor":
-                    return (
-                        "constructor",
-                        curr.type,
-                        curr.start_point[0] + 1
-                    )
+                    return ("constructor", curr.type, curr.start_point[0] + 1)
             if curr.type == "companion_object":
                 name = "Companion"
                 for child in curr.children:
                     if child.type in ("simple_identifier", "type_identifier"):
                         name = self._get_node_text(child)
                         break
-                return (
-                    name,
-                    curr.type,
-                    curr.start_point[0] + 1
-                )
+                return (name, curr.type, curr.start_point[0] + 1)
             # Handle anonymous objects (object_literal)
             if curr.type == "object_literal":
                 # checking if it is assigned to a variable to get a name?
@@ -170,25 +165,24 @@ class HaskellLangTreeSitterParser:
                 # it is usually hard to name them without variable context.
 
                 name = "AnonymousObject"
-                return (
-                    name,
-                    curr.type,
-                    curr.start_point[0] + 1
-                )
+                return (name, curr.type, curr.start_point[0] + 1)
             curr = curr.parent
         return None, None, None
 
     def _get_node_text(self, node: Any) -> str:
-        if not node: return ""
+        if not node:
+            return ""
         return node.text.decode("utf-8")
 
-    def _parse_functions(self, captures: list, source_code: str, path: Path) -> list[Dict[str, Any]]:
+    def _parse_functions(
+        self, captures: list, source_code: str, path: Path
+    ) -> list[Dict[str, Any]]:
         functions = []
         seen_nodes = set()
 
         for node, capture_name in captures:
             if capture_name == "function_node":
-                node_id =(node.start_byte, node.end_byte, node.type)
+                node_id = (node.start_byte, node.end_byte, node.type)
                 if node_id in seen_nodes:
                     continue
                 seen_nodes.add(node_id)
@@ -197,19 +191,18 @@ class HaskellLangTreeSitterParser:
                     start_line = node.start_point[0] + 1
                     end_line = node.end_point[0] + 1
 
-                    #Manual child lookup
+                    # Manual child lookup
                     name_node = None
                     for child in node.children:
                         if child.type == "simple_identifier":
                             name_node = child
                             break
                     if name_node:
-                        func_name=  self._get_node_text(name_node)
-            
+                        func_name = self._get_node_text(name_node)
+
                         params_node = None
                         for child in node.children:
                             if child.type == "function_value_parameters":
-                                param_node = child
                                 break
                         parameters = []
                         if params_node:
@@ -226,174 +219,191 @@ class HaskellLangTreeSitterParser:
                             "path": str(path),
                             "lang": self.language_name,
                             "context": context_name,
-                            "class_context": context_name if context_type and ("class" in context_type or "object" in context_type) else None
+                            "class_context": context_name
+                            if context_type
+                            and ("class" in context_type or "object" in context_type)
+                            else None,
                         }
 
                         if self.index_source:
                             func_data["source"] = source_text
-                        
+
                         functions.append(func_data)
                 except Exception as e:
                     error_logger(f"Error parsing function in {path}: {e}")
                     continue
         return functions
 
+
 def _parse_classes(self, captures: list, source_code: str, path: Path) -> list[Dict[str, Any]]:
-        classes = []
-        seen_nodes = set()
+    classes = []
+    seen_nodes = set()
 
-        for node, capture_name in captures:
-            if capture_name == "class":
-                node_id = (node.start_byte, node.end_byte, node.type)
-                if node_id in seen_nodes:
-                    continue
-                seen_nodes.add(node_id)
+    for node, capture_name in captures:
+        if capture_name == "class":
+            node_id = (node.start_byte, node.end_byte, node.type)
+            if node_id in seen_nodes:
+                continue
+            seen_nodes.add(node_id)
 
-                try:
-                    start_line = node.start_point[0] + 1
-                    end_line = node.end_point[0] + 1
+            try:
+                start_line = node.start_point[0] + 1
+                end_line = node.end_point[0] + 1
 
-                    # Find name child (type_identifier or simple_identifier)
-                    
-                    class_name = "Anonymous"
-                    if node.type == "companion_object":
-                        class_name = "Companion" # default name
+                # Find name child (type_identifier or simple_identifier)
 
-                    for child in node.children:
-                        if child.type in ("type_identifier","simple_identifier"):
-                            class_name = self._get_node_text(child)
-                            break
-                    source_text = self._get_node_text(node)
+                class_name = "Anonymous"
+                if node.type == "companion_object":
+                    class_name = "Companion"  # default name
 
-                    bases = []
-                    # Check for delegation specifiers
-                    # class_declaration -> delegation_specifier
-    
-                    for child in node.children:
-                        if child.type == "delegation_specifier":
-                            # children: constructor_invocation or user_type -> type_identifier
+                for child in node.children:
+                    if child.type in ("type_identifier", "simple_identifier"):
+                        class_name = self._get_node_text(child)
+                        break
+                source_text = self._get_node_text(node)
+
+                bases = []
+                # Check for delegation specifiers
+                # class_declaration -> delegation_specifier
+
+                for child in node.children:
+                    if child.type == "delegation_specifier":
+                        # children: constructor_invocation or user_type -> type_identifier
+                        # user_type -> type_identifier
+                        for specifier in child.children:
+                            # constructor_invocation -> user_type -> type_identifier
                             # user_type -> type_identifier
-                            for specifier in child.children:
-                                # constructor_invocation -> user_type -> type_identifier
-                                # user_type -> type_identifier
-                                # We want text of the type
-                                if specifier.type == "constructor_invocation":
-                                    # child 0 is typically user_type
-                                    for sub in specifier.children:
-                                        if sub.type == "user_type":
-                                            bases.append(self._get_node_text(sub))
-                                elif specifier.type == "user_type":
-                                    bases.append(self._get_node_text(specifier))
-                                elif specifier.type == "explicit_delegation":
-                                    # Not handling simple yet, uses 'by'
-                                    pass
-                    class_data = {
-                        "name": class_name,
-                        "line_number": start_line,
-                        "end_line": end_line,
-                        "bases": bases,
-                        "path": str(path),
-                        "lang": self.language_name,
-                    }
+                            # We want text of the type
+                            if specifier.type == "constructor_invocation":
+                                # child 0 is typically user_type
+                                for sub in specifier.children:
+                                    if sub.type == "user_type":
+                                        bases.append(self._get_node_text(sub))
+                            elif specifier.type == "user_type":
+                                bases.append(self._get_node_text(specifier))
+                            elif specifier.type == "explicit_delegation":
+                                # Not handling simple yet, uses 'by'
+                                pass
+                class_data = {
+                    "name": class_name,
+                    "line_number": start_line,
+                    "end_line": end_line,
+                    "bases": bases,
+                    "path": str(path),
+                    "lang": self.language_name,
+                }
 
-                    if self.index_source:
-                        class_data["source"] = source_text
-                    
-                    classes.append(class_data)
-                except Exception as e:
-                    error_logger(f"Error parsing class in {path}: {e}")
-                    continue
-            return classes
+                if self.index_source:
+                    class_data["source"] = source_text
+
+                classes.append(class_data)
+            except Exception as e:
+                error_logger(f"Error parsing class in {path}: {e}")
+                continue
+        return classes
+
+
 def _parse_variables(self, captures: list, source_code: str, path: Path) -> list[Dict[str, Any]]:
-        variables = []
-        seen_nodes = set()
+    variables = []
 
-        for node, capture_name in captures:
-            if capture_name == "variable":
-                try:
-                    start_line = node.start_point[0] + 1
-                    ctx_name, ctx_type, ctx_line = self._get_parent_context(node)
+    for node, capture_name in captures:
+        if capture_name == "variable":
+            try:
+                start_line = node.start_point[0] + 1
+                ctx_name, ctx_type, ctx_line = self._get_parent_context(node)
 
-                    # Destructuring declaration
-                    if "destructuring" in node.type:
-                        pass
-                    #Regular property/variable
-                    var_name = "unknown"
-                    var_type = "Unknown"
+                # Destructuring declaration
+                if "destructuring" in node.type:
+                    pass
+                # Regular property/variable
+                var_name = "unknown"
+                var_type = "Unknown"
 
-                    var_decl = None
-                
+                var_decl = None
+
+                for child in node.children:
+                    if child.type == "variable_declaration":
+                        var_decl = child
+                        break
+                if var_decl:
+                    # Check for name and type in variable_declaration
+                    for child in var_decl.children:
+                        if child.type == "simple_identifier":
+                            var_name = self._get_node_text(child)
+
+                        if child.type == "user_type":
+                            var_type = self._get_node_text(child)
+
+                # Attempt inference from initializer if type is unknown
+                if var_type == "Unknown":
+                    # property_declaration -> expression (e.g. call_expression)
                     for child in node.children:
-                        if child.type == "variable_declaration":
-                            var_decl = child
-                            break
-                    if var_decl:
-                        #Check for name and type in variable_declaration
-                        for child in var_decl.children:
-                            if child.type == "simple_identifier":
-                                var_name = self._get_node_text(child)
+                        if child.type == "call_expression":
+                            # call_expression -> simple_identifier (constructor)
+                            for sub in child.children:
+                                if sub.type == "simple_identifier":
+                                    var_type = self._get_node_text(sub)
+                                    break
+                            if var_type != "Unknown":
+                                break
 
-                            if child.type == "user_type":
-                                var_type = self._get_node_text(child)
-                    
-                    # Attempt inference from initializer if type is unknown
-                    if var_type == "Unknown":
-                        # property_declaration -> expression (e.g. call_expression)
-                        for child in node.children:
-                            if child.type == "call_expression":
-                                # call_expression -> simple_identifier (constructor)
-                                for sub in child.children:
-                                    if sub.type == "simple_identifier":
-                                        var_type = self._get_node_text(sub)
-                                        break
-                                if var_type != "Unknown": break
-
-                    if var_name !=" unknown":
-                        variables.append({
+                if var_name != " unknown":
+                    variables.append(
+                        {
                             "name": var_name,
                             "type": var_type,
                             "line_number": start_line,
                             "path": str(path),
                             "lang": self.language_name,
                             "context": ctx_name,
-                            "class_context": ctx_name if ctx_type and ("class" in ctx_type or "object" in ctx_type) else None
-                        })
-                except Exception as e:
-                    continue
+                            "class_context": ctx_name
+                            if ctx_type and ("class" in ctx_type or "object" in ctx_type)
+                            else None,
+                        }
+                    )
+            except Exception:
+                continue
 
-        return variables
-def _parse_imports(self, captures:list, source_code: str) -> list[dict]:
-        imports = []
-        for node, capture_name in captures:
-            if capture_name == "import":
-                try:
-                    text = self._get_node_text(node)
-                    # remove 'import'
-                    path = text.replace('import','').strip().split(' as ')[0].strip()
-                    alias = None
-                    if ' as ' in text:
-                        alias = text.split(' as ')[1].strip()
-                    imports.append({
+    return variables
+
+
+def _parse_imports(self, captures: list, source_code: str) -> list[dict]:
+    imports = []
+    for node, capture_name in captures:
+        if capture_name == "import":
+            try:
+                text = self._get_node_text(node)
+                # remove 'import'
+                path = text.replace("import", "").strip().split(" as ")[0].strip()
+                alias = None
+                if " as " in text:
+                    alias = text.split(" as ")[1].strip()
+                imports.append(
+                    {
                         "name": path,
                         "full_import_name": path,
-                        "line_number": node.start_point[0]+1,
+                        "line_number": node.start_point[0] + 1,
                         "alias": alias,
                         "context": (None, None),
                         "lang": self.language_name,
                         "is_dependency": False,
-                    })
-                except Exception as e:
-                    continue
-        return imports
-def _parse_calls(self, captures: list, source_code: str, path: Path, variables: list[Dict[str,Any]]= []) -> list[Dict[str, Any]]:
-    calls = []
-    seen_calls = set()
+                    }
+                )
+            except Exception:
+                continue
+    return imports
 
-    # Index variables for fast lookup: (name, context) -> type 
+
+def _parse_calls(
+    self, captures: list, source_code: str, path: Path, variables: list[Dict[str, Any]] = []
+) -> list[Dict[str, Any]]:
+    calls = []
+
+    # Index variables for fast lookup: (name, context) -> type
     var_map = {}
     for v in variables:
-        key = (v['name'], v['context'])
-        var_map[key] = v['type']
+        key = (v["name"], v["context"])
+        var_map[key] = v["type"]
         # Fallback for null context or partial match could be added
         # For class props: (name, class_context) might work if local lookup fails?
     for node, capture_name in captures:
@@ -404,7 +414,6 @@ def _parse_calls(self, captures: list, source_code: str, path: Path, variables: 
                 start_line = node.start_point[0] + 1
 
                 # Get function name from call_expression
-                func_name = "unknown"
                 base_obj = None
 
                 # call_expression usually has children:
@@ -419,13 +428,12 @@ def _parse_calls(self, captures: list, source_code: str, path: Path, variables: 
                 # OR call_expression -> (navigation_expression (simple_identifier) (navigation_suffix (simple_identifier) ...))
                 # OR call_expression -> (navigation_expression (call_expression) ...) (chained)
 
-
                 # Simplified traversal to find the "function name" and "receiver"
 
-                #If it's a direct call: foo()
-                #If it's a method call: x.foo()
+                # If it's a direct call: foo()
+                # If it's a method call: x.foo()
 
-                #Tree-sitter struct:
+                # Tree-sitter struct:
                 # (call_expression (simple_identifier) (call_suffix ...))
                 # (call_expression (navigation_expression (simple_identifier)(navigation_suffix (simple_identifier))) (call_suffix))
                 # -> name = 2nd simple_identifier, base = 1st simple_identifier
@@ -451,7 +459,7 @@ def _parse_calls(self, captures: list, source_code: str, path: Path, variables: 
 
                         # Suffix usually contains the method name in a navigation_suffix node or directly?
                         # Suffix is (navigation_suffix (simple_identifier)) usually.
-                        
+
                         if suffix.type == "navigation_suffix":
                             for c in suffix.children:
                                 if c.type == "simple_identifier":
@@ -464,7 +472,7 @@ def _parse_calls(self, captures: list, source_code: str, path: Path, variables: 
                 if call_name == "unknown":
                     continue
                 full_name = f"{base_obj}.{call_name}" if base_obj else call_name
-                
+
                 ctx_name, ctx_type, ctx_line = self._get_parent_context(node)
 
                 # Interence
@@ -492,48 +500,47 @@ def _parse_calls(self, captures: list, source_code: str, path: Path, variables: 
                                 if vname == base_obj:
                                     inferred_type = vtype
                                     break
-                calls.append({
-                    "name": call_name,
-                    "full_name": full_name,
-                    "line_number": start_line,
-                    "args": [], # Simplified
-                    "inferred_obj_type": inferred_type,
-                    "context": [None, ctx_type, ctx_line], # Keeping format compatible
-                    "class_context": [None, None],
-                    "lang": self.language_name,
-                    "is_dependency": False
-                })
-            except Exception as e:
+                calls.append(
+                    {
+                        "name": call_name,
+                        "full_name": full_name,
+                        "line_number": start_line,
+                        "args": [],  # Simplified
+                        "inferred_obj_type": inferred_type,
+                        "context": [None, ctx_type, ctx_line],  # Keeping format compatible
+                        "class_context": [None, None],
+                        "lang": self.language_name,
+                        "is_dependency": False,
+                    }
+                )
+            except Exception:
                 continue
     return calls
+
 
 def pre_scan_haskell(files: list[Path], parser_wrapper, repo_path: Path) -> dict:
     """Pre-scan Haskell files to build a name-to-RELATIVE-paths mapping."""
     name_to_files = {}
     for path in files:
         try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-            
+
             # Store RELATIVE path
             try:
                 relative_path = str(path.relative_to(repo_path))
             except ValueError:
                 warning_logger(f"Pre-scan: File {path} not within repo {repo_path}, skipping")
                 continue
-            
+
             # 1. Extract module name
             module_name = ""
-            mod_match = re.search(r'^\s*module\s+([\w\.]+)', content, re.MULTILINE)
+            mod_match = re.search(r"^\s*module\s+([\w\.]+)", content, re.MULTILINE)
             if mod_match:
                 module_name = mod_match.group(1)
-            
+
             # 2. Extract data/newtype/class declarations
-            matches = re.finditer(
-                r'^\s*(data|newtype|class|type)\s+(\w+)',
-                content,
-                re.MULTILINE
-            )
+            matches = re.finditer(r"^\s*(data|newtype|class|type)\s+(\w+)", content, re.MULTILINE)
             for match in matches:
                 name = match.group(2)
                 # Map simple name
@@ -547,6 +554,6 @@ def pre_scan_haskell(files: list[Path], parser_wrapper, repo_path: Path) -> dict
                     if fqn not in name_to_files:
                         name_to_files[fqn] = []
                     name_to_files[fqn].append(relative_path)
-        except Exception as e:
+        except Exception:
             pass
     return name_to_files

@@ -1,8 +1,8 @@
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-import re
 
-from common.debug_log import warning_logger
+from common.debug_log import error_logger, warning_logger
 from common.tree_sitter_manager import execute_query
 
 SWIFT_QUERIES = {
@@ -53,6 +53,7 @@ SWIFT_QUERIES = {
     """,
 }
 
+
 class SwiftLangTreeSitterParser:
     def __init__(self, generic_parser_wrapper: Any):
         self.generic_parser_wrapper = generic_parser_wrapper
@@ -60,10 +61,12 @@ class SwiftLangTreeSitterParser:
         self.language = generic_parser_wrapper.language
         self.parser = generic_parser_wrapper.parser
 
-    def parse(self, path: Path, is_dependency: bool = False, index_source: bool = False) -> Dict[str, Any]:
+    def parse(
+        self, path: Path, is_dependency: bool = False, index_source: bool = False
+    ) -> Dict[str, Any]:
         try:
             self.index_source = index_source
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 source_code = f.read()
 
             if not source_code.strip():
@@ -94,18 +97,21 @@ class SwiftLangTreeSitterParser:
             parsed_calls = []
 
             # Parse Variables first to populate for inference
-            if 'variables' in SWIFT_QUERIES:
-                results = execute_query(self.language, SWIFT_QUERIES['variables'], tree.root_node)
+            if "variables" in SWIFT_QUERIES:
+                results = execute_query(self.language, SWIFT_QUERIES["variables"], tree.root_node)
                 parsed_variables = self._parse_variables(results, source_code, path)
 
             for capture_name, query in SWIFT_QUERIES.items():
-                if capture_name == 'variables': continue  # Already done
+                if capture_name == "variables":
+                    continue  # Already done
                 results = execute_query(self.language, query, tree.root_node)
 
                 if capture_name == "functions":
                     parsed_functions.extend(self._parse_functions(results, source_code, path))
                 elif capture_name == "classes":
-                    classes, structs, enums, protocols = self._parse_classes(results, source_code, path)
+                    classes, structs, enums, protocols = self._parse_classes(
+                        results, source_code, path
+                    )
                     parsed_classes.extend(classes)
                     parsed_structs.extend(structs)
                     parsed_enums.extend(enums)
@@ -113,7 +119,9 @@ class SwiftLangTreeSitterParser:
                 elif capture_name == "imports":
                     parsed_imports.extend(self._parse_imports(results, source_code))
                 elif capture_name == "calls":
-                    parsed_calls.extend(self._parse_calls(results, source_code, path, parsed_variables))
+                    parsed_calls.extend(
+                        self._parse_calls(results, source_code, path, parsed_variables)
+                    )
 
             return {
                 "path": str(path),
@@ -159,7 +167,12 @@ class SwiftLangTreeSitterParser:
                     curr.type,
                     curr.start_point[0] + 1,
                 )
-            if curr.type in ("class_declaration", "struct_declaration", "enum_declaration", "protocol_declaration"):
+            if curr.type in (
+                "class_declaration",
+                "struct_declaration",
+                "enum_declaration",
+                "protocol_declaration",
+            ):
                 for child in curr.children:
                     if child.type == "type_identifier":
                         return (
@@ -185,10 +198,13 @@ class SwiftLangTreeSitterParser:
         return None, None, None
 
     def _get_node_text(self, node: Any) -> str:
-        if not node: return ""
+        if not node:
+            return ""
         return node.text.decode("utf-8")
 
-    def _parse_functions(self, captures: list, source_code: str, path: Path) -> list[Dict[str, Any]]:
+    def _parse_functions(
+        self, captures: list, source_code: str, path: Path
+    ) -> list[Dict[str, Any]]:
         functions = []
         seen_nodes = set()
 
@@ -198,11 +214,11 @@ class SwiftLangTreeSitterParser:
                 if node_id in seen_nodes:
                     continue
                 seen_nodes.add(node_id)
-                
+
                 try:
                     start_line = node.start_point[0] + 1
                     end_line = node.end_point[0] + 1
-                    
+
                     # Get function name
                     func_name = "init" if capture_name == "init_node" else None
                     if capture_name == "function_node":
@@ -210,10 +226,10 @@ class SwiftLangTreeSitterParser:
                             if child.type == "simple_identifier":
                                 func_name = self._get_node_text(child)
                                 break
-                    
+
                     if not func_name:
                         continue
-                    
+
                     # Extract parameters
                     parameters = []
                     for child in node.children:
@@ -221,7 +237,7 @@ class SwiftLangTreeSitterParser:
                             param_name = self._extract_parameter_name(child)
                             if param_name:
                                 parameters.append(param_name)
-                    
+
                     source_text = self._get_node_text(node)
                     context_name, context_type, context_line = self._get_parent_context(node)
 
@@ -233,21 +249,25 @@ class SwiftLangTreeSitterParser:
                         "path": str(path),
                         "lang": self.language_name,
                         "context": context_name,
-                        "class_context": context_name if context_type and ("class" in context_type or "struct" in context_type) else None
+                        "class_context": context_name
+                        if context_type and ("class" in context_type or "struct" in context_type)
+                        else None,
                     }
-                    
+
                     if self.index_source:
-                         func_data["source"] = source_text
+                        func_data["source"] = source_text
 
                     functions.append(func_data)
-                    
+
                 except Exception as e:
                     error_logger(f"Error parsing function in {path}: {e}")
                     continue
 
         return functions
 
-    def _parse_classes(self, captures: list, source_code: str, path: Path) -> Tuple[list, list, list, list]:
+    def _parse_classes(
+        self, captures: list, source_code: str, path: Path
+    ) -> Tuple[list, list, list, list]:
         classes = []
         structs = []
         enums = []
@@ -260,20 +280,20 @@ class SwiftLangTreeSitterParser:
                 if node_id in seen_nodes:
                     continue
                 seen_nodes.add(node_id)
-                
+
                 try:
                     start_line = node.start_point[0] + 1
                     end_line = node.end_point[0] + 1
-                    
+
                     # Find name
                     type_name = "Anonymous"
                     for child in node.children:
                         if child.type == "type_identifier":
                             type_name = self._get_node_text(child)
                             break
-                    
+
                     source_text = self._get_node_text(node)
-                    
+
                     # Extract inheritance/protocol conformance
                     bases = []
                     for child in node.children:
@@ -281,7 +301,7 @@ class SwiftLangTreeSitterParser:
                             for subchild in child.children:
                                 if subchild.type == "type_identifier":
                                     bases.append(self._get_node_text(subchild))
-                    
+
                     type_data = {
                         "name": type_name,
                         "line_number": start_line,
@@ -293,7 +313,7 @@ class SwiftLangTreeSitterParser:
 
                     if self.index_source:
                         type_data["source"] = source_text
-                    
+
                     if capture_name == "class":
                         classes.append(type_data)
                     elif capture_name == "struct":
@@ -302,17 +322,19 @@ class SwiftLangTreeSitterParser:
                         enums.append(type_data)
                     elif capture_name == "protocol":
                         protocols.append(type_data)
-                        
+
                 except Exception as e:
                     error_logger(f"Error parsing type in {path}: {e}")
                     continue
 
         return classes, structs, enums, protocols
 
-    def _parse_variables(self, captures: list, source_code: str, path: Path) -> list[Dict[str, Any]]:
+    def _parse_variables(
+        self, captures: list, source_code: str, path: Path
+    ) -> list[Dict[str, Any]]:
         variables = []
         seen_vars = set()
-        
+
         for node, capture_name in captures:
             if capture_name in ("variable", "constant", "pattern"):
                 try:
@@ -321,7 +343,7 @@ class SwiftLangTreeSitterParser:
 
                     var_name = "unknown"
                     var_type = "Unknown"
-                    
+
                     # Try to extract variable name
                     if capture_name == "pattern":
                         var_name = self._get_node_text(node)
@@ -335,7 +357,7 @@ class SwiftLangTreeSitterParser:
                                     if subchild.type == "simple_identifier":
                                         var_name = self._get_node_text(subchild)
                                         break
-                    
+
                     # Try to extract type annotation
                     for child in node.children:
                         if child.type == "type_annotation":
@@ -348,69 +370,76 @@ class SwiftLangTreeSitterParser:
                         var_key = (var_name, start_line)
                         if var_key not in seen_vars:
                             seen_vars.add(var_key)
-                            variables.append({
-                                "name": var_name,
-                                "type": var_type,
-                                "line_number": start_line,
-                                "path": str(path),
-                                "lang": self.language_name,
-                                "context": ctx_name,
-                                "class_context": ctx_name if ctx_type and ("class" in ctx_type or "struct" in ctx_type) else None
-                            })
-                except Exception as e:
+                            variables.append(
+                                {
+                                    "name": var_name,
+                                    "type": var_type,
+                                    "line_number": start_line,
+                                    "path": str(path),
+                                    "lang": self.language_name,
+                                    "context": ctx_name,
+                                    "class_context": ctx_name
+                                    if ctx_type and ("class" in ctx_type or "struct" in ctx_type)
+                                    else None,
+                                }
+                            )
+                except Exception:
                     continue
 
         return variables
 
     def _parse_imports(self, captures: list, source_code: str) -> list[dict]:
         imports = []
-        
+
         for node, capture_name in captures:
             if capture_name == "import":
                 try:
                     text = self._get_node_text(node)
                     # import Foundation
                     # import UIKit
-                    parts = text.replace('import ', '').strip().split()
+                    parts = text.replace("import ", "").strip().split()
                     module_name = parts[0] if parts else ""
-                    
+
                     if module_name:
-                        imports.append({
-                            "name": module_name,
-                            "full_import_name": module_name,
-                            "line_number": node.start_point[0] + 1,
-                            "alias": None,
-                            "context": (None, None),
-                            "lang": self.language_name,
-                            "is_dependency": False,
-                        })
-                except Exception as e:
+                        imports.append(
+                            {
+                                "name": module_name,
+                                "full_import_name": module_name,
+                                "line_number": node.start_point[0] + 1,
+                                "alias": None,
+                                "context": (None, None),
+                                "lang": self.language_name,
+                                "is_dependency": False,
+                            }
+                        )
+                except Exception:
                     continue
 
         return imports
 
-    def _parse_calls(self, captures: list, source_code: str, path: Path, variables: list[Dict[str, Any]] = []) -> list[Dict[str, Any]]:
+    def _parse_calls(
+        self, captures: list, source_code: str, path: Path, variables: list[Dict[str, Any]] = []
+    ) -> list[Dict[str, Any]]:
         calls = []
-        seen_calls = set()
-        
+
         # Index variables for fast lookup
         var_map = {}
         for v in variables:
-            key = (v['name'], v['context'])
-            var_map[key] = v['type']
+            key = (v["name"], v["context"])
+            var_map[key] = v["type"]
 
         for node, capture_name in captures:
             if capture_name == "call_node":
                 try:
                     start_line = node.start_point[0] + 1
-                    
+
                     call_name = "unknown"
                     base_obj = None
-                    
+
                     # Extract function name from call expression
                     # call_expression can have various structures
                     first_child = node.children[0] if node.children else None
-                    
+
                     if first_child:
                         if first_child.type == "simple_identifier":
                             call_name = self._get_node_text(first_child)
@@ -422,13 +451,13 @@ class SwiftLangTreeSitterParser:
                                         base_obj = self._get_node_text(child)
                                     else:
                                         call_name = self._get_node_text(child)
-                    
+
                     if call_name == "unknown":
                         continue
-                    
+
                     full_name = f"{base_obj}.{call_name}" if base_obj else call_name
                     ctx_name, ctx_type, ctx_line = self._get_parent_context(node)
-                    
+
                     # Type inference
                     inferred_type = None
                     if base_obj:
@@ -441,18 +470,20 @@ class SwiftLangTreeSitterParser:
                                     inferred_type = vtype
                                     break
 
-                    calls.append({
-                        "name": call_name,
-                        "full_name": full_name,
-                        "line_number": start_line,
-                        "args": [],
-                        "inferred_obj_type": inferred_type,
-                        "context": [None, ctx_type, ctx_line],
-                        "class_context": [None, None],
-                        "lang": self.language_name,
-                        "is_dependency": False
-                    })
-                except Exception as e:
+                    calls.append(
+                        {
+                            "name": call_name,
+                            "full_name": full_name,
+                            "line_number": start_line,
+                            "args": [],
+                            "inferred_obj_type": inferred_type,
+                            "context": [None, ctx_type, ctx_line],
+                            "class_context": [None, None],
+                            "lang": self.language_name,
+                            "is_dependency": False,
+                        }
+                    )
+                except Exception:
                     continue
         return calls
 
@@ -465,30 +496,31 @@ class SwiftLangTreeSitterParser:
                 return self._get_node_text(child)
         return None
 
+
 def pre_scan_swift(files: list[Path], parser_wrapper, repo_path: Path) -> dict:
     """Pre-scan Swift files to build a map of class/struct/enum/protocol names to RELATIVE file paths."""
     name_to_files = {}
     for path in files:
         try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-            
+
             # Store RELATIVE path
             try:
                 relative_path = str(path.relative_to(repo_path))
             except ValueError:
                 warning_logger(f"Pre-scan: File {path} not within repo {repo_path}, skipping")
                 continue
-            
+
             # Extract classes, structs, enums, protocols
-            matches = re.finditer(r'\b(class|struct|enum|protocol)\s+(\w+)', content)
-            
+            matches = re.finditer(r"\b(class|struct|enum|protocol)\s+(\w+)", content)
+
             for match in matches:
                 name = match.group(2)
                 if name not in name_to_files:
                     name_to_files[name] = []
                 name_to_files[name].append(relative_path)
-                    
+
         except Exception:
             pass
     return name_to_files

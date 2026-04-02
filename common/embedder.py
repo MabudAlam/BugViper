@@ -1,10 +1,8 @@
-
-
 import logging
 import os
 import time
 
-from openai import OpenAI, APIStatusError
+from openai import APIStatusError, OpenAI
 
 from db.client import Neo4jClient
 
@@ -12,22 +10,32 @@ logger = logging.getLogger(__name__)
 
 # OpenRouter embedding model — same key as the LLM, no separate OpenAI key needed
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-EMBEDDING_MODEL     = "openai/text-embedding-3-small"
-EMBEDDING_DIMS      = 1536   # fixed output size for text-embedding-3-small
-BATCH_SIZE          = 200    # texts per API call — keeps total token count manageable
-MAX_CHARS_PER_TEXT  = 6000   # ~1500 tokens; text-embedding-3-small max is 8191 tokens
+EMBEDDING_MODEL = "openai/text-embedding-3-small"
+EMBEDDING_DIMS = 1536  # fixed output size for text-embedding-3-small
+BATCH_SIZE = 200  # texts per API call — keeps total token count manageable
+MAX_CHARS_PER_TEXT = 6000  # ~1500 tokens; text-embedding-3-small max is 8191 tokens
 
 # Nodes we embed and the text we build from each one.
 # Format: (node_label, text_expression_in_cypher)
 _NODE_TYPES: list[tuple[str, str]] = [
-    ("Function", "coalesce(n.name, '') + ' ' + coalesce(n.docstring, '') + ' ' + coalesce(n.source_code, n.source, '')"),
-    ("Class",    "coalesce(n.name, '') + ' ' + coalesce(n.docstring, '') + ' ' + coalesce(n.source_code, n.source, '')"),
-    ("Method",   "coalesce(n.name, '') + ' ' + coalesce(n.docstring, '') + ' ' + coalesce(n.source_code, n.source, '')"),
-    ("File",     "coalesce(n.path, '') + ' ' + coalesce(n.source_code, '')"),
+    (
+        "Function",
+        "coalesce(n.name, '') + ' ' + coalesce(n.docstring, '') + ' ' + coalesce(n.source_code, n.source, '')",
+    ),
+    (
+        "Class",
+        "coalesce(n.name, '') + ' ' + coalesce(n.docstring, '') + ' ' + coalesce(n.source_code, n.source, '')",
+    ),
+    (
+        "Method",
+        "coalesce(n.name, '') + ' ' + coalesce(n.docstring, '') + ' ' + coalesce(n.source_code, n.source, '')",
+    ),
+    ("File", "coalesce(n.path, '') + ' ' + coalesce(n.source_code, '')"),
 ]
 
 
 # ── Core helper ───────────────────────────────────────────────────────────────
+
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """
@@ -68,12 +76,20 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         total_chars = sum(len(t) for t in texts_to_embed)
         logger.info(
             "Embedding batch %d-%d of %d texts (%d non-empty, ~%d chars total)",
-            batch_start, batch_start + len(batch), len(texts), len(texts_to_embed), total_chars,
+            batch_start,
+            batch_start + len(batch),
+            len(texts),
+            len(texts_to_embed),
+            total_chars,
         )
 
         if not texts_to_embed:
             # All texts in this batch are blank — return zero vectors
-            logger.warning("Batch %d-%d has no non-empty texts; using zero vectors", batch_start, batch_start + len(batch))
+            logger.warning(
+                "Batch %d-%d has no non-empty texts; using zero vectors",
+                batch_start,
+                batch_start + len(batch),
+            )
             all_embeddings.extend([[0.0] * EMBEDDING_DIMS] * len(batch))
             continue
 
@@ -93,14 +109,18 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
                 if isinstance(exc, APIStatusError):
                     logger.warning(
                         "Embedding attempt %d/3 failed — HTTP %d: %s",
-                        attempt + 1, exc.status_code, exc.message,
+                        attempt + 1,
+                        exc.status_code,
+                        exc.message,
                     )
                 else:
                     logger.warning(
                         "Embedding attempt %d/3 failed — %s: %s",
-                        attempt + 1, type(exc).__name__, exc,
+                        attempt + 1,
+                        type(exc).__name__,
+                        exc,
                     )
-                wait = 2 ** attempt  # 1s, 2s, 4s
+                wait = 2**attempt  # 1s, 2s, 4s
                 time.sleep(wait)
         else:
             raise RuntimeError(f"Embedding failed after 3 attempts: {last_err}") from last_err
@@ -115,6 +135,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 # ── Neo4j helper ─────────────────────────────────────────────────────────────
+
 
 def embed_nodes_in_neo4j(db: Neo4jClient) -> dict[str, int]:
     """
@@ -145,16 +166,18 @@ def embed_nodes_in_neo4j(db: Neo4jClient) -> dict[str, int]:
         logger.info("All nodes already have embeddings — nothing to do")
         return {label: 0 for label, _ in _NODE_TYPES}
 
-    ids    = [r["eid"]   for r in all_records]
-    texts  = [r["text"]  for r in all_records]
+    ids = [r["eid"] for r in all_records]
+    texts = [r["text"] for r in all_records]
     labels = [r["label"] for r in all_records]
 
     total = len(ids)
     logger.info(
         "Embedding %d nodes total (%s) → %d OpenAI API call(s)",
         total,
-        ", ".join(f"{labels.count(l)} {l}" for l, _ in _NODE_TYPES if labels.count(l) > 0),
-        (total + BATCH_SIZE - 1) // BATCH_SIZE,   # ceiling division
+        ", ".join(
+            f"{labels.count(label)} {label}" for label, _ in _NODE_TYPES if labels.count(label) > 0
+        ),
+        (total + BATCH_SIZE - 1) // BATCH_SIZE,  # ceiling division
     )
 
     # ── Step 2: embed everything in batches of 2048 (one call for < 2048) ────
@@ -165,14 +188,16 @@ def embed_nodes_in_neo4j(db: Neo4jClient) -> dict[str, int]:
     write_batch_size = 500
     for i in range(0, total, write_batch_size):
         batch = [
-            {"eid": ids[j], "vec": vectors[j]}
-            for j in range(i, min(i + write_batch_size, total))
+            {"eid": ids[j], "vec": vectors[j]} for j in range(i, min(i + write_batch_size, total))
         ]
-        db.run_query("""
+        db.run_query(
+            """
             UNWIND $batch AS row
             MATCH (n) WHERE elementId(n) = row.eid
             SET n.embedding = row.vec
-        """, {"batch": batch})
+        """,
+            {"batch": batch},
+        )
 
     # ── Step 4: return per-label counts ──────────────────────────────────────
     stats = {label: labels.count(label) for label, _ in _NODE_TYPES}

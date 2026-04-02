@@ -18,25 +18,26 @@ Graph Structure:
 (:Module) -[:CONTAINS {depth: int}]-> (:Module|:File) - Hierarchical navigation
 """
 
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
 from .client import Neo4jClient
 
 
 class CodeGraphSchema:
     """Manages the Neo4j schema for code ingestion."""
-    
+
     def __init__(self, client: Neo4jClient):
         """
         Initialize schema manager.
-        
+
         Args:
             client: Neo4j database client
         """
         self.db = client
-    
+
     def create_constraints_and_indexes(self) -> None:
         """Create all necessary constraints and indexes for the code graph."""
-        
+
         constraints = [
             # Unique constraints
             "CREATE CONSTRAINT user_username IF NOT EXISTS FOR (u:User) REQUIRE u.username IS UNIQUE",
@@ -47,7 +48,7 @@ class CodeGraphSchema:
             "CREATE CONSTRAINT config_file_path IF NOT EXISTS FOR (cf:ConfigFile) REQUIRE (cf.repo_id, cf.path) IS UNIQUE",
             "CREATE CONSTRAINT symbol_id IF NOT EXISTS FOR (s:Symbol) REQUIRE s.id IS UNIQUE",
         ]
-        
+
         indexes = [
             # Performance indexes
             "CREATE INDEX file_language IF NOT EXISTS FOR (f:File) ON (f.language)",
@@ -58,23 +59,19 @@ class CodeGraphSchema:
             "CREATE INDEX module_hierarchy IF NOT EXISTS FOR (m:Module) ON (m.repo_id, m.depth)",
             "CREATE INDEX import_module IF NOT EXISTS FOR (i:Import) ON (i.module)",
             "CREATE INDEX variable_name IF NOT EXISTS FOR (v:Variable) ON (v.name)",
-
             # Symbol table indexes
             "CREATE INDEX symbol_name IF NOT EXISTS FOR (s:Symbol) ON (s.name)",
             "CREATE INDEX symbol_qualified_name IF NOT EXISTS FOR (s:Symbol) ON (s.qualified_name)",
             "CREATE INDEX symbol_scope_lookup IF NOT EXISTS FOR (s:Symbol) ON (s.file_id, s.scope)",
             "CREATE INDEX symbol_type IF NOT EXISTS FOR (s:Symbol) ON (s.type)",
-
             # Config file indexes
             "CREATE INDEX config_file_type IF NOT EXISTS FOR (cf:ConfigFile) ON (cf.file_type)",
             "CREATE INDEX dependency_name IF NOT EXISTS FOR (d:Dependency) ON (d.name)",
             "CREATE INDEX dependency_source IF NOT EXISTS FOR (d:Dependency) ON (d.source)",
-
             # Full-text search indexes for code search (including source_code)
             "CREATE FULLTEXT INDEX code_search IF NOT EXISTS FOR (n:Class|Function|Method|Variable|Symbol) ON EACH [n.name, n.docstring, n.source_code]",
             "CREATE FULLTEXT INDEX symbol_search IF NOT EXISTS FOR (s:Symbol) ON EACH [s.name, s.qualified_name, s.docstring]",
             "CREATE FULLTEXT INDEX file_content_search IF NOT EXISTS FOR (f:File) ON EACH [f.source_code]",
-
             # Vector indexes for semantic search (embedding stored on each node)
             # dimensions=1536 matches text-embedding-3-small output size
             "CREATE VECTOR INDEX function_semantic IF NOT EXISTS FOR (n:Function) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}",
@@ -82,7 +79,7 @@ class CodeGraphSchema:
             "CREATE VECTOR INDEX method_semantic IF NOT EXISTS FOR (n:Method) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}",
             "CREATE VECTOR INDEX file_semantic IF NOT EXISTS FOR (n:File) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 1536, `vector.similarity_function`: 'cosine'}}",
         ]
-        
+
         for constraint in constraints:
             try:
                 self.db.run_query(constraint)
@@ -90,7 +87,7 @@ class CodeGraphSchema:
             except Exception as e:
                 if "already exists" not in str(e).lower():
                     print(f"⚠ Constraint warning: {e}")
-        
+
         for index in indexes:
             try:
                 self.db.run_query(index)
@@ -98,11 +95,11 @@ class CodeGraphSchema:
             except Exception as e:
                 if "already exists" not in str(e).lower():
                     print(f"⚠ Index warning: {e}")
-    
+
     def clear_repository(self, repo_id: str) -> None:
         """
         Clear all data for a specific repository before re-ingestion.
-        
+
         Args:
             repo_id: Repository ID (format: username/repo_name)
         """
@@ -113,11 +110,11 @@ class CodeGraphSchema:
         """
         self.db.run_query(query, {"repo_id": repo_id})
         print(f"✓ Cleared repository: {repo_id}")
-    
+
     def update_repository_commit(self, repo_id: str, commit_hash: str) -> None:
         """
         Update the last commit hash for a repository.
-        
+
         Args:
             repo_id: Repository ID
             commit_hash: Git commit hash
@@ -129,14 +126,14 @@ class CodeGraphSchema:
         RETURN r
         """
         self.db.run_query(query, {"repo_id": repo_id, "commit_hash": commit_hash})
-    
+
     def get_repository_commit(self, repo_id: str) -> Optional[str]:
         """
         Get the last ingested commit hash for a repository.
-        
+
         Args:
             repo_id: Repository ID
-            
+
         Returns:
             Commit hash or None if not set
         """
@@ -148,14 +145,14 @@ class CodeGraphSchema:
         if records and records[0]["commit_hash"]:
             return records[0]["commit_hash"]
         return None
-    
+
     def get_repository_metadata(self, repo_id: str) -> Optional[Dict[str, Any]]:
         """
         Get repository metadata including local path, URL, etc.
-        
+
         Args:
             repo_id: Repository ID
-            
+
         Returns:
             Dictionary with repository metadata or None if not found
         """
@@ -173,7 +170,7 @@ class CodeGraphSchema:
         if records:
             return dict(records[0])
         return None
-    
+
     def delete_file_nodes(self, repo_id: str, file_path: str) -> None:
         """
         Delete all nodes associated with a specific file.
@@ -208,8 +205,6 @@ class CodeGraphSchema:
         """
         self.db.run_query(query, {"repo_id": repo_id, "file_path": file_path})
 
-
-    
     def rename_file_in_graph(self, repo_id: str, old_path: str, new_path: str) -> None:
         """
         Rename a file in the graph database.
@@ -251,11 +246,7 @@ class CodeGraphSchema:
 
         RETURN f
         """
-        self.db.run_query(query, {
-            "repo_id": repo_id,
-            "old_path": old_path,
-            "new_path": new_path
-        })
+        self.db.run_query(query, {"repo_id": repo_id, "old_path": old_path, "new_path": new_path})
 
     def delete_module_nodes(self, repo_id: str, module_path: str) -> None:
         """
@@ -310,11 +301,7 @@ class CodeGraphSchema:
 
         RETURN child
         """
-        self.db.run_query(query, {
-            "repo_id": repo_id,
-            "old_path": old_path,
-            "new_path": new_path
-        })
+        self.db.run_query(query, {"repo_id": repo_id, "old_path": old_path, "new_path": new_path})
 
 
 # =============================================================================
@@ -340,7 +327,6 @@ CYPHER_QUERIES = {
             count(DISTINCT v) as variables,
             count(DISTINCT m) as modules
     """,
-
     "get_repo_stats": """
         MATCH (r:Repository)
         WHERE r.repo = $repo_id OR r.id = $repo_id
@@ -361,7 +347,6 @@ CYPHER_QUERIES = {
             count(DISTINCT m) as import_count,
             [lang IN collect(DISTINCT f.language) WHERE lang IS NOT NULL AND lang <> 'unknown'] as languages
     """,
-
     # -------------------------------------------------------------------------
     # User Operations
     # -------------------------------------------------------------------------
@@ -370,7 +355,6 @@ CYPHER_QUERIES = {
         ON CREATE SET u.email = $email, u.created_at = datetime()
         RETURN u
     """,
-
     # -------------------------------------------------------------------------
     # Symbol Table Operations
     # -------------------------------------------------------------------------
@@ -397,14 +381,12 @@ CYPHER_QUERIES = {
             s.updated_at = datetime()
         RETURN s
     """,
-
     "link_symbol_to_definition": """
         MATCH (s:Symbol {id: $symbol_id})
         MATCH (def) WHERE def.id = $definition_id
         MERGE (s)-[:REFERENCES]->(def)
         RETURN s, def
     """,
-    
     # -------------------------------------------------------------------------
     # Repository Operations
     # -------------------------------------------------------------------------
@@ -423,7 +405,6 @@ CYPHER_QUERIES = {
         MERGE (u)-[:OWNS]->(r)
         RETURN r
     """,
-    
     "create_branch": """
         MATCH (r:Repository {id: $repo_id})
         MERGE (b:Branch {repo_id: $repo_id, name: $branch_name})
@@ -431,7 +412,6 @@ CYPHER_QUERIES = {
         MERGE (r)-[:HAS_BRANCH]->(b)
         RETURN b
     """,
-    
     # -------------------------------------------------------------------------
     # Module Operations
     # -------------------------------------------------------------------------
@@ -460,7 +440,6 @@ CYPHER_QUERIES = {
         }
         RETURN m
     """,
-    
     # -------------------------------------------------------------------------
     # File Operations
     # -------------------------------------------------------------------------
@@ -487,15 +466,13 @@ CYPHER_QUERIES = {
         )
         RETURN f
     """,
-    
-    
     # -------------------------------------------------------------------------
     # Import Operations
     # -------------------------------------------------------------------------
     "create_import": """
         MATCH (f:File {id: $file_id})
         MERGE (i:Import {file_id: $file_id, module: $module, line_start: $line_start})
-        ON CREATE SET 
+        ON CREATE SET
             i.alias = $alias,
             i.line_end = $line_end,
             i.is_from_import = $is_from_import,
@@ -503,7 +480,6 @@ CYPHER_QUERIES = {
         MERGE (f)-[:HAS_IMPORT]->(i)
         RETURN i
     """,
-    
     # -------------------------------------------------------------------------
     # Class Operations
     # -------------------------------------------------------------------------
@@ -522,7 +498,6 @@ CYPHER_QUERIES = {
         MERGE (f)-[:DEFINES]->(c)
         RETURN c
     """,
-    
     "create_method": """
         MATCH (c:Class {id: $class_id})
         MERGE (m:Method {class_id: $class_id, name: $name, line_start: $line_start})
@@ -543,11 +518,10 @@ CYPHER_QUERIES = {
         MERGE (c)-[:HAS_METHOD]->(m)
         RETURN m
     """,
-    
     "create_attribute": """
         MATCH (c:Class {id: $class_id})
         MERGE (a:Attribute {class_id: $class_id, name: $name})
-        ON CREATE SET 
+        ON CREATE SET
             a.line_start = $line_start,
             a.line_end = $line_end,
             a.type_annotation = $type_annotation,
@@ -556,7 +530,6 @@ CYPHER_QUERIES = {
         MERGE (c)-[:HAS_ATTRIBUTE]->(a)
         RETURN a
     """,
-    
     # -------------------------------------------------------------------------
     # Function & Variable Operations
     # -------------------------------------------------------------------------
@@ -576,11 +549,10 @@ CYPHER_QUERIES = {
         MERGE (f)-[:DEFINES]->(fn)
         RETURN fn
     """,
-    
     "create_variable": """
         MATCH (f:File {id: $file_id})
         MERGE (v:Variable {file_id: $file_id, name: $name, line_start: $line_start})
-        ON CREATE SET 
+        ON CREATE SET
             v.id = $variable_id,
             v.line_end = $line_end,
             v.type_annotation = $type_annotation,
@@ -589,7 +561,6 @@ CYPHER_QUERIES = {
         MERGE (f)-[:DEFINES]->(v)
         RETURN v
     """,
-    
     # -------------------------------------------------------------------------
     # Relationship Operations
     # -------------------------------------------------------------------------
@@ -604,7 +575,6 @@ CYPHER_QUERIES = {
             r.is_resolved = true
         RETURN r
     """,
-
     "create_call_relationship_unresolved": """
         MATCH (caller) WHERE caller.id = $caller_id
         MERGE (u:UnresolvedSymbol {name: $callee_name, caller_id: $caller_id, line: $line_number})
@@ -616,7 +586,6 @@ CYPHER_QUERIES = {
             r.is_resolved = false
         RETURN r
     """,
-    
     "create_inheritance": """
         MATCH (child:Class {id: $child_id})
         MATCH (parent:Class {name: $parent_name})
@@ -624,7 +593,6 @@ CYPHER_QUERIES = {
            OR parent.repo_id = $repo_id
         MERGE (child)-[:INHERITS]->(parent)
     """,
-    
     # -------------------------------------------------------------------------
     # Query Operations
     # -------------------------------------------------------------------------
@@ -648,7 +616,6 @@ CYPHER_QUERIES = {
                    file: caller_file.path
                }) AS callers
     """,
-    
     "find_function_definition": """
         MATCH (m)
         WHERE (m:Function OR m:Class) AND m.name = $name
@@ -663,13 +630,12 @@ CYPHER_QUERIES = {
                m.cyclomatic_complexity as complexity,
                coalesce(m.source_code, m.source) as source_code,
                coalesce(f.path, f2.path) as file_path,
-               coalesce(f.relative_path, f2.relative_path) as relative_path,
+               coalesce(f.path, f2.path) as relative_path,
                cls.name as class_name,
                labels(m)[0] as symbol_type
         ORDER BY coalesce(f.path, f2.path)
         LIMIT 5
     """,
-
     "find_callers": """
         MATCH (m {name: $name})
         WHERE m:Function OR m:Class
@@ -681,8 +647,6 @@ CYPHER_QUERIES = {
                caller.source_code as source_code
         ORDER BY f.path, c.line_number
     """,
-
-    
     "get_class_hierarchy": """
         MATCH (c:Class {name: $class_name})
         WHERE $repo_id IS NULL OR c.repo = $repo_id
@@ -714,7 +678,6 @@ CYPHER_QUERIES = {
                    docstring: descendant.docstring
                }) as descendants
     """,
-    
     "get_repo_overview": """
         MATCH (r:Repository {id: $repo_id})
         OPTIONAL MATCH (r)-[:CONTAINS*]->(f:File)
@@ -726,7 +689,6 @@ CYPHER_QUERIES = {
                count(DISTINCT fn) as function_count,
                collect(DISTINCT f.language) as languages
     """,
-
     "get_module_tree": """
         MATCH (r:Repository {id: $repo_id})
         OPTIONAL MATCH path = (r)-[:CONTAINS*]->(m:Module)
@@ -739,7 +701,6 @@ CYPHER_QUERIES = {
                depth
         ORDER BY depth, m.path
     """,
-
     "get_file_hierarchy": """
         MATCH (f:File {id: $file_id})
         MATCH path = (r:Repository)-[:CONTAINS*]->(f)
@@ -760,7 +721,6 @@ CYPHER_QUERIES = {
                idx as depth
         ORDER BY idx
     """,
-
     "get_directory_contents": """
         MATCH (m:Module {repo_id: $repo_id, path: $dir_path})
         OPTIONAL MATCH (m)-[:CONTAINS]->(child)
@@ -777,7 +737,6 @@ CYPHER_QUERIES = {
                END as is_package
         ORDER BY type DESC, name
     """,
-
     "search_code": """
         CALL db.index.fulltext.queryNodes('code_search', $search_term)
         YIELD node, score
@@ -789,11 +748,12 @@ CYPHER_QUERIES = {
             node.name as name,
             coalesce(f.path, node.path) as path,
             coalesce(node.line_number, 0) as line_number,
+            coalesce(node.source_code, node.source) as source_code,
+            node.docstring as docstring,
             score
         ORDER BY score DESC
         LIMIT 20
     """,
-
     "analyze_change_impact": """
         MATCH (target {id: $target_id})
         MATCH path = (caller)-[:CALLS*1..3]->(target)
@@ -803,7 +763,6 @@ CYPHER_QUERIES = {
                f.path as file, distance
         ORDER BY distance, f.path
     """,
-
     # -------------------------------------------------------------------------
     # Config File Operations
     # -------------------------------------------------------------------------
@@ -831,7 +790,6 @@ CYPHER_QUERIES = {
         MERGE (r)-[:HAS_CONFIG]->(cf)
         RETURN cf.id as config_id
     """,
-    
     "create_dependency": """
         MATCH (cf:ConfigFile {id: $config_id})
         MERGE (d:Dependency {config_id: $config_id, name: $name})
@@ -851,7 +809,6 @@ CYPHER_QUERIES = {
         MERGE (cf)-[:HAS_DEPENDENCY]->(d)
         RETURN d.id as dep_id
     """,
-    
     "create_script": """
         MATCH (cf:ConfigFile {id: $config_id})
         MERGE (s:Script {config_id: $config_id, name: $name})
@@ -865,7 +822,6 @@ CYPHER_QUERIES = {
         MERGE (cf)-[:HAS_SCRIPT]->(s)
         RETURN s.id as script_id
     """,
-    
     # -------------------------------------------------------------------------
     # Batch Operations (Performance Optimization)
     # -------------------------------------------------------------------------
@@ -909,7 +865,6 @@ CYPHER_QUERIES = {
 
         RETURN c.id as class_id
     """,
-
     "batch_create_methods": """
         UNWIND $methods as m
         MATCH (c:Class {id: $class_id})
@@ -955,7 +910,6 @@ CYPHER_QUERIES = {
 
         RETURN method.id as method_id
     """,
-
     "batch_create_functions": """
         UNWIND $functions as fn
         MATCH (f:File {id: $file_id})
@@ -997,12 +951,11 @@ CYPHER_QUERIES = {
 
         RETURN func.id as function_id
     """,
-
     "batch_create_imports": """
         UNWIND $imports as imp
         MATCH (f:File {id: $file_id})
         MERGE (i:Import {file_id: $file_id, module: imp.module, line_start: imp.line_start})
-        ON CREATE SET 
+        ON CREATE SET
             i.alias = imp.alias,
             i.line_end = imp.line_end,
             i.is_from_import = imp.is_from_import,
@@ -1010,12 +963,11 @@ CYPHER_QUERIES = {
         MERGE (f)-[:HAS_IMPORT]->(i)
         RETURN i.module as module
     """,
-
     "batch_create_variables": """
         UNWIND $variables as v
         MATCH (f:File {id: $file_id})
         MERGE (var:Variable {file_id: $file_id, name: v.name, line_start: v.line_start})
-        ON CREATE SET 
+        ON CREATE SET
             var.id = v.variable_id,
             var.line_end = v.line_end,
             var.type_annotation = v.type_annotation,
@@ -1024,7 +976,6 @@ CYPHER_QUERIES = {
         MERGE (f)-[:DEFINES]->(var)
         RETURN var.id as variable_id
     """,
-
     "batch_create_call_relationships": """
         UNWIND $calls as call
         MATCH (caller) WHERE caller.id = call.caller_id
@@ -1063,7 +1014,6 @@ CYPHER_QUERIES = {
         )
         RETURN call.callee_name as callee
     """,
-
     "batch_create_inheritance": """
         UNWIND $relationships as rel
         MATCH (child:Class {id: rel.child_id})

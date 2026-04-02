@@ -1,13 +1,13 @@
-
 import logging
-from fastapi import APIRouter, HTTPException, Query, Depends, Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict
 
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
+
+from api.dependencies import get_current_user, get_neo4j_client
+from api.services.firebase_service import firebase_service
 from db.client import Neo4jClient
 from db.code_serarch_layer import CodeSearchService
 from db.schema import CodeGraphSchema
-from api.dependencies import get_neo4j_client, get_current_user
-from api.services.firebase_service import firebase_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -22,7 +22,10 @@ def _cleanup_firestore_repo(uid: str, owner: str, repo_name: str) -> None:
     except Exception as exc:
         logger.warning(
             "Failed to delete Firestore repo metadata (uid=%s owner=%s repo=%s): %s",
-            uid, owner, repo_name, exc,
+            uid,
+            owner,
+            repo_name,
+            exc,
             exc_info=True,
         )
 
@@ -61,7 +64,7 @@ async def list_repositories(
 @router.get("/getAllRepositories")
 async def get_all_repositories(
     userName: str = Query(..., description="Username to filter repositories (legacy parameter)"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get all repositories (legacy endpoint for frontend compatibility).
@@ -69,19 +72,20 @@ async def get_all_repositories(
     """
     try:
         repositories = query_service.list_repositories()
-        
+
         # Filter by username if provided and repositories have owner field
         if userName:
             filtered_repos = [
-                repo for repo in repositories 
-                if repo.get('owner') and repo['owner'].lower() == userName.lower()
+                repo
+                for repo in repositories
+                if repo.get("owner") and repo["owner"].lower() == userName.lower()
             ]
             repositories = filtered_repos
-        
+
         return {
             "repositories": repositories,
             "total": len(repositories),
-            "filtered_by_user": userName if userName else None
+            "filtered_by_user": userName if userName else None,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get repositories: {str(e)}")
@@ -91,28 +95,24 @@ async def get_all_repositories(
 async def get_repository(
     username: str = Path(..., description="Repository owner/username"),
     repo_name: str = Path(..., description="Repository name"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get repository details by username and repository name.
     """
     try:
         repo_id = f"{username}/{repo_name}"
-        
+
         # Get repository overview
         overview = query_service.get_repo_overview(repo_id)
         if not overview:
             raise HTTPException(status_code=404, detail="Repository not found")
-        
+
         # Get additional metadata
         repositories = query_service.list_repositories()
-        repo_metadata = next((r for r in repositories if r['id'] == repo_id), None)
-        
-        return {
-            **overview,
-            "metadata": repo_metadata,
-            "repository_id": repo_id
-        }
+        repo_metadata = next((r for r in repositories if r["id"] == repo_id), None)
+
+        return {**overview, "metadata": repo_metadata, "repository_id": repo_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -122,7 +122,7 @@ async def get_repository(
 @router.get("/{repo_id}")
 async def get_repository_by_id(
     repo_id: str = Path(..., description="Repository ID"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get repository details by repository ID.
@@ -131,16 +131,12 @@ async def get_repository_by_id(
         overview = query_service.get_repo_overview(repo_id)
         if not overview:
             raise HTTPException(status_code=404, detail="Repository not found")
-        
+
         # Get additional metadata
         repositories = query_service.list_repositories()
-        repo_metadata = next((r for r in repositories if r['id'] == repo_id), None)
-        
-        return {
-            **overview,
-            "metadata": repo_metadata,
-            "repository_id": repo_id
-        }
+        repo_metadata = next((r for r in repositories if r["id"] == repo_id), None)
+
+        return {**overview, "metadata": repo_metadata, "repository_id": repo_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -169,7 +165,10 @@ async def delete_repository_by_name(
         _cleanup_firestore_repo(uid, username, repo_name)
 
         if deleted:
-            return {"message": f"Repository {repo_id} deleted successfully", "deleted_repository_id": repo_id}
+            return {
+                "message": f"Repository {repo_id} deleted successfully",
+                "deleted_repository_id": repo_id,
+            }
 
         raise HTTPException(status_code=404, detail="Repository not found in graph database")
 
@@ -210,7 +209,10 @@ async def delete_repository(
         _cleanup_firestore_repo(uid, owner, repo_name)
 
         if deleted:
-            return {"message": f"Repository {repo_id} deleted successfully", "deleted_repository_id": repo_id}
+            return {
+                "message": f"Repository {repo_id} deleted successfully",
+                "deleted_repository_id": repo_id,
+            }
 
         raise HTTPException(status_code=404, detail="Repository not found in graph database")
 
@@ -224,7 +226,7 @@ async def delete_repository(
 async def get_repository_stats(
     username: str = Path(..., description="Repository owner/username"),
     repo_name: str = Path(..., description="Repository name"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get repository statistics by username and repo name.
@@ -232,14 +234,11 @@ async def get_repository_stats(
     try:
         repo_id = f"{username}/{repo_name}"
         stats = query_service.get_repository_stats(repo_id)
-        
+
         if not stats:
             raise HTTPException(status_code=404, detail="Repository not found")
-        
-        return {
-            "repository_id": repo_id,
-            "statistics": stats
-        }
+
+        return {"repository_id": repo_id, "statistics": stats}
     except HTTPException:
         raise
     except Exception as e:
@@ -249,21 +248,18 @@ async def get_repository_stats(
 @router.get("/{repo_id}/stats")
 async def get_repository_stats_by_id(
     repo_id: str = Path(..., description="Repository ID"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get repository statistics by repository ID.
     """
     try:
         stats = query_service.get_repository_stats(repo_id)
-        
+
         if not stats:
             raise HTTPException(status_code=404, detail="Repository not found")
-        
-        return {
-            "repository_id": repo_id,
-            "statistics": stats
-        }
+
+        return {"repository_id": repo_id, "statistics": stats}
     except HTTPException:
         raise
     except Exception as e:
@@ -275,7 +271,7 @@ async def list_repository_files_by_name(
     username: str = Path(..., description="Repository owner/username"),
     repo_name: str = Path(..., description="Repository name"),
     path: str = Query(None, description="Optional path filter"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     List files in a repository by username and repo name.
@@ -283,21 +279,15 @@ async def list_repository_files_by_name(
     try:
         repo_id = f"{username}/{repo_name}"
         files = query_service.get_repository_files(repo_id)
-        
+
         # Filter by path if provided
         if path:
             filtered_files = [
-                file_info for file_info in files 
-                if file_info.get('path', '').startswith(path)
+                file_info for file_info in files if file_info.get("path", "").startswith(path)
             ]
             files = filtered_files
-        
-        return {
-            "repository_id": repo_id,
-            "files": files,
-            "total": len(files),
-            "path_filter": path
-        }
+
+        return {"repository_id": repo_id, "files": files, "total": len(files), "path_filter": path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list repository files: {str(e)}")
 
@@ -306,28 +296,22 @@ async def list_repository_files_by_name(
 async def list_repository_files_by_id(
     repo_id: str = Path(..., description="Repository ID"),
     path: str = Query(None, description="Optional path filter"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     List files in a repository by repository ID.
     """
     try:
         files = query_service.get_repository_files(repo_id)
-        
+
         # Filter by path if provided
         if path:
             filtered_files = [
-                file_info for file_info in files 
-                if file_info.get('path', '').startswith(path)
+                file_info for file_info in files if file_info.get("path", "").startswith(path)
             ]
             files = filtered_files
-        
-        return {
-            "repository_id": repo_id,
-            "files": files,
-            "total": len(files),
-            "path_filter": path
-        }
+
+        return {"repository_id": repo_id, "files": files, "total": len(files), "path_filter": path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list repository files: {str(e)}")
 
@@ -337,33 +321,33 @@ async def get_file_content_by_name(
     username: str = Path(..., description="Repository owner/username"),
     repo_name: str = Path(..., description="Repository name"),
     path: str = Query(..., description="File path to get content for"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get file content by username, repo name, and file path.
     """
     try:
         repo_id = f"{username}/{repo_name}"
-        
+
         # Find the file by path
         files = query_service.get_repository_files(repo_id)
-        target_file = next((f for f in files if f['path'] == path), None)
-        
+        target_file = next((f for f in files if f["path"] == path), None)
+
         if not target_file:
             raise HTTPException(status_code=404, detail=f"File not found: {path}")
-        
+
         # Reconstruct file content
-        content = query_service.reconstruct_file(target_file['id'])
-        
+        content = query_service.reconstruct_file(target_file["id"])
+
         if content is None:
             raise HTTPException(status_code=404, detail=f"File content not available: {path}")
-        
+
         return {
             "repository_id": repo_id,
             "file_path": path,
-            "file_id": target_file['id'],
+            "file_id": target_file["id"],
             "content": content,
-            "metadata": target_file
+            "metadata": target_file,
         }
     except HTTPException:
         raise
@@ -375,7 +359,7 @@ async def get_file_content_by_name(
 async def reconstruct_file_content(
     repo_id: str = Path(..., description="Repository ID"),
     file_path: str = Path(..., description="File path to reconstruct"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Reconstruct file content by repository ID and file path.
@@ -383,24 +367,24 @@ async def reconstruct_file_content(
     try:
         # Find the file by path
         files = query_service.get_repository_files(repo_id)
-        target_file = next((f for f in files if f['path'] == file_path), None)
-        
+        target_file = next((f for f in files if f["path"] == file_path), None)
+
         if not target_file:
             raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-        
+
         # Reconstruct file content
-        content = query_service.reconstruct_file(target_file['id'])
-        
+        content = query_service.reconstruct_file(target_file["id"])
+
         if content is None:
             raise HTTPException(status_code=404, detail=f"File content not available: {file_path}")
-        
+
         return {
             "repository_id": repo_id,
             "file_path": file_path,
-            "file_id": target_file['id'],
+            "file_id": target_file["id"],
             "content": content,
             "metadata": target_file,
-            "reconstructed": True
+            "reconstructed": True,
         }
     except HTTPException:
         raise
@@ -411,7 +395,7 @@ async def reconstruct_file_content(
 @router.post("/{repo_id}/update")
 async def update_repository(
     repo_id: str = Path(..., description="Repository ID to update"),
-    schema_service: CodeGraphSchema = Depends(get_schema_service)
+    schema_service: CodeGraphSchema = Depends(get_schema_service),
 ) -> Dict[str, Any]:
     """
     Update a repository by re-ingesting it.
@@ -422,7 +406,7 @@ async def update_repository(
         return {
             "message": f"Repository update functionality for {repo_id} needs to be implemented",
             "repository_id": repo_id,
-            "note": "This endpoint should trigger re-ingestion of the repository"
+            "note": "This endpoint should trigger re-ingestion of the repository",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update repository: {str(e)}")
@@ -431,7 +415,7 @@ async def update_repository(
 @router.get("/{repo_id}/verify")
 async def verify_repository_reconstruction(
     repo_id: str = Path(..., description="Repository ID to verify"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Verify that all files in a repository can be reconstructed.
@@ -446,36 +430,32 @@ async def verify_repository_reconstruction(
 @router.get("/{repo_id}/dependencies")
 async def get_repository_dependencies(
     repo_id: str = Path(..., description="Repository ID"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get repository dependencies.
     """
     try:
         dependencies = query_service.get_repo_dependencies(repo_id)
-        return {
-            "repository_id": repo_id,
-            "dependencies": dependencies,
-            "total": len(dependencies)
-        }
+        return {"repository_id": repo_id, "dependencies": dependencies, "total": len(dependencies)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get repository dependencies: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get repository dependencies: {str(e)}"
+        )
 
 
 @router.get("/{repo_id}/config-files")
 async def get_repository_config_files(
     repo_id: str = Path(..., description="Repository ID"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get repository configuration files.
     """
     try:
         config_files = query_service.get_repo_config_files(repo_id)
-        return {
-            "repository_id": repo_id,
-            "config_files": config_files,
-            "total": len(config_files)
-        }
+        return {"repository_id": repo_id, "config_files": config_files, "total": len(config_files)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get repository config files: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get repository config files: {str(e)}"
+        )

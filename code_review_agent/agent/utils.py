@@ -2,8 +2,8 @@
 
 import os
 
-from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
+from langchain_openai import ChatOpenAI
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -22,4 +22,23 @@ def load_chat_model(model: str, timeout: int = 180) -> BaseChatModel:
         api_key=os.getenv("OPENROUTER_API_KEY"),
         base_url=OPENROUTER_BASE_URL,
         timeout=timeout,
+        extra_body={"include_reasoning": False},
     )
+
+
+def load_structured_chat_model(
+    model: str, response_schema: type, timeout: int = 180
+) -> BaseChatModel:
+    """Load a chat model via OpenRouter with structured output enforcement.
+
+    Uses OpenAI's response_format parameter to enforce JSON schema output.
+    This guarantees the model returns valid JSON matching the schema.
+    """
+    llm = ChatOpenAI(
+        model=model,
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+        base_url=OPENROUTER_BASE_URL,
+        timeout=timeout,
+        extra_body={"include_reasoning": False},
+    )
+    return llm.with_structured_output(response_schema)

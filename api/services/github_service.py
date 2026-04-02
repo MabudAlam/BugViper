@@ -1,7 +1,6 @@
-
 import logging
 
-from github import Github, Auth, GithubException
+from github import Auth, Github, GithubException
 
 logger = logging.getLogger(__name__)
 

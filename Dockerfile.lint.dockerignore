@@ -1,0 +1,15 @@
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.git
+.env
+*.log
+frontend/
+api/
+db/
+ingestion_service/
+code_review_agent/
+common/
+docs/
+logs/
+output/

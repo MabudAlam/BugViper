@@ -144,7 +144,7 @@ class GitHubClient:
         """Create a short-lived GitHub App JWT (valid 9 minutes)."""
         now = int(time.time())
         payload = {
-            "iat": now - 60,   # 60 s in the past to tolerate clock skew
+            "iat": now - 60,  # 60 s in the past to tolerate clock skew
             "exp": now + 540,  # 9 minutes (GitHub max is 10)
             "iss": str(self._app_id),
         }
@@ -297,6 +297,7 @@ class GitHubClient:
 
         if clone_dir.exists():
             import shutil
+
             shutil.rmtree(clone_dir)
         clone_dir.parent.mkdir(parents=True, exist_ok=True)
 
@@ -355,9 +356,7 @@ class GitHubClient:
     async def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Build a unified diff string, paginating through all changed files."""
         token = await self._get_token(owner, repo)
-        files = await self._get_paginated(
-            token, f"/repos/{owner}/{repo}/pulls/{pr_number}/files"
-        )
+        files = await self._get_paginated(token, f"/repos/{owner}/{repo}/pulls/{pr_number}/files")
         parts: List[str] = []
         for f in files:
             if f.get("patch"):
@@ -369,9 +368,7 @@ class GitHubClient:
 
     async def get_pr_files(self, owner: str, repo: str, pr_number: int) -> List[Dict[str, Any]]:
         token = await self._get_token(owner, repo)
-        files = await self._get_paginated(
-            token, f"/repos/{owner}/{repo}/pulls/{pr_number}/files"
-        )
+        files = await self._get_paginated(token, f"/repos/{owner}/{repo}/pulls/{pr_number}/files")
         return [
             {
                 "filename": f["filename"],
@@ -432,6 +429,31 @@ class GitHubClient:
             json={"commit_id": commit_sha, "body": body, "event": event},
         )
         r.raise_for_status()
+
+    async def has_open_pr_for_branch(self, owner: str, repo: str, branch: str) -> bool:
+        """Return True if there is at least one open PR whose head branch matches *branch*.
+
+        Uses GET /repos/{owner}/{repo}/pulls?state=open&head={owner}:{branch}
+        A push to a branch with an open PR should be handled by the PR review
+        flow — not by the graph ingestion pipeline.
+        """
+        token = await self._get_token(owner, repo)
+        r = await self._http.get(
+            f"/repos/{owner}/{repo}/pulls",
+            headers=self._auth_headers(token),
+            params={"state": "open", "head": f"{owner}:{branch}", "per_page": 1},
+        )
+        if r.status_code != 200:
+            # If we can't determine, default to False (allow ingestion to proceed)
+            logger.warning(
+                "has_open_pr_for_branch: GitHub returned %s for %s/%s branch=%s",
+                r.status_code,
+                owner,
+                repo,
+                branch,
+            )
+            return False
+        return len(r.json()) > 0
 
     async def post_inline_comment(
         self,

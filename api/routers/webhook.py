@@ -1,28 +1,18 @@
-import hashlib
-import hmac
 import json
 import logging
-import os
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Request
 
 from api.services.cloud_tasks_service import CloudTasksService
-from api.services.review_service import execute_pr_review
+from api.services.review_service import review_pipeline
+from common.github_client import get_github_client
 from common.job_models import IncrementalPRPayload, IncrementalPushPayload, PRReviewPayload
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 cloud_tasks = CloudTasksService()
-
-
-def _verify_github_signature(secret: str, body: bytes, sig_header: str) -> bool:
-    """Return True if the X-Hub-Signature-256 header matches the HMAC-SHA256 of the body."""
-    if not sig_header.startswith("sha256="):
-        return False
-    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(f"sha256={expected}", sig_header)
 
 
 @router.post("/onComment")
@@ -49,9 +39,12 @@ async def on_comment(request: Request, background_tasks: BackgroundTasks):
     return {"status": "ignored", "reason": f"unhandled event '{event_type}'"}
 
 
-
 async def _handle_push(payload: dict, background_tasks: BackgroundTasks) -> dict:
-    """Ingest changed files when code is pushed directly to a branch."""
+    """Ingest changed files when code is pushed directly to a branch.
+
+    If the pushed branch has an open PR, ingestion is skipped — the PR review
+    flow handles those pushes (triggered by an @bugviper mention on the PR).
+    """
     repo_info = payload.get("repository", {})
     owner = repo_info.get("owner", {}).get("login") or repo_info.get("owner", {}).get("name", "")
     repo_name = repo_info.get("name", "")
@@ -65,20 +58,43 @@ async def _handle_push(payload: dict, background_tasks: BackgroundTasks) -> dict
     if before_sha == "0000000000000000000000000000000000000000":
         return {"status": "ignored", "reason": "new branch creation — use full ingestion"}
 
+    # Extract branch name from ref (e.g. "refs/heads/pr-2" → "pr-2")
+    branch = ref.removeprefix("refs/heads/")
+
     logger.info("Push: %s/%s %s (%s..%s)", owner, repo_name, ref, before_sha[:7], after_sha[:7])
+
+    # If there's an open PR for this branch, skip graph ingestion.
+    # The PR review pipeline owns those pushes — re-ingesting mid-PR would
+    # corrupt the graph with an unmerged intermediate state.
+    gh = get_github_client()
+    if await gh.has_open_pr_for_branch(owner, repo_name, branch):
+        logger.info(
+            "Push to %s/%s branch '%s' has an open PR — skipping ingestion",
+            owner,
+            repo_name,
+            branch,
+        )
+        return {
+            "status": "ignored",
+            "reason": f"branch '{branch}' has an open PR — ingestion skipped",
+        }
 
     job_id = f"inc-push-{uuid.uuid4().hex[:12]}"
 
     if cloud_tasks.is_enabled:
         task_payload = IncrementalPushPayload(
-            job_id=job_id, owner=owner, repo_name=repo_name,
-            before_sha=before_sha, after_sha=after_sha,
+            job_id=job_id,
+            owner=owner,
+            repo_name=repo_name,
+            before_sha=before_sha,
+            after_sha=after_sha,
         )
         cloud_tasks.dispatch_incremental_push(task_payload)
     else:
         # Local dev only — ingestion_service code is not present in the Cloud Run image
         from db.client import get_neo4j_client
         from ingestion_service.core.incremental_updater import ingest_direct_push
+
         background_tasks.add_task(
             ingest_direct_push, owner, repo_name, before_sha, after_sha, get_neo4j_client()
         )
@@ -113,16 +129,18 @@ async def _handle_pr_merged(payload: dict, background_tasks: BackgroundTasks) ->
 
     if cloud_tasks.is_enabled:
         task_payload = IncrementalPRPayload(
-            job_id=job_id, owner=owner, repo_name=repo_name, pr_number=pr_number,
+            job_id=job_id,
+            owner=owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
         )
         cloud_tasks.dispatch_incremental_pr(task_payload)
     else:
         # Local dev only — ingestion_service code is not present in the Cloud Run image
         from db.client import get_neo4j_client
         from ingestion_service.core.incremental_updater import ingest_merged_pr
-        background_tasks.add_task(
-            ingest_merged_pr, owner, repo_name, pr_number, get_neo4j_client()
-        )
+
+        background_tasks.add_task(ingest_merged_pr, owner, repo_name, pr_number, get_neo4j_client())
 
     return {
         "status": "processing",
@@ -152,12 +170,32 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
 
     logger.info("Review triggered: %s/%s#%s", owner, repo_name, pr_number)
 
+    from api.services.firebase_service import firebase_service
+    from common.firebase_models import PrReviewStatus
+
+    uid = firebase_service.find_project_owner_id(owner)
+    if uid:
+        pr_meta = firebase_service.get_pr_metadata(uid, owner, repo_name, pr_number)
+        if pr_meta and pr_meta.get("reviewStatus") == PrReviewStatus.RUNNING.value:
+            logger.info(
+                "Skipping review for %s/%s#%s — already running", owner, repo_name, pr_number
+            )
+            gh = get_github_client()
+            await gh.post_comment(
+                owner,
+                repo_name,
+                pr_number,
+                "⏳ **BugViper is already reviewing this PR.** "
+                "Please wait until the current review completes before requesting another one!",
+            )
+            return {"status": "ignored", "reason": "review already running"}
+
     if cloud_tasks.review_is_enabled:
         review_payload = PRReviewPayload(owner=owner, repo=repo_name, pr_number=pr_number)
         cloud_tasks.dispatch_pr_review(review_payload)
     else:
         # Local dev fallback — runs in-process after response is sent
-        background_tasks.add_task(execute_pr_review, owner, repo_name, pr_number)
+        background_tasks.add_task(review_pipeline, owner, repo_name, pr_number)
 
     return {"status": "processing", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
 
@@ -187,18 +225,6 @@ async def on_marketplace(request: Request):
                        pending_change, pending_change_cancelled.
     """
     body = await request.body()
-
-    # ── Signature verification ───────────────────────────────────────────────
-    secret = os.getenv("GITHUB_MARKETPLACE_WEBHOOK_SECRET", "")
-    if secret:
-        sig_header = request.headers.get("X-Hub-Signature-256", "")
-        if not _verify_github_signature(secret, body, sig_header):
-            logger.warning("Marketplace webhook: invalid signature")
-            return Response(
-                content=json.dumps({"detail": "Invalid signature"}),
-                status_code=401,
-                media_type="application/json",
-            )
 
     # ── Parse payload (JSON or form-encoded) ────────────────────────────────
     content_type = request.headers.get("content-type", "")

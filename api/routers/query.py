@@ -2,14 +2,15 @@
 Code query endpoints - Advanced implementation with Neo4j integration.
 """
 
-from fastapi import APIRouter, HTTPException, Query, Depends
-from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List
 
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+
+from api.dependencies import get_neo4j_client
+from api.models.semantic import SemanticHit, SemanticInput, SemanticSearchResponse
 from db.client import Neo4jClient
 from db.code_serarch_layer import CodeSearchService
-from api.dependencies import get_neo4j_client
-from api.models.semantic import SemanticInput, SemanticHit, SemanticSearchResponse
 
 router = APIRouter()
 
@@ -25,7 +26,7 @@ async def search_code(
     limit: int = Query(30, description="Maximum results to return"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Unified code search.
@@ -60,7 +61,7 @@ async def find_method_usages(
     method_name: str = Query(..., description="Name of the method to find usages for"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find all usages of a specific method.
@@ -78,7 +79,7 @@ async def find_callers(
     symbol_name: str = Query(..., description="Symbol name to find callers for"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find all methods/functions that call a specific symbol.
@@ -95,7 +96,7 @@ async def get_class_hierarchy(
     class_name: str = Query(..., description="Name of the class to analyze"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get class hierarchy (inheritance tree).
@@ -113,7 +114,7 @@ async def analyze_change_impact(
     symbol_name: str = Query(..., description="Symbol to analyze impact for"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Analyze the impact of changing a specific symbol.
@@ -130,7 +131,11 @@ async def analyze_change_impact(
             "usages": usages,
             "callers": callers_list,
             "definitions": callers_result.get("definitions", []),
-            "impact_level": "high" if len(callers_list) > 5 else "medium" if len(callers_list) > 0 else "low",
+            "impact_level": "high"
+            if len(callers_list) > 5
+            else "medium"
+            if len(callers_list) > 0
+            else "low",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to analyze change impact: {str(e)}")
@@ -139,7 +144,7 @@ async def analyze_change_impact(
 @router.get("/metrics")
 async def get_code_metrics(
     repo_id: str = Query(None, description="Repository ID for repo-specific metrics"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get code metrics and statistics.
@@ -148,23 +153,18 @@ async def get_code_metrics(
         if repo_id:
             # Get repository-specific stats
             stats = query_service.get_repository_stats(repo_id)
-            return {
-                "repository_id": repo_id,
-                "metrics": stats
-            }
+            return {"repository_id": repo_id, "metrics": stats}
         else:
             # Get global graph stats
             stats = query_service.get_graph_stats()
-            return {
-                "global_metrics": stats
-            }
+            return {"global_metrics": stats}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get code metrics: {str(e)}")
 
 
 @router.get("/stats")
 async def get_graph_stats(
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get overall graph statistics.
@@ -180,13 +180,14 @@ async def get_graph_stats(
 # CodeFinder Tool Integration Endpoints
 # =========================================================================
 
+
 @router.get("/code-finder/function")
 async def find_function_by_name(
     name: str = Query(..., description="Function name to search for"),
     fuzzy: bool = Query(False, description="Enable fuzzy search"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find functions by name using the CodeFinder tool.
@@ -198,7 +199,7 @@ async def find_function_by_name(
             "function_name": name,
             "fuzzy_search": fuzzy,
             "results": results,
-            "total": len(results)
+            "total": len(results),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Function search failed: {str(e)}")
@@ -210,7 +211,7 @@ async def find_class_by_name(
     fuzzy: bool = Query(False, description="Enable fuzzy search"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find classes by name using the CodeFinder tool.
@@ -222,7 +223,7 @@ async def find_class_by_name(
             "class_name": name,
             "fuzzy_search": fuzzy,
             "results": results,
-            "total": len(results)
+            "total": len(results),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Class search failed: {str(e)}")
@@ -233,7 +234,7 @@ async def find_variable_by_name(
     name: str = Query(..., description="Variable name to search for"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find variables by name using the CodeFinder tool.
@@ -241,11 +242,7 @@ async def find_variable_by_name(
     repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
         results = query_service.find_by_variable_name(name, repo_id=repo_id)
-        return {
-            "variable_name": name,
-            "results": results,
-            "total": len(results)
-        }
+        return {"variable_name": name, "results": results, "total": len(results)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Variable search failed: {str(e)}")
 
@@ -255,7 +252,7 @@ async def find_by_content(
     query: str = Query(..., description="Content search term"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find code by content matching using the CodeFinder tool.
@@ -263,11 +260,7 @@ async def find_by_content(
     repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
         results = query_service.find_by_content(query, repo_id=repo_id)
-        return {
-            "search_query": query,
-            "results": results,
-            "total": len(results)
-        }
+        return {"search_query": query, "results": results, "total": len(results)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Content search failed: {str(e)}")
 
@@ -275,18 +268,14 @@ async def find_by_content(
 @router.get("/code-finder/module")
 async def find_module_by_name(
     name: str = Query(..., description="Module name to search for"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find modules by name using the CodeFinder tool.
     """
     try:
         results = query_service.find_by_module_name(name)
-        return {
-            "module_name": name,
-            "results": results,
-            "total": len(results)
-        }
+        return {"module_name": name, "results": results, "total": len(results)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Module search failed: {str(e)}")
 
@@ -296,7 +285,7 @@ async def find_imports(
     name: str = Query(..., description="Import name to search for"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find import statements using the CodeFinder tool.
@@ -304,11 +293,7 @@ async def find_imports(
     repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
         results = query_service.find_imports(name, repo_id=repo_id)
-        return {
-            "import_name": name,
-            "results": results,
-            "total": len(results)
-        }
+        return {"import_name": name, "results": results, "total": len(results)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Import search failed: {str(e)}")
 
@@ -319,7 +304,7 @@ async def get_cyclomatic_complexity(
     path: str = Query(None, description="Optional file path to filter by"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get cyclomatic complexity of a function.
@@ -329,11 +314,7 @@ async def get_cyclomatic_complexity(
         result = query_service.get_cyclomatic_complexity(function_name, path, repo_id=repo_id)
         if not result:
             raise HTTPException(status_code=404, detail="Function not found")
-        return {
-            "function_name": function_name,
-            "path_filter": path,
-            "complexity": result
-        }
+        return {"function_name": function_name, "path_filter": path, "complexity": result}
     except HTTPException:
         raise
     except Exception as e:
@@ -345,7 +326,7 @@ async def find_most_complex_functions(
     limit: int = Query(10, description="Number of results to return"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find the most complex functions by cyclomatic complexity.
@@ -353,11 +334,7 @@ async def find_most_complex_functions(
     repo_id = f"{repo_owner}/{repo_name}" if repo_owner and repo_name else None
     try:
         results = query_service.find_most_complex_functions(limit, repo_id=repo_id)
-        return {
-            "limit": limit,
-            "results": results,
-            "total": len(results)
-        }
+        return {"limit": limit, "results": results, "total": len(results)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Complex function search failed: {str(e)}")
 
@@ -404,7 +381,7 @@ async def peek_file_lines(
     The anchor line is flagged with is_anchor=true.
     Use above/below to control the context window size.
     """
-    above = min(above, 200)   # hard cap — prevents fetching entire file as "context"
+    above = min(above, 200)  # hard cap — prevents fetching entire file as "context"
     below = min(below, 200)
     if line < 1:
         raise HTTPException(status_code=400, detail="line must be >= 1")
@@ -424,7 +401,7 @@ async def get_language_statistics(
     language: str = Query(None, description="Optional language filter"),
     repo_owner: str = Query(None, description="Repository owner to filter results"),
     repo_name: str = Query(None, description="Repository name to filter results"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get statistics about programming languages in the codebase.
@@ -445,7 +422,7 @@ async def get_symbols_at_lines_relative(
     file_path: str = Query(..., description="Repo-relative file path (e.g. src/main.py)"),
     start_line: int = Query(..., description="Start line number"),
     end_line: int = Query(..., description="End line number"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Find all symbols overlapping a line range using repo-relative path.
@@ -479,8 +456,7 @@ class DiffContextRequest(BaseModel):
 
 @router.post("/diff-context")
 async def get_diff_context(
-    request: DiffContextRequest,
-    query_service: CodeSearchService = Depends(get_query_service)
+    request: DiffContextRequest, query_service: CodeSearchService = Depends(get_query_service)
 ) -> Dict[str, Any]:
     """
     Build full RAG context for a code diff.
@@ -512,7 +488,7 @@ async def get_diff_context(
 async def get_file_source(
     repo_id: str = Query(..., description="Repository ID"),
     file_path: str = Query(..., description="Repo-relative file path"),
-    query_service: CodeSearchService = Depends(get_query_service)
+    query_service: CodeSearchService = Depends(get_query_service),
 ) -> Dict[str, Any]:
     """
     Get the full source code of a file from the graph.
@@ -539,6 +515,7 @@ async def semantic_search(
     No LLM involved — pure vector similarity.
     """
     import asyncio
+
     from common.embedder import embed_texts
 
     vectors: list[list[float]] = await asyncio.to_thread(embed_texts, [body.question])

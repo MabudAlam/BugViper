@@ -1,55 +1,67 @@
-from typing import Any, Literal
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class Issue(BaseModel):
     """Code review issue/finding."""
 
-    severity: Literal["critical", "high", "medium", "low"] = Field(
-        description="Issue severity level"
-    )
-    category: str = Field(description="Issue category (e.g., 'security', 'bug', 'style')")
-    title: str = Field(description="Short title of the issue")
-    file: str = Field(description="File path where issue was found")
-    line_start: int = Field(description="Starting line number")
-    line_end: int | None = Field(default=None, description="Ending line number (optional)")
-    description: str = Field(description="Detailed description of the issue")
-    suggestion: str | None = Field(default=None, description="Suggested fix (optional)")
-    impact: str | None = Field(default=None, description="Impact assessment (optional)")
-    code_snippet: str | None = Field(
-        default=None,
+    issue_type: str = Field(
+        default="Potential issue",
         description=(
-            "The exact problematic lines from the diff (2-6 lines max), "
-            "verbatim as they appear in the `+` lines. Used for inline display."
+            "Human-readable label for the kind of issue. "
+            "Examples: 'Bug', 'Security', 'Performance', 'Error Handling', 'Logic Error'."
         ),
+    )
+    category: str = Field(
+        default="bug",
+        description="Issue category: 'bug', 'security', 'performance', 'error_handling', 'style'",
+    )
+    title: str = Field(description="Short specific title naming the exact bug")
+    file: str = Field(description="File path where issue was found")
+    line_start: int = Field(description="Starting line number in the NEW file (post-change)")
+    line_end: int | None = Field(
+        default=None,
+        description="Ending line number if multi-line issue. Same as line_start if single line.",
+    )
+    description: str = Field(
+        default="",
+        description=(
+            "What the code does wrong, what input triggers it, what happens at runtime, why it matters."
+        ),
+    )
+    suggestion: str = Field(
+        default="",
+        description="One clear sentence on how to fix the issue.",
+    )
+    impact: str = Field(
+        default="",
+        description="Concrete production consequence: crash, data loss, security breach, etc.",
+    )
+    code_snippet: str = Field(
+        default="",
+        description="The exact problematic lines from the diff (3-8 lines), copied VERBATIM.",
     )
     confidence: int = Field(
         default=8,
         ge=0,
         le=10,
         description=(
-            "Self-assessed confidence 0-10. "
-            "10 = provable from diff lines alone. "
-            "7-9 = strong signal, some context assumed. "
-            "4-6 = uncertain, possible false positive. "
-            "0-3 = very speculative."
+            "Self-assessed confidence 0-9. "
+            "9 = provable from diff. 7-8 = strong signal. 5-6 = likely."
         ),
     )
-    ai_fix: str | None = Field(
-        default=None,
-        description=(
-            "Unified diff patch showing the fix. Use `-` prefix for removed lines "
-            "and `+` prefix for added lines. Keep it minimal - only the changed lines "
-            "plus 1-2 lines of context. Only populate when the fix is unambiguous."
-        ),
+    ai_fix: str = Field(
+        default="",
+        description="The CORRECTED code - the fixed version. NOT a diff, just the new code.",
+    )
+    ai_agent_prompt: str = Field(
+        default="",
+        description="Instruction for AI agent: file path, lines, what to check, what to change.",
     )
     status: Literal["new", "still_open", "fixed"] = Field(
         default="new",
-        description=(
-            "new = not seen before. "
-            "still_open = was in previous review and is still present. "
-            "fixed = was in previous review and has been addressed."
-        ),
+        description="new = not seen before. still_open = still present. fixed = addressed.",
     )
 
 
@@ -105,6 +117,13 @@ class ReviewResults(BaseModel):
     )
     error: str | None = Field(default=None, description="Error message if review failed")
     files_changed_summary: list[FileSummary] = Field(default_factory=list)
+    raw_agent_json: str = Field(default="", description="Raw JSON string from the Review Agent")
+    tool_rounds_used: int = Field(
+        default=0, description="Tool rounds used by the Explorer (Phase 1)"
+    )
+    review_agent_rounds_used: int = Field(
+        default=0, description="Tool rounds used by the Review Agent (Phase 2)"
+    )
 
 
 class ContextData(BaseModel):

@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from enum import Enum
@@ -24,7 +23,7 @@ class IngestionJobStats(BaseModel):
     total_lines: int = 0
     errors: list[str] = Field(default_factory=list)
     # Embedding fields — "skipped" means OPENROUTER_API_KEY not set
-    embedding_status: str = "skipped"   # "skipped" | "completed" | "failed"
+    embedding_status: str = "skipped"  # "skipped" | "completed" | "failed"
     nodes_embedded: int = 0
     embedding_error: Optional[str] = None
 
@@ -54,7 +53,9 @@ class IngestionTaskPayload(BaseModel):
     branch: Optional[str] = None
     clear_existing: bool = False
     pr_number: Optional[int] = None
-    uid: Optional[str] = None  # Firebase UID — used to write repo metadata to Firestore on completion  
+    uid: Optional[str] = (
+        None  # Firebase UID — used to write repo metadata to Firestore on completion
+    )
 
 
 class IncrementalPRPayload(BaseModel):

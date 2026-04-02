@@ -1,23 +1,22 @@
-
-import os
 import asyncio
+import os
 import shutil
-from pathlib import Path
-from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-from common.github_client import GitHubAuthError, GitHubClient
 from common.embedder import embed_nodes_in_neo4j
-from db import Neo4jClient, CodeGraphSchema, GraphIngestionService
-from .jobs import JobManager
+from common.github_client import GitHubAuthError, GitHubClient
 from common.job_models import JobStatus
-from .tree_sitter_router import GraphBuilder
+from db import CodeGraphSchema, GraphIngestionService, Neo4jClient
 
+from .jobs import JobManager
+from .tree_sitter_router import GraphBuilder
 
 
 @dataclass
 class IngestionStats:
     """Statistics for ingestion operations."""
+
     files_processed: int = 0
     files_skipped: int = 0
     classes_found: int = 0
@@ -25,7 +24,7 @@ class IngestionStats:
     imports_found: int = 0
     total_lines: int = 0
     errors: List[str] = None
-    embedding_status: str = "skipped"   # "skipped" | "completed" | "failed"
+    embedding_status: str = "skipped"  # "skipped" | "completed" | "failed"
     nodes_embedded: int = 0
     embedding_error: Optional[str] = None
 
@@ -44,13 +43,11 @@ class AdvancedIngestionEngine:
         self.neo4j_client = neo4j_client
         self.job_manager = JobManager()
         self.graph_builder = GraphBuilder(
-            self.neo4j_client, 
-            self.job_manager,
-            asyncio.get_event_loop()
+            self.neo4j_client, self.job_manager, asyncio.get_event_loop()
         )
         self.schema = CodeGraphSchema(neo4j_client)
         self.ingestion_service = GraphIngestionService(neo4j_client)
-        
+
         # Initialize GitHub client if credentials are available
         try:
             self.github_client = GitHubClient()
@@ -66,38 +63,34 @@ class AdvancedIngestionEngine:
         self.graph_builder.create_schema()
         print("✓ Schema ready")
 
-
-
     def get_stats(self) -> Dict[str, Any]:
         """Get ingestion statistics."""
         return {"jobs": list(self.job_manager.jobs.values())}
 
     async def ingest_github_repository(
-        self,
-        owner: str,
-        repo_name: str,
-        branch: Optional[str] = None,
-        clear_existing: bool = False
+        self, owner: str, repo_name: str, branch: Optional[str] = None, clear_existing: bool = False
     ) -> IngestionStats:
         """
         Ingest a GitHub repository (public or private) using GitHub App authentication.
-        
+
         Args:
             owner: GitHub repository owner/organization
             repo_name: Repository name
             branch: Branch to clone (optional, defaults to default branch)
             clear_existing: Whether to clear existing data before ingestion
-            
+
         Returns:
             IngestionStats with ingestion results
         """
         if not self.github_client:
-            raise ValueError("GitHub App credentials not configured. Cannot access private repositories.")
-            
+            raise ValueError(
+                "GitHub App credentials not configured. Cannot access private repositories."
+            )
+
         repo_id = f"{owner}/{repo_name}"
-        print(f"\n{'='*60}")
-        print(f"GITHUB REPOSITORY INGESTION")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("GITHUB REPOSITORY INGESTION")
+        print(f"{'=' * 60}")
         print(f"Repository: {repo_id}")
 
         # Check if we have access to the repository
@@ -108,7 +101,9 @@ class AdvancedIngestionEngine:
 
         # Get repository info
         repo_info = await self.github_client.get_repository_info(owner, repo_name)
-        print(f"Access confirmed - Repository: {repo_info['full_name']} ({'private' if repo_info['private'] else 'public'})")
+        print(
+            f"Access confirmed - Repository: {repo_info['full_name']} ({'private' if repo_info['private'] else 'public'})"
+        )
 
         # Clear existing data if requested
         if clear_existing:
@@ -119,11 +114,7 @@ class AdvancedIngestionEngine:
         # Clone the repository
         print("\nCloning repository...")
         try:
-            clone_path = await self.github_client.clone_repository(
-                owner, 
-                repo_name, 
-                branch=branch
-            )
+            clone_path = await self.github_client.clone_repository(owner, repo_name, branch=branch)
             print(f"✓ Repository cloned to: {clone_path}")
 
             # Create job for tracking
@@ -132,9 +123,9 @@ class AdvancedIngestionEngine:
                 owner=owner,
                 repo_name=repo_name,
                 repo_url=f"https://github.com/{owner}/{repo_name}",
-                clone_path=str(clone_path)
+                clone_path=str(clone_path),
             )
-            
+
             try:
                 self.job_manager.update_job_status(job_id, JobStatus.RUNNING)
 
@@ -147,18 +138,13 @@ class AdvancedIngestionEngine:
 
                 # Build the graph using the advanced system
                 result = await self.graph_builder.build_project_graph(
-                    str(clone_path),
-                    include_dependencies=False,
-                    owner=owner,
-                    repo_name=repo_name
+                    str(clone_path), include_dependencies=False, owner=owner, repo_name=repo_name
                 )
 
                 # Create user node and link to repository after graph is built
                 self.ingestion_service.create_user(owner)
                 self._link_user_to_repository(
-                    owner, repo_id,
-                    f"https://github.com/{owner}/{repo_name}",
-                    str(clone_path)
+                    owner, repo_id, f"https://github.com/{owner}/{repo_name}", str(clone_path)
                 )
 
                 # Generate and store embeddings for semantic search via OpenRouter.
@@ -197,26 +183,26 @@ class AdvancedIngestionEngine:
 
                 # Create stats
                 stats = IngestionStats(
-                    files_processed=result.get('files_processed', 0),
-                    files_skipped=result.get('files_skipped', 0),
-                    classes_found=result.get('classes_found', 0),
-                    functions_found=result.get('functions_found', 0),
-                    imports_found=result.get('imports_found', 0),
-                    total_lines=result.get('total_lines', 0),
-                    errors=result.get('errors', []),
+                    files_processed=result.get("files_processed", 0),
+                    files_skipped=result.get("files_skipped", 0),
+                    classes_found=result.get("classes_found", 0),
+                    functions_found=result.get("functions_found", 0),
+                    imports_found=result.get("imports_found", 0),
+                    total_lines=result.get("total_lines", 0),
+                    errors=result.get("errors", []),
                     embedding_status=embedding_status,
                     nodes_embedded=nodes_embedded,
                     embedding_error=embedding_error_msg,
                 )
 
-                print(f"\n✅ GitHub repository ingestion completed!")
+                print("\n✅ GitHub repository ingestion completed!")
                 print(f"Files processed: {stats.files_processed}")
                 print(f"Classes found: {stats.classes_found}")
                 print(f"Functions found: {stats.functions_found}")
 
                 return stats
 
-            except Exception as e:
+            except Exception:
                 # Clean up on error
                 if clone_path.exists():
                     shutil.rmtree(clone_path)
@@ -229,15 +215,23 @@ class AdvancedIngestionEngine:
             print(f"\n❌ GitHub ingestion failed: {str(e)}")
             return IngestionStats(errors=[str(e)])
 
-    def _link_user_to_repository(self, username: str, repo_id: str, url: str = None, local_path: str = None):
+    def _link_user_to_repository(
+        self, username: str, repo_id: str, url: str = None, local_path: str = None
+    ):
         """Link a User node to an existing Repository node created by the graph builder."""
         with self.neo4j_client.driver.session() as session:
-            session.run("""
+            session.run(
+                """
                 MATCH (u:User {username: $username})
                 MATCH (r:Repository {repo: $repo_id})
                 SET r.url = $url, r.path = $local_path
                 MERGE (u)-[:OWNS]->(r)
-            """, username=username, repo_id=repo_id, url=url, local_path=local_path)
+            """,
+                username=username,
+                repo_id=repo_id,
+                url=url,
+                local_path=local_path,
+            )
 
     def close(self):
         """Close database connections."""

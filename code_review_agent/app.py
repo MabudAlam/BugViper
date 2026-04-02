@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from dotenv import load_dotenv
 
 # Load env vars BEFORE any imports that read them (Firebase, OpenRouter, etc.)
@@ -7,7 +8,7 @@ import logging
 
 from fastapi import FastAPI
 
-from api.services.review_service import execute_pr_review
+from api.services.review_service import review_pipeline
 from common.job_models import PRReviewPayload
 
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +32,7 @@ async def handle_review_task(payload: PRReviewPayload):
     """
     logger.info("Review task received: %s/%s#%s", payload.owner, payload.repo, payload.pr_number)
     try:
-        await execute_pr_review(payload.owner, payload.repo, payload.pr_number)
+        await review_pipeline(payload.owner, payload.repo, payload.pr_number)
     except Exception:
         logger.exception(
             "Unhandled error in review task for %s/%s#%s",

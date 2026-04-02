@@ -35,6 +35,8 @@ cleanup() {
     # Kill any remaining processes
     pkill -f "uvicorn api.app:app" 2>/dev/null
     pkill -f "uvicorn ingestion_service.app:app" 2>/dev/null
+    pkill -f "uvicorn lint_service.app:app" 2>/dev/null
+    docker stop bugviper-lint 2>/dev/null
     pkill -f "next dev" 2>/dev/null
     pkill -f "ngrok http" 2>/dev/null
 
@@ -73,8 +75,39 @@ echo $INGESTION_PID >> "$PID_FILE"
 echo -e "${GREEN}✓ Ingestion Service started (PID: $INGESTION_PID)${NC}"
 echo -e "  Log file: logs/ingestion.log"
 
+# Start Lint Service (Docker)
+echo -e "\n${BLUE}[3/5] Starting Lint Service (Docker)...${NC}"
+if command -v docker &> /dev/null && docker info &> /dev/null 2>&1; then
+    # Stop any existing container
+    docker stop bugviper-lint 2>/dev/null
+    docker rm bugviper-lint 2>/dev/null
+
+    # Build the image if it doesn't exist
+    if ! docker image inspect bugviper-lint-service &>/dev/null; then
+        echo -e "  Building lint service image (first time, ~2 min)..."
+        docker build -q -t bugviper-lint-service -f Dockerfile.lint . > "$PROJECT_ROOT/logs/lint-build.log" 2>&1
+        if [ $? -ne 0 ]; then
+            echo -e "  ${YELLOW}⚠ Lint image build failed — check logs/lint-build.log${NC}"
+            LINT_AVAILABLE=false
+        else
+            LINT_AVAILABLE=true
+        fi
+    else
+        LINT_AVAILABLE=true
+    fi
+
+    if [ "$LINT_AVAILABLE" = true ]; then
+        docker run -d --name bugviper-lint -p 8090:8080 bugviper-lint-service > /dev/null 2>&1
+        echo -e "${GREEN}✓ Lint Service started (http://localhost:8090)${NC}"
+        echo -e "  ${YELLOW}Add LINT_SERVICE_URL=http://localhost:8090 to .env to enable linting${NC}"
+    fi
+else
+    echo -e "  ${YELLOW}⚠ Docker not running — lint service skipped${NC}"
+    echo -e "  ${YELLOW}  Start Docker Desktop and re-run to enable linting${NC}"
+fi
+
 # Start Frontend
-echo -e "\n${BLUE}[3/4] Starting Frontend...${NC}"
+echo -e "\n${BLUE}[4/5] Starting Frontend...${NC}"
 cd "$PROJECT_ROOT/frontend"
 npm run dev > "$PROJECT_ROOT/logs/frontend.log" 2>&1 &
 FRONTEND_PID=$!
@@ -100,7 +133,7 @@ done
 
 # Start ngrok if available
 if [ "$NGROK_AVAILABLE" = true ]; then
-    echo -e "\n${BLUE}[4/4] Starting ngrok tunnel...${NC}"
+    echo -e "\n${BLUE}[5/5] Starting ngrok tunnel...${NC}"
     # Use static domain for consistent webhook URLs
     ngrok http 8000 --domain=aileen-ferny-uncoquettishly.ngrok-free.dev > "$PROJECT_ROOT/logs/ngrok.log" 2>&1 &
     NGROK_PID=$!
@@ -122,7 +155,7 @@ if [ "$NGROK_AVAILABLE" = true ]; then
         echo -e "\r  ${YELLOW}Could not retrieve ngrok URL${NC}"
     fi
 else
-    echo -e "\n${YELLOW}[4/4] Skipping ngrok (not installed)${NC}"
+    echo -e "\n${YELLOW}[5/5] Skipping ngrok (not installed)${NC}"
 fi
 
 # Display summary
@@ -136,6 +169,7 @@ echo -e "  API:         ${YELLOW}http://localhost:8000${NC}"
 echo -e "  API Docs:    ${YELLOW}http://localhost:8000/docs${NC}"
 echo -e "  Ingestion:   ${YELLOW}http://localhost:8080${NC}"
 echo -e "  Ingest Docs: ${YELLOW}http://localhost:8080/docs${NC}"
+echo -e "  Lint:        ${YELLOW}http://localhost:8090${NC}"
 
 if [ "$NGROK_AVAILABLE" = true ] && [ -n "$NGROK_URL" ]; then
     echo -e "  Ngrok:       ${YELLOW}$NGROK_URL${NC}"
