@@ -125,6 +125,13 @@ class AgentConfig(BaseSettings):
         description="Send full file if changed_lines > this threshold.",
     )
 
+    # NEW: Use 3-node agent (Explorer → Reviewer → Summarizer)
+    use_3node_agent: bool = Field(
+        default=True,
+        description="Use the new 3-node agent architecture (recommended). "
+        "Set to False to use the old 2-node agent.",
+    )
+
     # NEW: Concurrency limits
     max_concurrent_files_small: int = Field(
         default=2,

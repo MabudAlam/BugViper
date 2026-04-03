@@ -322,7 +322,22 @@ async def execute_agentic_review(
         )
         formatted_prev_issues = _format_previous_issues(file_previous_issues)
 
-        if config.enable_explorer:
+        # Use 3-node agent if enabled
+        if config.use_3node_agent:
+            result = await _review_file_with_3node_agent(
+                file_path=file_path,
+                content=content,
+                ast=ast,
+                full_diff=full_diff,
+                safe_filename=safe_filename,
+                repo_id=repo_id,
+                query_service=query_service,
+                review_dir=review_dir,
+                formatted_prev_issues=formatted_prev_issues,
+                file_previous_issues=file_previous_issues,
+                file_code_samples=file_code_samples,
+            )
+        elif config.enable_explorer:
             result = await _review_file_with_explorer(
                 file_path=file_path,
                 content=content,
@@ -669,4 +684,125 @@ def aggregate_file_reviews(
         previous_fixed=previous_fixed,
         total_tool_rounds=0,
         raw_agent_outputs=raw_agent_outputs,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3-Node Agent Integration (NEW)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _review_file_with_3node_agent(
+    file_path: str,
+    content: str,
+    ast: Any,
+    full_diff: str,
+    safe_filename: str,
+    repo_id: str,
+    query_service: CodeSearchService,
+    review_dir: Path | None,
+    formatted_prev_issues: str,
+    file_previous_issues: List[dict],
+    file_code_samples: Dict[str, List[dict]],
+) -> FileReviewResult | None:
+    """Review a file using the new 3-node agent (Explorer → Reviewer → Summarizer).
+
+    This is the recommended approach going forward. It replaces the old
+    2-node agent with better separation of concerns and more reliable output.
+    """
+    from code_review_agent.nagent.pipeline_integration import run_3node_review_agent
+
+    logger.info(f"Running 3-node review agent for {file_path} (NEW)")
+
+    # Build file context (same as old agent)
+    file_context = _build_file_context(
+        file_path=file_path,
+        full_diff=full_diff,
+        full_file_content=content,
+        file_ast=ast,
+        previous_issues=formatted_prev_issues,
+        explorer_context="",  # 3-node agent has its own explorer
+        code_samples=file_code_samples,
+    )
+
+    # Write review prompt (same as old agent)
+    if review_dir:
+        write_step(
+            review_dir,
+            f"04_review_prompt_{safe_filename}.md",
+            f"# Review Agent Prompt (3-Node): {file_path}\n\n{file_context}",
+        )
+
+    # Run the 3-node agent
+    result = await run_3node_review_agent(
+        file_path=file_path,
+        file_context=file_context,
+        query_service=query_service,
+        repo_id=repo_id,
+        model=config.review_model,
+        review_dir=review_dir,
+        safe_filename=safe_filename,
+    )
+
+    # Convert 3-node agent output to FileReviewResult format
+    file_issues = result.get("file_based_issues", [])
+    file_positive_findings = result.get("file_based_positive_findings", [])
+    file_walkthrough = result.get("file_based_walkthrough", [])
+
+    # Flatten issues for compatibility
+    all_issues = []
+    for file_issue in file_issues:
+        for issue in file_issue.get("issues", []):
+            issue_copy = dict(issue)
+            issue_copy["file"] = file_issue.get("file", file_path)
+            all_issues.append(issue_copy)
+
+    # Flatten positive findings for compatibility
+    all_positive_findings = []
+    for finding in file_positive_findings:
+        for pf in finding.get("positive_finding", []):
+            all_positive_findings.append(pf)
+
+    # Flatten walkthrough for compatibility
+    walkthrough_steps = []
+    for walk in file_walkthrough:
+        for step in walk.get("walkthrough_steps", []):
+            walkthrough_steps.append(step)
+
+    # Handle previous issues status
+    previous_status = {}
+    for prev in file_previous_issues:
+        issue_id = f"{prev.get('file', '')}:{prev.get('line_start', '')}:{prev.get('title', '')}"
+        matched = False
+        for issue in all_issues:
+            if (
+                issue.get("file") == prev.get("file")
+                and issue.get("line_start") == prev.get("line_start")
+                and issue.get("title") == prev.get("title")
+            ):
+                previous_status[issue_id] = issue.get("status", "still_open")
+                matched = True
+                break
+        if not matched:
+            previous_status[issue_id] = "fixed"
+
+    # Build walkthrough string
+    walk_through_str = (
+        f"{file_path} — " + "; ".join(walkthrough_steps)
+        if walkthrough_steps
+        else f"{file_path} — Modified"
+    )
+
+    logger.info(
+        f"3-node agent completed for {file_path}: {len(all_issues)} issues, "
+        f"{len(all_positive_findings)} positive findings"
+    )
+
+    return FileReviewResult(
+        file_path=file_path,
+        issues=all_issues,
+        walk_through_entry=walk_through_str,
+        positive_findings=all_positive_findings,
+        previous_issues_status=previous_status,
+        raw_agent_output="",  # 3-node agent writes to separate file
     )
