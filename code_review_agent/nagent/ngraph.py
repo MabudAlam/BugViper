@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 
-from code_review_agent.agent.utils import load_chat_model
+from api.agent.utils import load_chat_model
 from code_review_agent.nagent.nprompt import (
     MAX_TOOL_ROUNDS,
     get_explorer_system_prompt,
@@ -19,22 +19,30 @@ from code_review_agent.nagent.nstate import (
     ReviewerOutput,
     SummarizerOutput,
 )
-from code_review_agent.nagent.ntools import get_tools
+from code_review_agent.nagent.ntools import get_code_review_tools
 from db.code_serarch_layer import CodeSearchService
 
 
 def _slim_messages(messages: list) -> list:
-    """Return a token-efficient view of message history by blanking AI reasoning text."""
-    from langchain_core.messages import ToolMessage
+    """Return a token-efficient view of message history.
 
+    Blanks AI reasoning text in tool-calling turns (the content field is
+    usually empty anyway for tool-call turns, but we normalise it explicitly).
+    Keeps all ToolMessages intact so the LLM sees what tools returned.
+    Skips bare HumanMessages — the explorer never injects them and the system
+    prompt already carries the file context.
+    """
     slimmed = []
     for msg in messages:
-        if isinstance(msg, HumanMessage) and not slimmed:
-            slimmed.append(msg)
-        elif isinstance(msg, AIMessage) and msg.tool_calls:
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            # Keep tool_calls, blank any prose the model emitted alongside them
             slimmed.append(msg.model_copy(update={"content": ""}))
         elif isinstance(msg, ToolMessage):
             slimmed.append(msg)
+        elif isinstance(msg, AIMessage) and not msg.tool_calls:
+            # Final "I'm done" reasoning turn — keep it, the reviewer uses it
+            slimmed.append(msg)
+        # HumanMessages are skipped; context lives in the SystemMessage
     return slimmed
 
 
@@ -43,34 +51,38 @@ def build_code_review_graph(
     model: str,
     repo_id: str | None = None,
 ) -> StateGraph:
-    """Build a 3-node LangGraph for code review.
+    """Build a LangGraph for code review.
 
-    Architecture: Explorer (ReAct) → Reviewer (Structured) → Summarizer (Structured)
+    Architecture:
+        explorer (ReAct loop) → reviewer (structured) → summarizer (structured)
+
+    tool_rounds is incremented inside explorer_node so the conditional edge
+    always sees the post-increment value and the cap fires correctly.
 
     Args:
-        query_service: Neo4j query service for code search
-        model: Model name for the LLM (e.g., "openai/gpt-4-turbo")
-        repo_id: Repository ID to scope queries
+        query_service: Neo4j query service for code search.
+        model: Model identifier (e.g. "openai/gpt-4o-mini").
+        repo_id: Optional repository ID to scope graph queries.
 
     Returns:
-        Compiled StateGraph
+        Compiled StateGraph ready to invoke.
     """
-    tools = get_tools(query_service, repo_id=repo_id)
+    tools = get_code_review_tools(query_service, repo_id=repo_id)
     llm = load_chat_model(model)
     llm_with_tools = llm.bind_tools(tools)
 
-    # ── Node 1: Explorer (ReAct Loop) ────────────────────────────────────────
+    # ── Node 1: Explorer (ReAct loop) ────────────────────────────────────────
 
     def explorer_node(state: CodeReviewAgentState) -> dict:
-        """Investigate code using tools (ReAct loop).
+        """Investigate code using tools.
 
-        This node:
-        1. Receives file context (diff, code, AST)
-        2. Calls tools to investigate dependencies, complexity, etc.
-        3. Accumulates evidence in messages
-        4. Does NOT generate structured output (that's reviewer/summarizer)
+        Increments tool_rounds here (not in a separate node) so that
+        should_continue always reads the up-to-date count.
         """
-        if state["tool_rounds"] >= MAX_TOOL_ROUNDS:
+        current_rounds = state["tool_rounds"]
+
+        # Hard cap: return empty update — should_continue will route to reviewer
+        if current_rounds >= MAX_TOOL_ROUNDS:
             return {}
 
         system_prompt = get_explorer_system_prompt(
@@ -85,53 +97,56 @@ def build_code_review_graph(
             ]
         )
 
-        return {"messages": [response]}
+        # Increment rounds here so should_continue sees the updated value
+        return {
+            "messages": [response],
+            "tool_rounds": current_rounds + 1,
+        }
 
-    # ── Node 2: Tools Execution ───────────────────────────────────────────────
+    # ── Node 2: Tool execution ────────────────────────────────────────────────
 
-    # Uses LangGraph's prebuilt ToolNode
     tool_node = ToolNode(tools)
 
-    # ── Node 3: Extract Sources ─────────────────────────────────────────────
+    # ── Node 3: Extract sources ───────────────────────────────────────────────
 
     def extract_sources(state: CodeReviewAgentState) -> dict:
-        """Extract sources from ToolMessage artifacts and merge into state.
+        """Extract sources only from the most recent batch of ToolMessages.
 
-        Tools return (content, sources) where sources are stored in
-        ToolMessage.artifact. This node extracts and merges them.
+        Scanning all messages every round re-extracts already-seen artifacts.
+        We only need to look at messages appended since the last extraction,
+        which in practice means the ToolMessages from the current round.
+        The _merge_sources reducer on the state handles deduplication.
         """
-        new_sources = []
-        for msg in state["messages"]:
-            # ToolMessage stores artifact in msg.artifact
-            if hasattr(msg, "artifact") and isinstance(msg.artifact, list):
-                new_sources.extend(msg.artifact)
+        new_sources: list[dict] = []
+
+        # Walk backwards and collect ToolMessages until we hit an AIMessage
+        # (the tool-calling turn that triggered this batch).
+        for msg in reversed(state["messages"]):
+            if isinstance(msg, ToolMessage):
+                if isinstance(msg.artifact, list):
+                    new_sources.extend(msg.artifact)
+            elif isinstance(msg, AIMessage):
+                break  # Stop at the AI turn that made these calls
 
         return {"sources": new_sources}
 
-    # ── Node 4: Increment Rounds ─────────────────────────────────────────────
-
-    def increment_rounds(state: CodeReviewAgentState) -> dict:
-        """Increment the tool round counter."""
-        return {"tool_rounds": state["tool_rounds"] + 1}
-
-    # ── Node 5: Reviewer (Structured Output) ────────────────────────────────
+    # ── Node 4: Reviewer (structured output) ─────────────────────────────────
 
     def reviewer_node(state: CodeReviewAgentState) -> dict:
-        """Generate structured output for issues and positive findings.
-
-        This node:
-        1. Reads full message history from exploration
-        2. Calls LLM with structured output
-        3. Output: file_based_issues, file_based_positive_findings
-        """
+        """Produce file_based_issues and file_based_positive_findings."""
         structured_llm = llm.with_structured_output(ReviewerOutput)
 
         system_prompt = get_reviewer_system_prompt(file_based_context=state["file_based_context"])
+        exploration_summary = _format_messages(state["messages"])
 
+        # One SystemMessage + one HumanMessage — universally supported.
         result: ReviewerOutput = structured_llm.invoke(
             [
                 SystemMessage(system_prompt),
-                SystemMessage(f"Previous exploration:\n{_format_messages(state['messages'])}"),
+                HumanMessage(
+                    f"Exploration findings:\n{exploration_summary}\n\n"
+                    "Now produce the structured review output."
+                ),
             ]
         )
 
@@ -142,24 +157,22 @@ def build_code_review_graph(
             ],
         }
 
-    # ── Node 6: Summarizer (Structured Output) ──────────────────────────────
+    # ── Node 5: Summarizer (structured output) ───────────────────────────────
 
     def summarizer_node(state: CodeReviewAgentState) -> dict:
-        """Generate structured output for walkthrough.
-
-        This node:
-        1. Reads message history and context
-        2. Calls LLM with structured output
-        3. Output: file_based_walkthrough
-        """
+        """Produce file_based_walkthrough."""
         structured_llm = llm.with_structured_output(SummarizerOutput)
 
         system_prompt = get_summarizer_system_prompt(file_based_context=state["file_based_context"])
+        exploration_summary = _format_messages(state["messages"])
 
         result: SummarizerOutput = structured_llm.invoke(
             [
                 SystemMessage(system_prompt),
-                SystemMessage(f"Previous exploration:\n{_format_messages(state['messages'])}"),
+                HumanMessage(
+                    f"Exploration findings:\n{exploration_summary}\n\n"
+                    "Now produce the structured walkthrough output."
+                ),
             ]
         )
 
@@ -167,69 +180,71 @@ def build_code_review_graph(
             "file_based_walkthrough": [walk.model_dump() for walk in result.file_based_walkthrough]
         }
 
-    # ── Conditional Edge Router ─────────────────────────────────────────────
+    # ── Conditional edge router ───────────────────────────────────────────────
 
     def should_continue(state: CodeReviewAgentState) -> Literal["tools", "reviewer"]:
-        """Route after explorer: continue with tools or move to reviewer."""
-        last = state["messages"][-1]
-        tool_rounds = state["tool_rounds"]
+        """Route after explorer: keep exploring or hand off to reviewer.
 
-        # Max rounds reached - move to reviewer
-        if tool_rounds >= MAX_TOOL_ROUNDS:
+        tool_rounds was already incremented inside explorer_node, so this
+        value is always current.
+        """
+        # Cap reached
+        if state["tool_rounds"] >= MAX_TOOL_ROUNDS:
             return "reviewer"
 
-        # Has tool calls - continue exploring
+        last = state["messages"][-1] if state["messages"] else None
+
+        # LLM made tool calls → continue the ReAct loop
         if isinstance(last, AIMessage) and last.tool_calls:
-            # After 3+ rounds, check if we should stop early
-            if tool_rounds >= 3:
-                content = str(last.content).lower() if last.content else ""
-                early_stop_keywords = ["caller", "found", "definition", "hierarchy", "complete"]
-                if any(kw in content for kw in early_stop_keywords):
-                    return "reviewer"
             return "tools"
 
-        # No tool calls - done exploring, move to reviewer
+        # LLM emitted no tool calls → it's done exploring
         return "reviewer"
 
-    # ── Build Graph ───────────────────────────────────────────────────────────
+    # ── Build graph ───────────────────────────────────────────────────────────
 
     builder = StateGraph(CodeReviewAgentState)
 
-    # Add nodes
     builder.add_node("explorer", explorer_node)
     builder.add_node("tools", tool_node)
     builder.add_node("extract_sources", extract_sources)
-    builder.add_node("increment_rounds", increment_rounds)
     builder.add_node("reviewer", reviewer_node)
     builder.add_node("summarizer", summarizer_node)
 
-    # Set entry point
     builder.set_entry_point("explorer")
 
-    # Add edges
     builder.add_conditional_edges("explorer", should_continue)
     builder.add_edge("tools", "extract_sources")
-    builder.add_edge("extract_sources", "increment_rounds")
-    builder.add_edge("increment_rounds", "explorer")
+    builder.add_edge("extract_sources", "explorer")
     builder.add_edge("reviewer", "summarizer")
 
-    # Compile
-    return builder.compile(name="BugViper Review Agent 2.0")
+    return builder.compile()
 
 
 def _format_messages(messages: list) -> str:
     """Format message history for reviewer/summarizer prompts.
 
-    Provides a condensed view of the exploration for context.
+    Includes tool results so the reviewer sees what was actually found,
+    not just which tools were called. Truncates large tool outputs to
+    keep the prompt manageable.
     """
-    formatted = []
+    MAX_TOOL_OUTPUT = 400  # chars per tool result
+    MAX_MESSAGES = 30  # last N entries to include
+
+    formatted: list[str] = []
+
     for msg in messages:
-        if isinstance(msg, HumanMessage):
-            formatted.append(f"Human: {msg.content[:200]}...")
-        elif isinstance(msg, AIMessage):
+        if isinstance(msg, AIMessage):
             if msg.tool_calls:
-                tools = [tc.get("name", "?") for tc in msg.tool_calls]
-                formatted.append(f"AI: Called tools: {', '.join(tools)}")
-            else:
-                formatted.append(f"AI: {msg.content[:200]}...")
-    return "\n".join(formatted[-20:])  # Last 20 messages
+                names = [tc.get("name", "?") for tc in msg.tool_calls]
+                formatted.append(f"[Explorer] Called tools: {', '.join(names)}")
+            elif msg.content:
+                # Final reasoning turn
+                formatted.append(f"[Explorer] {str(msg.content)[:500]}")
+        elif isinstance(msg, ToolMessage):
+            content = str(msg.content)
+            if len(content) > MAX_TOOL_OUTPUT:
+                content = content[:MAX_TOOL_OUTPUT] + "…(truncated)"
+            formatted.append(f"[Tool:{msg.name}] {content}")
+
+    return "\n".join(formatted[-MAX_MESSAGES:])

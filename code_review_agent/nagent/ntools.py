@@ -13,7 +13,7 @@ from db.code_serarch_layer import CodeSearchService
 _S = dict  # shorthand for a source dict
 
 
-def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> list:
+def get_code_review_tools(query_service: CodeSearchService, repo_id: str | None = None) -> list:
 
     def _src(
         path: str, line: int | None = None, name: str | None = None, typ: str | None = None
@@ -399,50 +399,6 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         )
         return content, sources
 
-    # ── 16. Top complex functions ─────────────────────────────────────────────
-
-    @tool(response_format="content_and_artifact")
-    def get_top_complex_functions(limit: int = 10) -> tuple[str, list[_S]]:
-        """List the most complex functions in the codebase by cyclomatic complexity.
-        Args:
-            limit: Number of results to return (default 10).
-        Returns: ranked list of function name, score, file path.
-        """
-        results = query_service.find_most_complex_functions(limit, repo_id=repo_id)
-        if not results:
-            return "No complexity data found.", []
-        lines = [
-            f"{i:>2}. [{r.get('cyclomatic_complexity', 1):>3}] {r.get('name')}  →  {r.get('path')}:{r.get('line_number')}"
-            for i, r in enumerate(results, 1)
-        ]
-        sources = [
-            _src(r["path"], r.get("line_number"), r.get("name"), "function")
-            for r in results
-            if r.get("path")
-        ]
-        return "\n".join(lines), sources
-
-    # ── 17. Get full file source ──────────────────────────────────────────────
-
-    @tool(response_format="content_and_artifact")
-    def get_file_source(file_path: str) -> tuple[str, list[_S]]:
-        """Get the complete source code of a file stored in the graph.
-        Use when peek_code is not enough and you need the full file.
-        Args:
-            file_path: Repo-relative path (e.g. 'api/app.py').
-        Returns: full file source with line count.
-        """
-        result = query_service.get_file_source(repo_id or "", file_path)
-        if not result:
-            return f"File not found: '{file_path}'", []
-        source = result.get("source_code") or result.get("source") or ""
-        lines = source.splitlines()
-        header = f"File: {file_path}  ({len(lines)} lines)\n" + "-" * 60
-        numbered = "\n".join(f"{i + 1:>4} │ {line}" for i, line in enumerate(lines))
-        return f"{header}\n{numbered}", [_src(file_path, None, typ="file")]
-
-    # ── 18. Language statistics ───────────────────────────────────────────────
-
     @tool(response_format="content_and_artifact")
     def get_language_stats(language: str | None = None) -> tuple[str, list[_S]]:
         """Get the breakdown of programming languages in the codebase.
@@ -484,16 +440,8 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         find_class,
         find_variable,
         find_by_content,
-        find_by_line,
         find_module,
         find_imports,
         find_method_usages,
         find_callers,
-        get_class_hierarchy,
-        get_change_impact,
-        get_complexity,
-        get_top_complex_functions,
-        get_file_source,
-        get_language_stats,
-        get_repo_stats,
     ]

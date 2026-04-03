@@ -271,15 +271,24 @@ api/                         # FastAPI backend
 │   └── webhook.py           # GitHub webhooks
 └── services/
     ├── firebase_service.py  # Firebase integration
-    └── push_service.py      # Incremental updates
+    ├── push_service.py      # Incremental updates
+    └── review_service.py    # PR review pipeline (SIMPLIFIED)
 
-code_review_agent/           # LangGraph review agent
-├── agent/
-│   ├── review_graph.py      # ReAct exploration graph
-│   ├── runner.py            # Two-phase pipeline
-│   └── tools.py             # Neo4j query tools
+code_review_agent/           # 3-Node LangGraph review agent (SIMPLIFIED)
+├── agent_executor.py        # Run 3-node agent (Explorer → Reviewer → Summarizer)
+├── context_builder.py       # Build markdown context for agent
+├── utils.py                 # LLM loader (OpenRouter)
+├── config.py                # Agent configuration
+├── app.py                   # FastAPI app
+├── nagent/                  # Core agent implementation
+│   ├── ngraph.py            # 3-node graph definition
+│   ├── ntools.py            # 19 code exploration tools
+│   ├── nprompt.py           # 3 system prompts
+│   ├── nstate.py            # State models (Pydantic)
+│   ├── nrunner.py           # CLI runner
+│   └── example_3node.py     # Example usage
 └── models/
-    └── agent_schemas.py     # Pydantic models
+    └── agent_schemas.py     # Pydantic models for API
 
 db/                          # Neo4j layer
 ├── client.py                # Connection management
@@ -293,7 +302,12 @@ ingestion_service/           # Tree-sitter parsing
 
 common/                      # Shared utilities
 ├── embedder.py              # OpenRouter embeddings
-└── diff_parser.py           # Unified diff parsing
+├── diff_parser.py           # Unified diff parsing
+├── debug_writer.py          # Write debug files
+├── diff_line_mapper.py      # Map diff lines to file lines
+├── github_client.py         # GitHub API client
+├── firebase_models.py       # Firebase models
+└── firebase_init.py         # Firebase initialization
 
 frontend/                    # Next.js 16 app
 ├── app/(protected)/
@@ -302,6 +316,107 @@ frontend/                    # Next.js 16 app
 └── lib/
     └── api.ts               # API client
 ```
+
+---
+
+## Code Review Agent Architecture
+
+BugViper uses a **3-node LangGraph agent** for code review:
+
+### Architecture Flow
+
+```
+GitHub PR Webhook (@bugviper review)
+    ↓
+api/services/review_service.py
+    ├─ Fetch PR data (diff, files, ASTs)
+    ├─ Loop through each file:
+    │   ├─ context_builder.py - Build markdown prompt
+    │   └─ agent_executor.py - Run 3-node agent
+    │       └─ ngraph.py - Execute:
+    │           ├─ Explorer Node (ReAct loop with tools)
+    │           ├─ Reviewer Node (Issues + Positives)
+    │           └─ Summarizer Node (Walkthrough)
+    ├─ Aggregate results
+    ├─ Post GitHub comments
+    └─ Save to Firestore
+```
+
+### Key Components
+
+**1. review_service.py** (Entry Point)
+- Orchestrates the entire review pipeline
+- Fetches PR data (diff, files, ASTs)
+- Calls agent for each file
+- Aggregates results
+- Posts GitHub comments
+
+**2. context_builder.py** (Context Building)
+- Builds markdown context from diff, code, AST
+- Formats hunk ranges
+- Renders code samples
+
+**3. agent_executor.py** (Agent Runner)
+- Builds the LangGraph
+- Invokes 3-node agent
+- Returns structured results
+- Writes debug output
+
+**4. ngraph.py** (Graph Definition)
+- Node 1: Explorer - Investigates with tools (ReAct loop)
+- Node 2: Reviewer - Generates issues and positives (structured output)
+- Node 3: Summarizer - Generates walkthrough (structured output)
+
+### Node Details
+
+**Explorer Node:**
+- Uses 19 code exploration tools (ntools.py)
+- Investigates dependencies, complexity, security
+- Bounded by MAX_TOOL_ROUNDS (default: 8)
+- Accumulates evidence in messages
+
+**Reviewer Node:**
+- Reads full message history
+- Calls LLM with `with_structured_output()`
+- Output: `file_based_issues`, `file_based_positive_findings`
+- Precise line numbers, confidence scoring
+
+**Summarizer Node:**
+- Generates narrative walkthrough
+- Calls LLM with `with_structured_output()`
+- Output: `file_based_walkthrough`
+
+### Configuration
+
+```python
+# In .env
+USE_3NODE_AGENT=true              # Enable 3-node agent (default: true)
+MAX_TOOL_ROUNDS=8                 # Max tool calls per file
+REVIEW_MODEL=anthropic/claude-sonnet-4-5  # LLM model
+OPENROUTER_API_KEY=your-key       # API key
+```
+
+### Output Files
+
+```
+output/review-{timestamp}/
+├── 01_diff.md                         # Raw diff
+├── 02_parsed_files.json               # Parsed ASTs
+├── 04_review_prompt_{filename}.md     # Agent input
+├── 05_agent_output_{filename}.md       # Agent output (NEW)
+├── 00_diff_parsing_debug.json         # Debug info
+└── 05_aggregated.md                   # Final results
+```
+
+### Key Files
+
+- `api/services/review_service.py` - Main pipeline (simplified)
+- `code_review_agent/agent_executor.py` - Agent runner
+- `code_review_agent/context_builder.py` - Context utilities
+- `code_review_agent/nagent/ngraph.py` - Graph definition
+- `code_review_agent/nagent/ntools.py` - 19 code exploration tools
+- `code_review_agent/nagent/nprompt.py` - 3 system prompts
+- `code_review_agent/nagent/nstate.py` - State models
 
 ---
 
@@ -332,6 +447,24 @@ Currently no dedicated test suite is present in the repository. When adding test
 - Use pytest fixtures for common setup
 - Run: `pytest tests/test_module.py::test_function_name -v`
 
+**Testing the Code Review Agent:**
+```bash
+# Set environment
+export OPENROUTER_API_KEY="your-key"
+export NEO4J_URI="bolt://localhost:7687"
+
+# Test imports
+python -c "from api.services.review_service import review_pipeline; from code_review_agent.agent_executor import execute_review_agent; print('✅ Works!')"
+
+# Run review (via webhook or programmatically)
+# Comment "@bugviper review" on a PR
+# Or run: uvicorn api.app:app --reload
+
+# Check output
+ls output/review-*/
+# Files: 01_diff.md, 02_parsed_files.json, 04_review_prompt_*.md, 05_agent_output_*.md
+```
+
 **Frontend:**
 - Consider Jest + React Testing Library
 - Test file naming: `ComponentName.test.tsx`
@@ -348,6 +481,11 @@ Required environment variables (see `.env.example`):
 - `API_ALLOWED_ORIGINS` - CORS origins
 - Optional: `ENABLE_LOGFIRE`, `LOGFIRE_TOKEN` for observability
 
+**Agent Configuration:**
+- `USE_3NODE_AGENT` - Enable 3-node agent (default: true)
+- `REVIEW_MODEL` - LLM model for review (default: openai/gpt-4o-mini)
+- `MAX_TOOL_ROUNDS` - Max tool calls per file (default: 8)
+
 ---
 
 ## Important Notes
@@ -359,3 +497,15 @@ Required environment variables (see `.env.example`):
 5. **Type safety** - strict typing in both Python and TypeScript
 6. **Line length** - 100 characters for Python (enforced by black)
 7. **Database** - Always use dependency injection for Neo4j client
+
+**Agent Architecture:**
+- The 3-node agent (Explorer → Reviewer → Summarizer) is the default architecture
+- Each node has a single responsibility for better separation of concerns
+- Tools are bounded by MAX_TOOL_ROUNDS (default: 8) for cost control
+- Structured output via Pydantic models ensures type safety
+
+**Cost & Performance:**
+- Typical review: ~$0.12 per file with claude-sonnet-4-5
+- Tool rounds: 5-8 per file
+- Tokens: ~6,500 per file review
+- Reduce MAX_TOOL_ROUNDS for simple files to save cost

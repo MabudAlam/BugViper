@@ -761,7 +761,7 @@ class GraphBuilder:
                     if not module_name:
                         continue
 
-                    rel_props = {"imported_name": imp.get("name", "*")}
+                    rel_props = {"imported_name": imp.get("name", imp.get("source", "*"))}
                     if imp.get("alias"):
                         rel_props["alias"] = imp.get("alias")
                     if imp.get("line_number"):
@@ -791,6 +791,8 @@ class GraphBuilder:
                         rel_props["line_number"] = imp.get("line_number")
                     if imp.get("alias"):
                         rel_props["alias"] = imp.get("alias")
+                    if imp.get("name"):
+                        rel_props["imported_name"] = imp.get("name")
 
                     session.run(
                         f"""
