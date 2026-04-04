@@ -90,6 +90,7 @@ class AgentConfig(BaseSettings):
 
     openrouter_api_key: str = Field(default="sk-or-v1-placeholder")
     openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1")
+    gemini_api_key: str = Field(default="")
     review_model: str = Field(default="openai/gpt-4o-mini")
     synthesis_model: str = Field(
         default="openai/gpt-4o-mini",
@@ -113,6 +114,11 @@ class AgentConfig(BaseSettings):
         default=3,
         description="Auto-enable Explorer if files_changed >= threshold. "
         "Set to 0 to always disable, 1 to always enable.",
+    )
+
+    enable_pr_description_update: bool = Field(
+        default=True,
+        description="Allow agent to update PR description with review summary.",
     )
 
     # NEW: File content thresholds

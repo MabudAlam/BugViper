@@ -88,15 +88,16 @@ class AgentPositiveFinding(BaseModel):
 
 
 class FileBasedWalkthrough(BaseModel):
-    """Step-by-step walkthrough of the code, grouped by file."""
+    """Single-sentence summary of changes in a file."""
 
-    file: str = Field(description="File path being walked through")
-    walkthrough_steps: list[str] = Field(
-        default_factory=list,
+    file: str = Field(description="File path being summarized")
+    summary: str = Field(
+        default="",
         description=(
-            "List of observations about this file, in the order they were made. "
-            "Examples: 'Line 10: function foo has clear input validation', "
-            "'Line 25: potential null pointer dereference', 'Line 40: good use of context manager'."
+            "A single concise sentence summarizing what this file changed. "
+            "Examples: 'Added input validation and error handling for user queries', "
+            "'Refactored database connection logic to use connection pooling', "
+            "'Fixed null pointer dereference in user profile handler'."
         ),
     )
 

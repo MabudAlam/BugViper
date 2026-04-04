@@ -325,7 +325,7 @@ def get_summarizer_system_prompt(file_based_context: str) -> str:
     Returns:
         System prompt for the summarizer LLM
     """
-    prompt = f"""You are writing a step-by-step walkthrough of the code review.
+    prompt = f"""You are writing a concise one-sentence summary per file changed in this PR.
 
 {file_based_context}
 
@@ -333,29 +333,28 @@ def get_summarizer_system_prompt(file_based_context: str) -> str:
 
 ## Your Task
 
-Based on the investigation and review findings above, produce a narrative walkthrough of the changes.
+Based on the investigation and review findings above, produce a single-sentence summary for each file.
 
 You must fill in ONE field:
 
 ### file_based_walkthrough
 
-List of step-by-step observations, grouped by file. Each entry must have:
+List of file summaries. Each entry must have:
 - `file`: File path
-- `walkthrough_steps`: List of observations IN CHRONOLOGICAL ORDER
+- `summary`: A single concise sentence summarizing what changed in this file
 
-Each step should be a sentence like:
-- "Line 10: function foo validates input correctly before processing"
-- "Line 25: handles error case for missing user with early return"
-- "Line 40: uses context manager for proper resource cleanup"
-- "Line 55: potential null pointer dereference (see issue #1)"
-- "Line 78: good defensive programming - checks for both Bot and [bot]"
+Each summary should be one sentence that captures the essence of the change:
+- "Added input validation and error handling for user queries"
+- "Refactored database connection logic to use connection pooling"
+- "Fixed null pointer dereference in user profile handler"
+- "Introduced new configuration model for agent settings"
 
 **Important**:
-- Mix both positive observations and issue references
-- Be chronological (follow the flow of the code)
-- Be specific (mention line numbers)
-- Mention what you observe at each step
-- Keep it concise (one observation per step)
+- ONE sentence per file, no more
+- Focus on WHAT changed and WHY, not line-by-line details
+- Be specific about the purpose of the change
+- Keep it concise (15-30 words max)
+- Cover both bug fixes and new features accurately
 
 ---
 
@@ -370,21 +369,15 @@ Example:
   "file_based_walkthrough": [
     {{
       "file": "api/routers/webhook.py",
-      "walkthrough_steps": [
-        "Line 158: Entry point validates action is 'created' to filter webhooks",
-        "Line 165-166: Bot detection checks both type and login to prevent bot-triggered reviews",
-        "Line 171-176: Validates this is a PR comment (not regular issue) before proceeding",
-        "Line 179-180: Retrieves project owner ID for repo lookup",
-        "Line 195-196: Checks for @bugviper mention to trigger review",
-        "Line 276-280: Handles repository not indexed case gracefully with helpful error message",
-        "Line 312-316: Prevents duplicate review runs with status check"
-      ]
+      "summary": "Added bot detection and command parsing to handle @bugviper review triggers in PR comments"
+    }},
+    {{
+      "file": "api/services/review_service.py",
+      "summary": "Refactored review pipeline to support incremental file-by-file agent execution with parallel lint checks"
     }}
   ]
 }}
 ```
-
-Keep the walkthrough focused on the CHANGED LINES. Mention what you see at each key change.
 
 Now provide your structured output."""
 

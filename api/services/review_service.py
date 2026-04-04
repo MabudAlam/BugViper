@@ -19,21 +19,21 @@ import traceback
 from typing import List
 
 from api.models.ast_results import ParsedFile
+from api.services.context_builder import (
+    build_file_context,
+    build_file_diff_from_patch,
+)
 from api.services.firebase_service import firebase_service
 from api.services.lint_service import run_lint
 from api.services.parse_file_to_ast import _ast_parse_file_full
 from api.utils.comment_formatter import (
     format_github_comment,
     format_inline_comment,
+    format_pr_description,
     format_review_summary,
 )
 from code_review_agent.agent_executor import execute_review_agent
 from code_review_agent.config import config
-from api.services.context_builder import (
-    build_file_context,
-    build_file_diff_from_patch,
-    format_previous_issues,
-)
 from code_review_agent.models.agent_schemas import ContextData, Issue, ReconciledReview
 from common.debug_writer import make_review_dir, write_step
 from common.diff_line_mapper import (
@@ -305,11 +305,13 @@ async def review_pipeline(
             for issue in file_issue.get("issues", []):
                 all_issues_formatted.append(Issue(**issue))
 
-        # Build walkthrough
+        # Build walkthrough - now single sentence per file
         walk_through = []
         for walk in all_walkthroughs:
-            for step in walk.get("walkthrough_steps", []):
-                walk_through.append(step)
+            summary = walk.get("summary", "")
+            file_path = walk.get("file", "")
+            if summary:
+                walk_through.append(f"{file_path} — {summary}")
 
         for fp in files_changed:
             if not any(fp in entry for entry in walk_through):
@@ -446,6 +448,15 @@ async def review_pipeline(
         try:
             await gh.post_pr_review(owner, repo, pr_number, head_sha, review_body, review_event)
             logger.info(f"Posted review ({review_event}) on {owner}/{repo}#{pr_number}")
+
+            # Update PR description with summary
+            if config.enable_pr_description_update:
+                try:
+                    pr_description = format_pr_description(reconciled, walk_through)
+                    await gh.update_pr_body(owner, repo, pr_number, pr_description)
+                    logger.info(f"Updated PR description for {owner}/{repo}#{pr_number}")
+                except Exception as e:
+                    logger.warning(f"Failed to update PR description: {e}")
         except Exception:
             fallback = format_github_comment(
                 reconciled,

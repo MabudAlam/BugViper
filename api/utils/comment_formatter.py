@@ -718,3 +718,73 @@ def format_github_comment(
     )
 
     return "\n".join(parts)
+
+
+def format_pr_description(
+    review: ReconciledReview,
+    walk_through: list[str] | None = None,
+) -> str:
+    """Format a CodeRabbit-style PR description summary.
+
+    This is designed to be appended to the PR body, providing a high-level
+    overview of changes grouped by category (New Features, Bug Fixes, etc.).
+    """
+    parts: list[str] = []
+
+    parts.append("<!-- This is an auto-generated comment: release notes by BugViper -->")
+    parts.append("## Summary by BugViper")
+    parts.append("")
+
+    open_issues = [i for i in review.issues if i.status in ("new", "still_open")]
+    positive_findings = review.positive_findings or []
+
+    categories: dict[str, list[str]] = {}
+
+    if open_issues:
+        bug_fixes = []
+        improvements = []
+        for issue in open_issues:
+            if issue.category in ("bug", "security", "logic_error"):
+                bug_fixes.append(f"{issue.title} in `{issue.file}`")
+            else:
+                improvements.append(f"{issue.title} in `{issue.file}`")
+
+        if bug_fixes:
+            categories["Bug Fixes"] = bug_fixes
+        if improvements:
+            categories["Improvements"] = improvements
+
+    if walk_through:
+        new_features = []
+        for entry in walk_through:
+            if " — " in entry:
+                _, summary = entry.split(" — ", 1)
+                summary = summary.strip()
+                if any(
+                    keyword in summary.lower()
+                    for keyword in ["add", "new", "introduce", "implement"]
+                ):
+                    new_features.append(summary)
+
+        if new_features:
+            categories["New Features"] = new_features
+
+    if positive_findings:
+        categories["Code Quality"] = [f for f in positive_findings[:5]]
+
+    if not categories:
+        categories["Changes"] = (
+            [f"Reviewed {len(walk_through)} file(s)"]
+            if walk_through
+            else ["Minor changes detected"]
+        )
+
+    for category, items in categories.items():
+        parts.append(f"* **{category}**")
+        for item in items:
+            parts.append(f"  * {item}")
+        parts.append("")
+
+    parts.append("<!-- end of auto-generated comment: release notes by BugViper -->")
+
+    return "\n".join(parts)

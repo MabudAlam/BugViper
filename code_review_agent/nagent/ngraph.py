@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 
-from api.agent.utils import load_chat_model
+from api.agent.utils import load_chat_model, load_gemini_model
 from code_review_agent.nagent.nprompt import (
     MAX_TOOL_ROUNDS,
     get_explorer_system_prompt,

@@ -495,6 +495,31 @@ class GitHubClient:
         r.raise_for_status()
         return r.json()["number"]
 
+    async def update_pr_body(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        body: str,
+    ) -> None:
+        """Update the PR description body. Appends to existing body if present."""
+        token = await self._get_token(owner, repo)
+
+        existing_pr = await self._get_pr(owner, repo, pr_number)
+        existing_body = existing_pr.get("body") or ""
+
+        if existing_body and "## Summary by BugViper" not in existing_body:
+            new_body = f"{existing_body}\n\n{body}"
+        else:
+            new_body = body
+
+        r = await self._http.patch(
+            f"/repos/{owner}/{repo}/pulls/{pr_number}",
+            headers=self._auth_headers(token),
+            json={"body": new_body},
+        )
+        r.raise_for_status()
+
 
 # ---------------------------------------------------------------------------
 # Module-level singleton — reuses connection pool across all review runs
