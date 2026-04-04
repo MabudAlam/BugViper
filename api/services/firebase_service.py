@@ -168,6 +168,22 @@ class BugViperFirebaseService:
             return None
         return doc.to_dict().get("githubAccessToken")
 
+    def checkIfRepoIndexedOrNot(self, uid: str, owner: str, repo: str) -> bool:
+        """
+        Check if a repo has been indexed for a user by looking for the metadata doc.
+
+        Returns True if the repo is fully ingested, False otherwise.
+        """
+        repo_key = f"{owner}_{repo}"
+        doc = (
+            self._db.collection("users").document(uid).collection("repos").document(repo_key).get()
+        )
+
+        if not doc.exists:
+            return False
+
+        return doc.to_dict().get("ingestionStatus") == "ingested"
+
     # ── Repo metadata ─────────────────────────────────────────────────────
 
     def upsert_repo_metadata(

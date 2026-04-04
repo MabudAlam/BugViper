@@ -90,6 +90,7 @@ class AgentConfig(BaseSettings):
 
     openrouter_api_key: str = Field(default="sk-or-v1-placeholder")
     openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1")
+    gemini_api_key: str = Field(default="")
     review_model: str = Field(default="openai/gpt-4o-mini")
     synthesis_model: str = Field(
         default="openai/gpt-4o-mini",
@@ -115,6 +116,11 @@ class AgentConfig(BaseSettings):
         "Set to 0 to always disable, 1 to always enable.",
     )
 
+    enable_pr_description_update: bool = Field(
+        default=True,
+        description="Allow agent to update PR description with review summary.",
+    )
+
     # NEW: File content thresholds
     max_file_content_lines: int = Field(
         default=300,
@@ -123,6 +129,13 @@ class AgentConfig(BaseSettings):
     send_full_file_threshold: int = Field(
         default=30,
         description="Send full file if changed_lines > this threshold.",
+    )
+
+    # NEW: Use 3-node agent (Explorer → Reviewer → Summarizer)
+    use_3node_agent: bool = Field(
+        default=True,
+        description="Use the new 3-node agent architecture (recommended). "
+        "Set to False to use the old 2-node agent.",
     )
 
     # NEW: Concurrency limits

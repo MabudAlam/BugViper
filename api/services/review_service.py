@@ -1,3 +1,17 @@
+"""Simplified review pipeline using 3-node agent directly.
+
+Architecture:
+    review_service.py (Gathers context, builds prompts, aggregates results)
+        ↓
+    context_builder.py (Builds file context markdown)
+        ↓
+    agent_executor.py (Runs 3-node agent)
+        ↓
+    ngraph.py (Builds graph & executes nodes)
+        ↓
+    Returns results to review_service.py
+"""
+
 import asyncio
 import json
 import logging
@@ -5,14 +19,21 @@ import traceback
 from typing import List
 
 from api.models.ast_results import ParsedFile
+from api.services.context_builder import (
+    build_file_context,
+    build_file_diff_from_patch,
+)
 from api.services.firebase_service import firebase_service
 from api.services.lint_service import run_lint
 from api.services.parse_file_to_ast import _ast_parse_file_full
 from api.utils.comment_formatter import (
     format_github_comment,
     format_inline_comment,
+    format_pr_description,
     format_review_summary,
 )
+from code_review_agent.agent_executor import execute_review_agent
+from code_review_agent.config import config
 from code_review_agent.models.agent_schemas import ContextData, Issue, ReconciledReview
 from common.debug_writer import make_review_dir, write_step
 from common.diff_line_mapper import (
@@ -35,37 +56,35 @@ async def review_pipeline(
     pr_number: int,
     neo4j: Neo4jClient | None = None,
 ) -> None:
-    """Agentic per-file PR review using the new pipeline.
+    """Run code review on a PR using the 3-node agent.
 
-    Reuses existing infrastructure:
-    - Already fetches post-PR files (lines 890-898)
-    - Already parses ASTs (lines 902-904)
-    - Already computes hunks
-
-    Only adds:
-    - Per-file review with guard detection
-    - Parallel execution
-    - Neo4j context per file
+    This function:
+    1. Fetches PR data (diff, files, ASTs)
+    2. Builds context for each file
+    3. Runs 3-node agent on each file
+    4. Aggregates results
+    5. Posts GitHub comments
     """
     project_owner = firebase_service.find_project_owner_id(owner)
+    logger.info(f"Reviewing {owner}/{repo}#{pr_number} (owner: {project_owner})")
 
-    logger.info("The Owner UId is %s", project_owner)
     repo_id = f"{owner}/{repo}"
     if neo4j is None:
         neo4j = get_neo4j_client()
 
+    # Validate PR number
     try:
         pr_number = int(pr_number)
         if pr_number <= 0:
             raise ValueError
     except (ValueError, TypeError):
-        logger.error("Invalid pr_number %r — aborting", pr_number)
+        logger.error(f"Invalid pr_number {pr_number!r} — aborting")
         return
 
     review_dir = make_review_dir(owner, repo, pr_number)
-
     query_service = CodeSearchService(neo4j)
 
+    # Set review status to RUNNING
     if project_owner:
         firebase_service.upsert_pr_metadata(
             project_owner,
@@ -82,6 +101,7 @@ async def review_pipeline(
         )
 
     try:
+        # Fetch PR data
         gh = get_github_client()
         diff_text, pr_info, head_sha = await asyncio.gather(
             gh.get_pr_diff(owner, repo, pr_number),
@@ -139,6 +159,7 @@ async def review_pipeline(
             json.dumps([pf.toDict() for pf in parsed_files], indent=2),
         )
 
+        # Build code samples from Neo4j
         code_samples_by_file: dict[str, dict[str, list[dict]]] = {
             pf.path: {"classes": [], "functions": [], "imports": []} for pf in parsed_files
         }
@@ -155,16 +176,24 @@ async def review_pipeline(
             for imp in pf.imports:
                 all_names.add(imp.name)
 
+            seen_samples: set[tuple[str, str]] = set()
+
             for name in all_names:
-                query_result = query_service.search_code(name)
+                query_result = query_service.search_code(name, repo_id=repo_id)
                 if not query_result:
                     continue
 
-                for each_result in query_result:
+                # Only take top 3 most relevant results per symbol
+                for each_result in query_result[:3]:
                     result_path = each_result.get("path", pf.path)
                     result_type = each_result.get("type", "")
                     source_code = each_result.get("source_code", "")
                     docstring = each_result.get("docstring", "")
+
+                    sample_key = (name, result_path)
+                    if sample_key in seen_samples:
+                        continue
+                    seen_samples.add(sample_key)
 
                     sample = {
                         "name": name,
@@ -188,38 +217,113 @@ async def review_pipeline(
                     else:
                         code_samples_by_file[pf.path]["functions"].append(sample)
 
-        # Run agentic review (lazy import to avoid circular dependency)
-        from code_review_agent.agentic_pipeline import execute_agentic_review
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Run 3-node agent on each file
+        # ─────────────────────────────────────────────────────────────────────────────
 
-        code_review_results = await execute_agentic_review(
-            owner=owner,
-            repo=repo,
-            pr_number=pr_number,
-            neo4j=neo4j,
-            pr_files=pr_files,
-            parsed_files=parsed_files,
-            diff_text=diff_text,
-            pr_info=pr_info,
-            file_diffs=file_diffs,
-            review_dir=review_dir,
-            code_samples_by_file=code_samples_by_file,
+        all_issues = []
+        all_positive_findings = []
+        all_walkthroughs = []
+        total_tool_rounds = 0
+
+        for file_path in files_changed:
+            content = pr_files.get(file_path, "")
+            ast = next((pf for pf in parsed_files if pf.path == file_path), None)
+            full_diff = build_file_diff_from_patch(file_path, file_diffs.get(file_path, ""))
+            safe_filename = file_path.replace("/", "_").replace(".", "_")
+
+            file_code_samples = (
+                code_samples_by_file.get(file_path, {"classes": [], "functions": [], "imports": []})
+                if code_samples_by_file
+                else {"classes": [], "functions": [], "imports": []}
+            )
+
+            # Build file context
+            file_context = build_file_context(
+                file_path=file_path,
+                full_diff=full_diff,
+                full_file_content=content,
+                file_ast=ast,
+                previous_issues="No previous issues for this file.",
+                explorer_context="",
+                code_samples=file_code_samples,
+            )
+
+            # Write review prompt
+            if review_dir:
+                write_step(
+                    review_dir,
+                    f"04_review_prompt_{safe_filename}.md",
+                    f"# Review Agent Prompt: {file_path}\n\n{file_context}",
+                )
+
+            # Run 3-node agent
+            logger.info(f"Reviewing {file_path}...")
+            result = await execute_review_agent(
+                file_path=file_path,
+                file_context=file_context,
+                query_service=query_service,
+                repo_id=repo_id,
+                model=config.review_model,
+                review_dir=review_dir,
+                safe_filename=safe_filename,
+            )
+
+            # Check for errors
+            if "error" in result:
+                logger.error(f"Agent failed for {file_path}: {result['error']}")
+                continue
+
+            # Aggregate results
+            for file_issue in result.get("file_based_issues", []):
+                all_issues.append(file_issue)
+
+            for finding in result.get("file_based_positive_findings", []):
+                all_positive_findings.append(finding)
+
+            for walk in result.get("file_based_walkthrough", []):
+                all_walkthroughs.append(walk)
+
+            total_tool_rounds += result.get("tool_rounds", 0)
+
+        logger.info(
+            f"Review complete: {len(all_issues)} total issues, "
+            f"{len(all_positive_findings)} positive findings, "
+            f"{total_tool_rounds} tool rounds"
         )
 
+        # ─────────────────────────────────────────────────────────────────────────────
         # Run lint in parallel
+        # ─────────────────────────────────────────────────────────────────────────────
+
         lint_issues_raw = await run_lint(pr_files)
         lint_issues = [i for i in lint_issues_raw if i.file in pr_files]
 
-        # Convert issues
-        llm_issues = [Issue(**i) for i in code_review_results.issues]
+        # Convert to Issue format
+        all_issues_formatted = []
+        for file_issue in all_issues:
+            for issue in file_issue.get("issues", []):
+                all_issues_formatted.append(Issue(**issue))
 
-        # Build walkthrough
-        walk_through = code_review_results.walk_through or []
+        # Build walkthrough - now single sentence per file
+        walk_through = []
+        for walk in all_walkthroughs:
+            summary = walk.get("summary", "")
+            file_path = walk.get("file", "")
+            if summary:
+                walk_through.append(f"{file_path} — {summary}")
+
         for fp in files_changed:
             if not any(fp in entry for entry in walk_through):
                 walk_through.append(f"{fp} — Modified")
 
         # Save to Firestore
         if project_owner:
+            all_issues_flat = [issue.model_dump() for issue in all_issues_formatted]
+            positive_findings_flat = []
+            for finding in all_positive_findings:
+                for pf in finding.get("positive_finding", []):
+                    positive_findings_flat.append(pf)
 
             firebase_service.save_review_run(
                 project_owner,
@@ -227,16 +331,19 @@ async def review_pipeline(
                 repo,
                 pr_number,
                 ReviewRunData(
-                    issues=[i.model_dump() for i in lint_issues + llm_issues],
-                    positive_findings=code_review_results.positive_findings,
-                    summary=code_review_results.summary,
+                    issues=all_issues_flat + [i.model_dump() for i in lint_issues],
+                    positive_findings=positive_findings_flat,
+                    summary=f"Reviewed {len(files_changed)} files",
                     files_changed=files_changed,
                     repo_id=repo_id,
                     pr_number=pr_number,
                 ),
             )
 
-        # Context data
+        # ─────────────────────────────────────────────────────────────────────────────
+        # Post GitHub comments
+        # ─────────────────────────────────────────────────────────────────────────────
+
         context_data = ContextData(
             files_changed=files_changed,
             modified_symbols=[],
@@ -244,27 +351,26 @@ async def review_pipeline(
             risk_level="medium",
         )
 
-        # Valid comment lines
         valid_comment_lines = get_valid_comment_lines(diff_text)
-
-        # Get hunk ranges to determine inline vs regular comment
         hunk_ranges = get_hunk_ranges(diff_text)
 
-        # Debug: dump diff parsing info to JSON file
+        # Debug: dump diff parsing info
         debug_diff_info = {
             "valid_comment_lines": {k: sorted(list(v)) for k, v in valid_comment_lines.items()},
             "hunk_ranges": hunk_ranges,
         }
         write_step(review_dir, "00_diff_parsing_debug.json", json.dumps(debug_diff_info, indent=2))
 
-        # High-confidence issues
+        # High-confidence issues for inline comments
         inline_candidates = [
-            i for i in llm_issues if i.status in ("new", "still_open") and i.confidence >= 7
+            i
+            for i in all_issues_formatted
+            if i.status in ("new", "still_open") and i.confidence >= 7
         ]
         has_blocking = any(i.category in ("bug", "security") for i in inline_candidates)
         review_event = "REQUEST_CHANGES" if has_blocking else "COMMENT"
 
-        # Separate issues into inline vs regular comment candidates
+        # Separate issues into inline vs regular
         inline_to_post = []
         regular_comment_issues = []
         for issue in inline_candidates:
@@ -274,7 +380,7 @@ async def review_pipeline(
             else:
                 regular_comment_issues.append(issue)
 
-        # Post inline comments (only for issues within hunk ranges)
+        # Post inline comments
         inline_posted = inline_skipped = 0
         for issue in inline_to_post:
             valid_start, valid_end = validate_issue_line(
@@ -305,7 +411,7 @@ async def review_pipeline(
             else:
                 inline_skipped += 1
 
-        # Post regular comments for issues outside hunk ranges
+        # Post regular comments
         regular_comments_posted = 0
         for issue in regular_comment_issues:
             body = format_inline_comment(issue)
@@ -313,18 +419,18 @@ async def review_pipeline(
             if ok:
                 regular_comments_posted += 1
 
-        # Post review comment
+        # Post review summary
         reconciled = ReconciledReview(
-            issues=llm_issues,
-            positive_findings=code_review_results.positive_findings,
-            summary=code_review_results.summary,
+            issues=all_issues_formatted,
+            positive_findings=positive_findings_flat,
+            summary=f"Reviewed {len(files_changed)} files",
         )
 
         debug_info = {
-            "tool_rounds_used": code_review_results.total_tool_rounds,
+            "tool_rounds_used": total_tool_rounds,
             "lint_raw_count": len(lint_issues_raw),
             "lint_on_diff_count": len(lint_issues),
-            "files_reviewed": code_review_results.total_files_reviewed,
+            "files_reviewed": len(files_changed),
         }
 
         review_body = format_review_summary(
@@ -335,15 +441,22 @@ async def review_pipeline(
             walk_through=walk_through,
             inline_posted=inline_posted,
             inline_skipped=inline_skipped,
-            raw_agent_outputs=code_review_results.raw_agent_outputs,
+            raw_agent_outputs={},
             debug_info=debug_info,
         )
 
         try:
             await gh.post_pr_review(owner, repo, pr_number, head_sha, review_body, review_event)
-            logger.info(
-                "Posted AGENTIC review (%s) on %s/%s#%s", review_event, owner, repo, pr_number
-            )
+            logger.info(f"Posted review ({review_event}) on {owner}/{repo}#{pr_number}")
+
+            # Update PR description with summary
+            if config.enable_pr_description_update:
+                try:
+                    pr_description = format_pr_description(reconciled, walk_through)
+                    await gh.update_pr_body(owner, repo, pr_number, pr_description)
+                    logger.info(f"Updated PR description for {owner}/{repo}#{pr_number}")
+                except Exception as e:
+                    logger.warning(f"Failed to update PR description: {e}")
         except Exception:
             fallback = format_github_comment(
                 reconciled,
@@ -354,6 +467,7 @@ async def review_pipeline(
             )
             await gh.post_comment(owner, repo, pr_number, fallback)
 
+        # Mark as COMPLETED
         if project_owner:
             firebase_service.upsert_pr_metadata(
                 project_owner,
@@ -371,17 +485,18 @@ async def review_pipeline(
 
     except Exception as e:
         error_msg = str(e) or type(e).__name__
-        logger.error("Agentic review failed:\n%s", traceback.format_exc())
+        logger.error(f"Review failed:\n{traceback.format_exc()}")
         try:
             gh = get_github_client()
             await gh.post_comment(
                 owner,
                 repo,
                 pr_number,
-                f"🚨 **BugViper Agentic Review Failed**\n\n`{error_msg}`",
+                f"🚨 **BugViper Review Failed**\n\n`{error_msg}`",
             )
         except Exception:
             pass
+
         if project_owner:
             firebase_service.upsert_pr_metadata(
                 project_owner,
