@@ -172,7 +172,7 @@ def _render_definitions_section(
             name = sample.get("name", "Unknown")
             source = sample.get("source_code") or ""
             docstring = sample.get("docstring") or ""
-            path = sample.get("path", "")
+            path = sample.get("file", "")
             parts.append(f"### `{name}` ({path})")
             if docstring:
                 parts.append(f"Docstring: {docstring}")

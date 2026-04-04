@@ -176,16 +176,24 @@ async def review_pipeline(
             for imp in pf.imports:
                 all_names.add(imp.name)
 
+            seen_samples: set[tuple[str, str]] = set()
+
             for name in all_names:
-                query_result = query_service.search_code(name)
+                query_result = query_service.search_code(name, repo_id=repo_id)
                 if not query_result:
                     continue
 
-                for each_result in query_result:
+                # Only take top 3 most relevant results per symbol
+                for each_result in query_result[:3]:
                     result_path = each_result.get("path", pf.path)
                     result_type = each_result.get("type", "")
                     source_code = each_result.get("source_code", "")
                     docstring = each_result.get("docstring", "")
+
+                    sample_key = (name, result_path)
+                    if sample_key in seen_samples:
+                        continue
+                    seen_samples.add(sample_key)
 
                     sample = {
                         "name": name,
