@@ -103,10 +103,13 @@ async def review_pipeline(
     try:
         # Fetch PR data
         gh = get_github_client()
-        diff_text, pr_info, head_sha = await asyncio.gather(
+        # Fetch all independent PR data in parallel
+        # These 4 calls don't depend on each other, so run them all at once
+        diff_text, pr_info, head_sha, pr_files_data = await asyncio.gather(
             gh.get_pr_diff(owner, repo, pr_number),
             gh.get_pr_info(owner, repo, pr_number),
             gh.get_pr_head_ref(owner, repo, pr_number),
+            gh.get_pr_files(owner, repo, pr_number),
         )
 
         if not diff_text:
@@ -130,8 +133,7 @@ async def review_pipeline(
         pr_title = pr_info.get("title", "")
         write_step(review_dir, "01_diff.md", f"# Diff\n{pr_title}\n```diff\n{diff_text}\n```")
 
-        # Fetch file-specific diffs
-        pr_files_data = await gh.get_pr_files(owner, repo, pr_number)
+        # Build file diff map and list of changed files
         file_diffs: dict[str, str] = {
             f["filename"]: f.get("patch") or "" for f in pr_files_data if f.get("patch")
         }
@@ -218,38 +220,35 @@ async def review_pipeline(
                         code_samples_by_file[pf.path]["functions"].append(sample)
 
         # ─────────────────────────────────────────────────────────────────────────────
-        # Run 3-node agent on each file
+        # Phase 1: Build file contexts, then run all per-file agents in parallel
         # ─────────────────────────────────────────────────────────────────────────────
 
-        all_issues = []
-        all_positive_findings = []
-        all_walkthroughs = []
-        total_tool_rounds = 0
+        # Step 1: Build markdown context for each changed file (sequential, fast)
+        file_review_tasks: list[dict] = []
 
         for file_path in files_changed:
-            content = pr_files.get(file_path, "")
-            ast = next((pf for pf in parsed_files if pf.path == file_path), None)
-            full_diff = build_file_diff_from_patch(file_path, file_diffs.get(file_path, ""))
+            file_content = pr_files.get(file_path, "")
+            file_ast = next((pf for pf in parsed_files if pf.path == file_path), None)
+            file_diff = build_file_diff_from_patch(file_path, file_diffs.get(file_path, ""))
             safe_filename = file_path.replace("/", "_").replace(".", "_")
 
-            file_code_samples = (
-                code_samples_by_file.get(file_path, {"classes": [], "functions": [], "imports": []})
-                if code_samples_by_file
-                else {"classes": [], "functions": [], "imports": []}
+            # Get Neo4j code samples for this file
+            file_code_samples = code_samples_by_file.get(
+                file_path, {"classes": [], "functions": [], "imports": []}
             )
 
-            # Build file context
+            # Build the full markdown prompt that the agent will receive
             file_context = build_file_context(
                 file_path=file_path,
-                full_diff=full_diff,
-                full_file_content=content,
-                file_ast=ast,
+                full_diff=file_diff,
+                full_file_content=file_content,
+                file_ast=file_ast,
                 previous_issues="No previous issues for this file.",
                 explorer_context="",
                 code_samples=file_code_samples,
             )
 
-            # Write review prompt
+            # Save the prompt to debug output
             if review_dir:
                 write_step(
                     review_dir,
@@ -257,47 +256,95 @@ async def review_pipeline(
                     f"# Review Agent Prompt: {file_path}\n\n{file_context}",
                 )
 
-            # Run 3-node agent
-            logger.info(f"Reviewing {file_path}...")
+            file_review_tasks.append(
+                {
+                    "file_path": file_path,
+                    "file_context": file_context,
+                    "safe_filename": safe_filename,
+                }
+            )
+
+        # Step 2: Run all file agents AND lint at the same time (parallel)
+        # Lint doesn't depend on agent results, so run it alongside them.
+        # asyncio.gather launches them all and waits for all to finish.
+        logger.info(f"Launching {len(file_review_tasks)} file agents + lint in parallel...")
+
+        async def _run_single_file_review(task: dict) -> dict:
+            """Run the 3-node agent on one file and tag the result with its path."""
             result = await execute_review_agent(
-                file_path=file_path,
-                file_context=file_context,
+                file_path=task["file_path"],
+                file_context=task["file_context"],
                 query_service=query_service,
                 repo_id=repo_id,
                 model=config.review_model,
                 review_dir=review_dir,
-                safe_filename=safe_filename,
+                safe_filename=task["safe_filename"],
             )
+            result["_file_path"] = task["file_path"]
+            return result
 
-            # Check for errors
-            if "error" in result:
-                logger.error(f"Agent failed for {file_path}: {result['error']}")
-                continue
-
-            # Aggregate results
-            for file_issue in result.get("file_based_issues", []):
-                all_issues.append(file_issue)
-
-            for finding in result.get("file_based_positive_findings", []):
-                all_positive_findings.append(finding)
-
-            for walk in result.get("file_based_walkthrough", []):
-                all_walkthroughs.append(walk)
-
-            total_tool_rounds += result.get("tool_rounds", 0)
-
-        logger.info(
-            f"Review complete: {len(all_issues)} total issues, "
-            f"{len(all_positive_findings)} positive findings, "
-            f"{total_tool_rounds} tool rounds"
+        # Launch all agents + lint simultaneously and wait for all to complete
+        agent_results = await asyncio.gather(
+            *[_run_single_file_review(task) for task in file_review_tasks],
+            run_lint(pr_files),
+            return_exceptions=True,
         )
 
-        # ─────────────────────────────────────────────────────────────────────────────
-        # Run lint in parallel
-        # ─────────────────────────────────────────────────────────────────────────────
+        # Split results: last item is lint, rest are file agents
+        lint_raw_result = agent_results[-1]
+        file_agent_results = agent_results[:-1]
 
-        lint_issues_raw = await run_lint(pr_files)
-        lint_issues = [i for i in lint_issues_raw if i.file in pr_files]
+        # Handle lint result
+        if isinstance(lint_raw_result, Exception):
+            logger.warning(f"Lint failed: {lint_raw_result}")
+            lint_issues: list = []
+            lint_raw_count = 0
+        else:
+            all_lint_results = lint_raw_result
+            lint_raw_count = len(all_lint_results)
+            lint_issues = [issue for issue in all_lint_results if issue.file in pr_files]
+
+        # Step 3: Collect results from all agents
+        all_issues: list[dict] = []
+        all_positive_findings: list[dict] = []
+        all_walkthroughs: list[dict] = []
+        total_tool_rounds = 0
+        failed_file_paths: list[str] = []
+
+        for result in file_agent_results:
+            # Handle crashed agents (network errors, LLM failures, etc.)
+            if isinstance(result, Exception):
+                logger.error(f"Agent crashed: {result}")
+                failed_file_paths.append("unknown")
+                continue
+
+            # Handle agents that returned an error dict
+            if "error" in result:
+                file_path = result.get("_file_path", "unknown")
+                logger.error(f"Agent failed for {file_path}: {result['error']}")
+                failed_file_paths.append(file_path)
+                continue
+
+            # Aggregate successful results
+            for file_issue in result.get("file_based_issues", []):
+                all_issues.append(file_issue)
+            for finding in result.get("file_based_positive_findings", []):
+                all_positive_findings.append(finding)
+            for walkthrough in result.get("file_based_walkthrough", []):
+                all_walkthroughs.append(walkthrough)
+            total_tool_rounds += result.get("tool_rounds", 0)
+
+        if failed_file_paths:
+            logger.warning(
+                f"{len(failed_file_paths)}/{len(file_review_tasks)} files failed: "
+                f"{failed_file_paths}"
+            )
+
+        logger.info(
+            f"Review complete: {len(all_issues)} issues, "
+            f"{len(all_positive_findings)} positives, "
+            f"{total_tool_rounds} tool rounds"
+        )
 
         # Convert to Issue format
         all_issues_formatted = []
@@ -428,7 +475,7 @@ async def review_pipeline(
 
         debug_info = {
             "tool_rounds_used": total_tool_rounds,
-            "lint_raw_count": len(lint_issues_raw),
+            "lint_raw_count": lint_raw_count,
             "lint_on_diff_count": len(lint_issues),
             "files_reviewed": len(files_changed),
         }
