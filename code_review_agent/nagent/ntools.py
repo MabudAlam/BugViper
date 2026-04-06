@@ -24,7 +24,7 @@ def get_code_review_tools(query_service: CodeSearchService, repo_id: str | None 
 
     @tool(response_format="content_and_artifact")
     def search_code(query: str) -> tuple[str, list[_S]]:
-        """Search the codebase for functions, classes, variables and file content by name or keyword.
+        """Search functions, classes, variables and file content by name or keyword.
         Use this first when you need to locate any symbol or code snippet.
         Returns: type, name, file path, line number.
         """
@@ -58,7 +58,11 @@ def get_code_review_tools(query_service: CodeSearchService, repo_id: str | None 
         result = query_service.peek_file_lines(path, line, min(above, 200), min(below, 200))
         if "error" in result:
             return f"Error: {result['error']}", []
-        header = f"File: {result['path']}  (anchor: line {result['anchor_line']}, total: {result['total_lines']} lines)"
+        header = (
+            f"File: {result['path']}  "
+            f"(anchor: line {result['anchor_line']}, "
+            f"total: {result['total_lines']} lines)"
+        )
         sep = "-" * 60
         body = ""
         for entry in result["window"]:
@@ -86,7 +90,8 @@ def get_code_review_tools(query_service: CodeSearchService, repo_id: str | None 
         for r in results[:10]:
             score = f"{float(r.get('score') or 0):.3f}"
             lines.append(
-                f"[{r.get('type')}] {r.get('name')}  score={score}  →  {r.get('path')}:{r.get('line_number')}"
+                f"[{r.get('type')}] {r.get('name')}  "
+                f"score={score}  →  {r.get('path')}:{r.get('line_number')}"
             )
             if r.get("docstring"):
                 lines.append(f"    {r['docstring'][:120]}")
@@ -244,7 +249,10 @@ def get_code_review_tools(query_service: CodeSearchService, repo_id: str | None 
         if not results:
             return f"No imports found for: '{name}'", []
         lines = [
-            f"{r.get('module_name')} → {r.get('imported_name')}  alias={r.get('alias')}  {r.get('path')}:{r.get('line_number')}"
+            (
+                f"{r.get('module_name')} → {r.get('imported_name')}  "
+                f"alias={r.get('alias')}  {r.get('path')}:{r.get('line_number')}"
+            )
             for r in results
         ]
         sources = [_src(r["path"], r.get("line_number")) for r in results if r.get("path")]
@@ -294,7 +302,8 @@ def get_code_review_tools(query_service: CodeSearchService, repo_id: str | None 
         sources: list[_S] = []
         for defn in result.get("definitions") or []:
             lines.append(
-                f"Definition: [{defn.get('type')}] {defn.get('name')}  →  {defn.get('path')}:{defn.get('line_number')}"
+                f"Definition: [{defn.get('type')}] {defn.get('name')}  →  "
+                f"{defn.get('path')}:{defn.get('line_number')}"
             )
             if defn.get("path"):
                 sources.append(
@@ -385,7 +394,11 @@ def get_code_review_tools(query_service: CodeSearchService, repo_id: str | None 
         risk = (
             "simple"
             if score <= 5
-            else "moderate" if score <= 10 else "complex" if score <= 20 else "high risk"
+            else "moderate"
+            if score <= 10
+            else "complex"
+            if score <= 20
+            else "high risk"
         )
         content = (
             f"Function: {result.get('name')}\n"
@@ -411,7 +424,12 @@ def get_code_review_tools(query_service: CodeSearchService, repo_id: str | None 
             return "No language stats available.", []
         rows = result.get("languages", result) if isinstance(result, dict) else result
         lines = [
-            f"  {r.get('language', '?'):<15} files={r.get('file_count', 0):>4}  functions={r.get('function_count', 0):>5}  classes={r.get('class_count', 0):>4}"
+            (
+                f"  {r.get('language', '?'):<15} "
+                f"files={r.get('file_count', 0):>4}  "
+                f"functions={r.get('function_count', 0):>5}  "
+                f"classes={r.get('class_count', 0):>4}"
+            )
             for r in (rows if isinstance(rows, list) else [])
         ]
         return "Language breakdown:\n" + "\n".join(lines), []

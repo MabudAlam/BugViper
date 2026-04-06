@@ -33,7 +33,10 @@ def run_review_agent(
 
     Example:
         >>> result = run_review_agent(
-        ...     review_context_file="output/review-2026-04-02_20-32-14/04_review_prompt_api_routers_webhook_py.md",
+        ...     review_context_file=(
+        ...         "output/review-2026-04-02_20-32-14"
+        ...         "/04_review_prompt_api_routers_webhook_py.md"
+        ...     ),
         ...     repo_id="owner/repo"
         ... )
         >>> print(result["file_based_issues"])
@@ -72,7 +75,10 @@ def run_review_agent(
     # Add initial human message to start the agent
     initial_state["messages"] = [
         HumanMessage(
-            content="Please review this code change and identify any issues, positive findings, and provide a walkthrough."
+            content=(
+                "Please review this code change and identify any issues, "
+                "positive findings, and provide a walkthrough."
+            )
         )
     ]
 

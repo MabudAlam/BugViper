@@ -18,7 +18,15 @@ class ReviewCodeIssue(BaseModel):
     )
     category: str = Field(
         default="bug",
-        description="Issue category: 'bug', 'security', 'performance', 'error_handling', 'style'",
+        description=("Issue category: 'bug', 'security', 'performance', 'error_handling'"),
+    )
+    severity: str = Field(
+        default="medium",
+        description=(
+            "Issue severity: 'critical' (data loss, security breach, outage), "
+            "'high' (crash, incorrect results, broken functionality), "
+            "'medium' (performance degradation, poor error handling, edge case failure)"
+        ),
     )
     title: str = Field(description="Short specific title naming the exact bug")
     file: str = Field(description="File path where issue was found")
@@ -30,7 +38,8 @@ class ReviewCodeIssue(BaseModel):
     description: str = Field(
         default="",
         description=(
-            "What the code does wrong, what input triggers it, what happens at runtime, why it matters."
+            "What the code does wrong, what input triggers it, "
+            "what happens at runtime, why it matters."
         ),
     )
     suggestion: str = Field(
@@ -51,7 +60,8 @@ class ReviewCodeIssue(BaseModel):
         le=10,
         description=(
             "Self-assessed confidence 0-10. "
-            "10 = provable from diff. 7-9 = strong signal. 5-6 = likely."
+            "10 = provable from diff. 7-9 = strong signal. "
+            "Issues below 7 must be excluded."
         ),
     )
     ai_fix: str = Field(
@@ -81,7 +91,8 @@ class AgentPositiveFinding(BaseModel):
     positive_finding: list[str] = Field(
         default_factory=list,
         description=(
-            "List of positive findings in this file. Examples: 'Good error handling', 'Clear logic', "
+            "List of positive findings in this file. "
+            "Examples: 'Good error handling', 'Clear logic', "
             "'Well-structured code', 'Performance optimization', 'Security best practice'."
         ),
     )
@@ -110,8 +121,52 @@ class ReviewerOutput(BaseModel):
         description="List of issues found, grouped by file.",
     )
     file_based_positive_findings: list[AgentPositiveFinding] = Field(
-        default_factory=list,
+        default_factory=lambda: [],
         description="List of positive findings, grouped by file.",
+    )
+
+
+class PreviousIssue(BaseModel):
+    """A previous issue from an earlier review run."""
+
+    title: str = Field(description="Issue title")
+    file: str = Field(description="File path")
+    line_start: int = Field(description="Starting line number")
+    line_end: int | None = Field(default=None, description="Ending line number")
+    description: str = Field(default="", description="Issue description")
+    code_snippet: str = Field(default="", description="Code snippet that shows the issue")
+    status: str = Field(default="new", description="Original status from previous review")
+
+
+class ValidatedIssue(BaseModel):
+    """A previous issue validated by AI against current code."""
+
+    title: str = Field(description="Original issue title")
+    file: str = Field(description="File path")
+    line_start: int = Field(description="Original line number (may have shifted)")
+    line_end: int | None = Field(default=None, description="End line if multi-line")
+    status: str = Field(description="One of: 'fixed', 'still_open', or 'partially_fixed'")
+    reason: str = Field(description="Brief explanation of why this status was determined")
+    confidence: int = Field(
+        default=8,
+        ge=0,
+        le=10,
+        description="Confidence 0-10 in the status determination",
+    )
+    category: str = Field(default="bug", description="Issue category")
+    severity: str = Field(default="medium", description="Issue severity")
+    description: str = Field(default="", description="Issue description")
+    suggestion: str = Field(default="", description="How to fix")
+    impact: str = Field(default="", description="Impact if not fixed")
+    code_snippet: str = Field(default="", description="Code snippet showing the issue")
+
+
+class ValidatorOutput(BaseModel):
+    """Structured output from the validator node."""
+
+    validated_issues: list[ValidatedIssue] = Field(
+        default_factory=list,
+        description="List of previous issues with their validation status.",
     )
 
 
@@ -142,15 +197,15 @@ def _merge_sources(
 class CodeReviewAgentState(TypedDict):
     """State for the code review LangGraph agent."""
 
-    # Input context (from pipeline)
     file_based_context: str
+    file_content: str
+    previous_issues: list[dict[str, Any]]
+    validated_previous_issues: list[dict[str, Any]]
 
-    # Exploration state (agent working memory)
     messages: Annotated[list[AnyMessage], add_messages]
     tool_rounds: int
     sources: Annotated[list[dict[str, Any]], _merge_sources]
 
-    # Output results (filled by agent)
     file_based_issues: list[FileBasedIssues]
     file_based_positive_findings: list[AgentPositiveFinding]
     file_based_walkthrough: list[FileBasedWalkthrough]
