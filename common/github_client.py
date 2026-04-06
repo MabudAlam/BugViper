@@ -381,6 +381,31 @@ class GitHubClient:
             for f in files
         ]
 
+    async def get_pr_commits(self, owner: str, repo: str, pr_number: int) -> List[Dict[str, Any]]:
+        """Get all commits in a PR, ordered from oldest to newest."""
+        token = await self._get_token(owner, repo)
+        commits = await self._get_paginated(
+            token, f"/repos/{owner}/{repo}/pulls/{pr_number}/commits"
+        )
+        return [
+            {
+                "sha": c["sha"],
+                "message": c["commit"]["message"].split("\n")[0],
+                "date": c["commit"]["author"]["date"],
+            }
+            for c in commits
+        ]
+
+    async def get_commit_diff(self, owner: str, repo: str, sha: str) -> str:
+        """Get the diff for a specific commit."""
+        token = await self._get_token(owner, repo)
+        r = await self._http.get(
+            f"/repos/{owner}/{repo}/commits/{sha}",
+            headers={**self._auth_headers(token), "Accept": "application/vnd.github.diff"},
+        )
+        r.raise_for_status()
+        return r.text
+
     async def get_file_content(
         self,
         owner: str,
@@ -519,6 +544,43 @@ class GitHubClient:
             json={"body": new_body},
         )
         r.raise_for_status()
+
+    async def create_comment_reaction(
+        self,
+        owner: str,
+        repo: str,
+        comment_id: int,
+        reaction: str,
+    ) -> bool:
+        """Add a reaction to an issue/PR comment.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            comment_id: The comment ID from the webhook payload
+            reaction: One of: +1, -1, laugh, confused, heart, hooray, rocket, eyes
+
+        Returns:
+            True if successful, False otherwise
+        """
+        valid_reactions = {"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"}
+        if reaction not in valid_reactions:
+            logger.warning(f"Invalid reaction: {reaction}. Must be one of {valid_reactions}")
+            return False
+
+        token = await self._get_token(owner, repo)
+        r = await self._http.post(
+            f"/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
+            headers={
+                **self._auth_headers(token),
+                "Accept": "application/vnd.github.squirrel-girl-preview+json",
+            },
+            json={"content": reaction},
+        )
+        if r.status_code not in (200, 201):
+            logger.warning(f"Failed to add reaction: {r.status_code} - {r.text}")
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
