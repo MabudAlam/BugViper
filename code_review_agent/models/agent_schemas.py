@@ -15,7 +15,15 @@ class Issue(BaseModel):
     )
     category: str = Field(
         default="bug",
-        description="Issue category: 'bug', 'security', 'performance', 'error_handling', 'style'",
+        description=("Issue category: 'bug', 'security', 'performance', 'error_handling'"),
+    )
+    severity: str = Field(
+        default="medium",
+        description=(
+            "Issue severity: 'critical' (data loss, security breach, outage), "
+            "'high' (crash, incorrect results, broken functionality), "
+            "'medium' (performance degradation, poor error handling, edge case failure)"
+        ),
     )
     title: str = Field(description="Short specific title naming the exact bug")
     file: str = Field(description="File path where issue was found")
@@ -47,8 +55,9 @@ class Issue(BaseModel):
         ge=0,
         le=10,
         description=(
-            "Self-assessed confidence 0-9. "
-            "9 = provable from diff. 7-8 = strong signal. 5-6 = likely."
+            "Self-assessed confidence 0-10. "
+            "10 = provable from diff. 7-9 = strong signal. "
+            "Issues below 7 must be excluded."
         ),
     )
     ai_fix: str = Field(
