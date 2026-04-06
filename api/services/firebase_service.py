@@ -375,6 +375,110 @@ class BugViperFirebaseService:
         logger.info(f"Saved review run {run_id} for {owner}/{repo}#{pr_number}")
         return run_id
 
+    def get_last_review_run(
+        self,
+        uid: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> dict | None:
+        """
+        Get the most recent review run for a PR.
+
+        Path: users/{uid}/repos/{owner}_{repo}/prs/{pr_number}/reviews/run_{n}
+
+        Returns:
+            The last review run dict with issues, or None if no reviews exist.
+        """
+        repo_key = f"{owner}_{repo}"
+        pr_ref = (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("prs")
+            .document(str(pr_number))
+            .collection("reviews")
+        )
+
+        existing = list(pr_ref.stream())
+        if not existing:
+            return None
+
+        existing.sort(
+            key=lambda d: d.to_dict().get("runNumber", 0) if d.exists else 0,
+            reverse=True,
+        )
+        last_doc = existing[0]
+        return last_doc.to_dict() if last_doc.exists else None
+
+    def update_previous_run_issues(
+        self,
+        uid: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        validated_issues: list[dict[str, Any]],
+    ) -> None:
+        """Update issues in the previous run with their validation status.
+
+        Marks issues as 'fixed' in the previous run when they are no longer present
+        in the current code.
+
+        Args:
+            uid: User ID
+            owner: Repository owner
+            repo: Repository name
+            pr_number: PR number
+            validated_issues: List of validated issues with status field
+        """
+        if not validated_issues:
+            return
+
+        last_run = self.get_last_review_run(uid, owner, repo, pr_number)
+        if not last_run or not last_run.get("issues"):
+            return
+
+        repo_key = f"{owner}_{repo}"
+        run_number = last_run.get("runNumber", 1)
+        run_id = f"run_{run_number}"
+
+        run_ref = (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("prs")
+            .document(str(pr_number))
+            .collection("reviews")
+            .document(run_id)
+        )
+
+        old_issues = last_run.get("issues", [])
+        issue_map = {(i.get("file"), i.get("line_start"), i.get("title")): i for i in old_issues}
+
+        updated = False
+        for validated in validated_issues:
+            if validated.get("status") != "fixed":
+                continue
+
+            key = (
+                validated.get("file"),
+                validated.get("line_start"),
+                validated.get("title"),
+            )
+            if key in issue_map:
+                issue_map[key]["status"] = "fixed"
+                issue_map[key]["fixedAt"] = datetime.now(timezone.utc).isoformat()
+                issue_map[key]["fixedInRun"] = run_number + 1
+                updated = True
+                logger.info(f"Marked issue as fixed: {validated.get('title')}")
+
+        if updated:
+            run_ref.update({"issues": list(issue_map.values())})
+            fixed_count = sum(1 for i in validated_issues if i.get("status") == "fixed")
+            logger.info(f"Updated {fixed_count} fixed issues in previous run")
+
     # ── Customer support ──────────────────────────────────────────────────
 
     def save_customer_query(
