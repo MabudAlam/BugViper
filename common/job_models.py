@@ -83,3 +83,5 @@ class PRReviewPayload(BaseModel):
     owner: str
     repo: str
     pr_number: int
+    review_type: str = "incremental_review"
+    comment_id: int | None = None  # For reactions on the triggering comment
