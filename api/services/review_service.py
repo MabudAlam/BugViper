@@ -22,6 +22,7 @@ from api.models.ast_results import ParsedFile
 from api.services.context_builder import (
     build_file_context,
     build_file_diff_from_patch,
+    format_previous_issues,
 )
 from api.services.firebase_service import firebase_service
 from api.services.lint_service import run_lint
@@ -42,6 +43,7 @@ from common.diff_line_mapper import (
     is_line_in_hunk,
     validate_issue_line,
 )
+from common.diff_parser import split_diff_by_file
 from common.firebase_models import PRMetadata, PrReviewStatus, ReviewRunData
 from common.github_client import get_github_client
 from db.client import Neo4jClient, get_neo4j_client
@@ -55,6 +57,8 @@ async def review_pipeline(
     repo: str,
     pr_number: int,
     neo4j: Neo4jClient | None = None,
+    review_type: str = "incremental_review",
+    comment_id: int | None = None,
 ) -> None:
     """Run code review on a PR using the 3-node agent.
 
@@ -64,6 +68,7 @@ async def review_pipeline(
     3. Runs 3-node agent on each file
     4. Aggregates results
     5. Posts GitHub comments
+    6. Adds checkmark reaction to triggering comment
     """
     project_owner = firebase_service.find_project_owner_id(owner)
     logger.info(f"Reviewing {owner}/{repo}#{pr_number} (owner: {project_owner})")
@@ -101,17 +106,31 @@ async def review_pipeline(
         )
 
     try:
-        # Fetch PR data
         gh = get_github_client()
-        # Fetch all independent PR data in parallel
-        # These 4 calls don't depend on each other, so run them all at once
-        diff_text, pr_info, head_sha, pr_files_data = await asyncio.gather(
+
+        # Fetch previous review run for incremental review
+        previous_issues_by_file: dict[str, list[dict]] = {}
+        if review_type == "incremental_review" and project_owner:
+            try:
+                last_run = firebase_service.get_last_review_run(
+                    project_owner, owner, repo, pr_number
+                )
+                if last_run and last_run.get("issues"):
+                    for issue in last_run.get("issues", []):
+                        file_path = issue.get("file", "")
+                        if file_path:
+                            if file_path not in previous_issues_by_file:
+                                previous_issues_by_file[file_path] = []
+                            previous_issues_by_file[file_path].append(issue)
+            except Exception as e:
+                logger.warning(f"Failed to fetch previous review run: {e}")
+
+        # Both modes use the full PR diff — the difference is in context, not scope
+        diff_text, pr_info, head_sha = await asyncio.gather(
             gh.get_pr_diff(owner, repo, pr_number),
             gh.get_pr_info(owner, repo, pr_number),
             gh.get_pr_head_ref(owner, repo, pr_number),
-            gh.get_pr_files(owner, repo, pr_number),
         )
-
         if not diff_text:
             logger.warning("Empty diff — skipping review")
             if project_owner:
@@ -133,10 +152,7 @@ async def review_pipeline(
         pr_title = pr_info.get("title", "")
         write_step(review_dir, "01_diff.md", f"# Diff\n{pr_title}\n```diff\n{diff_text}\n```")
 
-        # Build file diff map and list of changed files
-        file_diffs: dict[str, str] = {
-            f["filename"]: f.get("patch") or "" for f in pr_files_data if f.get("patch")
-        }
+        file_diffs: dict[str, str] = split_diff_by_file(diff_text)
         files_changed = list(file_diffs.keys())
 
         # Fetch post-PR files
@@ -237,15 +253,20 @@ async def review_pipeline(
                 file_path, {"classes": [], "functions": [], "imports": []}
             )
 
+            # Get previous issues for this file (for incremental review)
+            file_previous_issues = previous_issues_by_file.get(file_path, [])
+            prev_issues_str = format_previous_issues(file_previous_issues)
+
             # Build the full markdown prompt that the agent will receive
             file_context = build_file_context(
                 file_path=file_path,
                 full_diff=file_diff,
                 full_file_content=file_content,
                 file_ast=file_ast,
-                previous_issues="No previous issues for this file.",
+                previous_issues=prev_issues_str,
                 explorer_context="",
                 code_samples=file_code_samples,
+                review_type=review_type,
             )
 
             # Save the prompt to debug output
@@ -260,6 +281,8 @@ async def review_pipeline(
                 {
                     "file_path": file_path,
                     "file_context": file_context,
+                    "file_content": file_content,
+                    "previous_issues": file_previous_issues,
                     "safe_filename": safe_filename,
                 }
             )
@@ -277,6 +300,8 @@ async def review_pipeline(
                 query_service=query_service,
                 repo_id=repo_id,
                 model=config.review_model,
+                file_content=task.get("file_content", ""),
+                previous_issues=task.get("previous_issues"),
                 review_dir=review_dir,
                 safe_filename=task["safe_filename"],
             )
@@ -308,8 +333,10 @@ async def review_pipeline(
         all_issues: list[dict] = []
         all_positive_findings: list[dict] = []
         all_walkthroughs: list[dict] = []
+        validated_fixed_issues: list[dict] = []
         total_tool_rounds = 0
         failed_file_paths: list[str] = []
+        raw_agent_outputs: dict[str, str] = {}
 
         for result in file_agent_results:
             # Handle crashed agents (network errors, LLM failures, etc.)
@@ -326,13 +353,76 @@ async def review_pipeline(
                 continue
 
             # Aggregate successful results
+            file_path = result.get("_file_path", "unknown")
             for file_issue in result.get("file_based_issues", []):
                 all_issues.append(file_issue)
             for finding in result.get("file_based_positive_findings", []):
                 all_positive_findings.append(finding)
             for walkthrough in result.get("file_based_walkthrough", []):
                 all_walkthroughs.append(walkthrough)
+
+            # Build set of validated issue keys for deduplication
+            validated_keys = set()
+            for v in result.get("validated_previous_issues", []):
+                key = (v.get("file"), v.get("title"))
+                validated_keys.add(key)
+
+            # Merge validated previous issues that are still_open or partially_fixed
+            for validated in result.get("validated_previous_issues", []):
+                if validated.get("status") in ("still_open", "partially_fixed"):
+                    all_issues.append(
+                        {
+                            "file": validated.get("file"),
+                            "issues": [
+                                {
+                                    "issue_type": "Bug",
+                                    "category": validated.get("category", "bug"),
+                                    "severity": validated.get("severity", "medium"),
+                                    "title": validated.get("title"),
+                                    "file": validated.get("file"),
+                                    "line_start": validated.get("line_start"),
+                                    "line_end": validated.get("line_end"),
+                                    "status": validated.get("status"),
+                                    "description": validated.get("description", ""),
+                                    "suggestion": validated.get("suggestion", ""),
+                                    "impact": validated.get("impact", ""),
+                                    "code_snippet": validated.get("code_snippet", ""),
+                                    "confidence": validated.get("confidence", 8),
+                                }
+                            ],
+                        }
+                    )
+                    logger.info(
+                        f"Re-adding {validated.get('status')} issue: "
+                        f"{validated.get('title')} in {validated.get('file')}"
+                    )
+
+            # Collect fixed issues for GitHub comment (not all_issues, only for display)
+            for validated in result.get("validated_previous_issues", []):
+                if validated.get("status") == "fixed":
+                    validated_fixed_issues.append(
+                        {
+                            "issue_type": "Bug",
+                            "category": validated.get("category", "bug"),
+                            "severity": validated.get("severity", "medium"),
+                            "title": validated.get("title"),
+                            "file": validated.get("file"),
+                            "line_start": validated.get("line_start"),
+                            "line_end": validated.get("line_end"),
+                            "status": "fixed",
+                            "description": validated.get("description", ""),
+                            "suggestion": validated.get("suggestion", ""),
+                            "impact": validated.get("impact", ""),
+                            "code_snippet": validated.get("code_snippet", ""),
+                            "confidence": validated.get("confidence", 10),
+                        }
+                    )
+
             total_tool_rounds += result.get("tool_rounds", 0)
+
+            # Capture raw agent output for debug section
+            if result.get("raw_output_json"):
+                raw_agent_outputs[file_path] = result["raw_output_json"]
 
         if failed_file_paths:
             logger.warning(
@@ -340,17 +430,56 @@ async def review_pipeline(
                 f"{failed_file_paths}"
             )
 
+        # Collect all validated previous issues for Firebase update
+        all_validated_issues: list[dict] = []
+        for result in file_agent_results:
+            if isinstance(result, Exception) or "error" in result:
+                continue
+            all_validated_issues.extend(result.get("validated_previous_issues", []))
+
+        # Update previous run in Firebase to mark fixed issues
+        if project_owner and all_validated_issues:
+            fixed_count = sum(1 for v in all_validated_issues if v.get("status") == "fixed")
+            if fixed_count > 0:
+                try:
+                    firebase_service.update_previous_run_issues(
+                        project_owner,
+                        owner,
+                        repo,
+                        pr_number,
+                        all_validated_issues,
+                    )
+                    logger.info(f"Marked {fixed_count} issues as fixed in previous run")
+                except Exception as e:
+                    logger.warning(f"Failed to update previous run issues: {e}")
+
         logger.info(
             f"Review complete: {len(all_issues)} issues, "
             f"{len(all_positive_findings)} positives, "
             f"{total_tool_rounds} tool rounds"
         )
 
-        # Convert to Issue format
+        # Build set of validated issue keys for deduplication
+        validated_issue_keys = set()
+        for validated in all_validated_issues:
+            key = (validated.get("file"), validated.get("title"))
+            validated_issue_keys.add(key)
+
+        # Convert to Issue format, skipping duplicates
         all_issues_formatted = []
         for file_issue in all_issues:
             for issue in file_issue.get("issues", []):
+                issue_key = (issue.get("file"), issue.get("title"))
+                if issue_key in validated_issue_keys:
+                    logger.info(
+                        f"Skipping duplicate issue: {issue.get('title')} in {issue.get('file')}"
+                    )
+                    continue
                 all_issues_formatted.append(Issue(**issue))
+
+        # Add fixed issues from validator (for display in GitHub comment)
+        for fixed_issue in validated_fixed_issues:
+            all_issues_formatted.append(Issue(**fixed_issue))
 
         # Build walkthrough - now single sentence per file
         walk_through = []
@@ -414,6 +543,11 @@ async def review_pipeline(
             for i in all_issues_formatted
             if i.status in ("new", "still_open") and i.confidence >= 7
         ]
+        nitpick_issues = [
+            i
+            for i in all_issues_formatted
+            if i.status in ("new", "still_open") and i.confidence < 7
+        ]
         has_blocking = any(i.category in ("bug", "security") for i in inline_candidates)
         review_event = "REQUEST_CHANGES" if has_blocking else "COMMENT"
 
@@ -458,9 +592,9 @@ async def review_pipeline(
             else:
                 inline_skipped += 1
 
-        # Post regular comments
+        # Post regular comments (high-confidence out-of-diff + all nitpicks)
         regular_comments_posted = 0
-        for issue in regular_comment_issues:
+        for issue in regular_comment_issues + nitpick_issues:
             body = format_inline_comment(issue)
             ok = await gh.post_comment(owner, repo, pr_number, body)
             if ok:
@@ -488,7 +622,7 @@ async def review_pipeline(
             walk_through=walk_through,
             inline_posted=inline_posted,
             inline_skipped=inline_skipped,
-            raw_agent_outputs={},
+            raw_agent_outputs=raw_agent_outputs,
             debug_info=debug_info,
         )
 
