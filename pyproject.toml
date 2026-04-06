@@ -54,6 +54,7 @@ dependencies = [
     "openrouter>=0.7.11",
     "defusedxml>=0.7.1",
     "langchain-google-genai>=4.2.1",
+    "vulture>=2.16",
 ]
 
 [project.optional-dependencies]
