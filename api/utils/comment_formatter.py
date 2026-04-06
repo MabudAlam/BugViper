@@ -173,7 +173,13 @@ def _render_issue_block(issue: Issue) -> list[str]:
     lines: list[str] = []
 
     issue_type = getattr(issue, "issue_type", None) or "Potential issue"
-    lines.append(f"{_line_range(issue)}: ⚠️ **{issue_type}**")
+    severity = getattr(issue, "severity", "medium") or "medium"
+    severity_icon = {
+        "critical": "🔴",
+        "high": "🟠",
+        "medium": "🟡",
+    }.get(severity, "⚪")
+    lines.append(f"{_line_range(issue)}: {severity_icon} **{issue_type}**")
     lines.append("")
     lines.append(f"**{issue.title}**")
     lines.append("")
@@ -268,9 +274,15 @@ def format_inline_comment(issue: Issue) -> str:
     """Format one issue as an inline PR review comment body."""
     lang = _file_lang(issue.file)
     issue_type = getattr(issue, "issue_type", None) or "Potential issue"
+    severity = getattr(issue, "severity", "medium") or "medium"
+    severity_icon = {
+        "critical": "🔴",
+        "high": "🟠",
+        "medium": "🟡",
+    }.get(severity, "⚪")
 
     lines: list[str] = [
-        f"⚠️{issue_type}",
+        f"{severity_icon} {issue_type}",
         "",
         f"**{issue.title}**",
         "",
@@ -474,8 +486,8 @@ def format_review_summary(
         parts.append("<details>")
         parts.append(f"<summary>🔍 All Issues ({len(sorted_issues)})</summary>")
         parts.append("")
-        parts.append("| File | Line | Type | Title | Confidence |")
-        parts.append("|------|------|------|-------|------------|")
+        parts.append("| File | Line | Type | Severity | Title | Confidence |")
+        parts.append("|------|------|------|----------|-------|------------|")
         for i in sorted_issues:
             status_icon = "🆕" if i.status == "new" else "🔁"
             line_ref = (
@@ -484,9 +496,15 @@ def format_review_summary(
                 else f"{i.line_start}–{i.line_end}"
             )
             issue_type = getattr(i, "issue_type", None) or "Potential issue"
+            severity = getattr(i, "severity", "medium") or "medium"
+            severity_icon = {
+                "critical": "🔴",
+                "high": "🟠",
+                "medium": "🟡",
+            }.get(severity, "⚪")
             parts.append(
                 f"| `{i.file}` | {line_ref} | {status_icon} {issue_type} "
-                f"| {i.title} | {i.confidence}/10 |"
+                f"| {severity_icon} {severity.capitalize()} | {i.title} | {i.confidence}/10 |"
             )
         parts.append("")
         parts.append("</details>")
@@ -502,28 +520,35 @@ def format_review_summary(
 
     # ── Nitpicks toggle (all <7 confidence actionable issues) ─────────────────
     if nitpicks:
-        parts.append(f"🔍 **Nitpicks & Low-confidence** ({len(nitpicks)})")
+        parts.append("<details>")
+        parts.append(f"<summary>🔍 Nitpicks & Low-confidence ({len(nitpicks)})</summary>")
         parts.append("")
         parts.append(
-            "*These findings have lower confidence and may be false positives. "
+            "*These findings have lower confidence and were posted as comments. "
             "Review at your discretion.*"
         )
         parts.append("")
-        for issue in nitpicks:
-            lines = _render_issue_block(issue)
-            parts.append("<details>")
-            summary = (
-                f"<summary>{_line_range(issue)}: ⚠️ "
-                f"{getattr(issue, 'issue_type', 'Issue') or 'Issue'} — "
-                f"{issue.title} "
-                f"[{issue.confidence}/10]</summary>"
+        parts.append("| File | Line | Type | Severity | Title | Confidence |")
+        parts.append("|------|------|------|----------|-------|------------|")
+        for i in nitpicks:
+            line_ref = (
+                f"{i.line_start}"
+                if not i.line_end or i.line_end == i.line_start
+                else f"{i.line_start}–{i.line_end}"
             )
-            parts.append(summary)
-            parts.append("")
-            for line in lines:
-                parts.append(line)
-            parts.append("</details>")
-            parts.append("")
+            issue_type = getattr(i, "issue_type", None) or "Potential issue"
+            severity = getattr(i, "severity", "medium") or "medium"
+            severity_icon = {
+                "critical": "🔴",
+                "high": "🟠",
+                "medium": "🟡",
+            }.get(severity, "⚪")
+            parts.append(
+                f"| `{i.file}` | {line_ref} | {issue_type} "
+                f"| {severity_icon} {severity.capitalize()} | {i.title} | {i.confidence}/10 |"
+            )
+        parts.append("")
+        parts.append("</details>")
         parts.append("")
 
     # ── Positive findings ─────────────────────────────────────────────────────
