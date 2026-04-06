@@ -4,8 +4,8 @@ from typing import Optional
 
 
 class ReviewType(Enum):
-    FULL_PR_REVIEW = "full_pr_review"
-    RECURRING_REVIEW = "recurring_review"
+    FULL_REVIEW = "full_review"
+    INCREMENTAL_REVIEW = "incremental_review"
 
 
 class ReviewCommandService:
@@ -18,7 +18,7 @@ class ReviewCommandService:
         @bugviper                 # bot mention
         \s+                       # require whitespace after mention
         (?:
-            review\s+complete      # full review - must match first
+            full\s+review          # full review - must match first
             |
             review(?=\s|$)         # incremental review (lookahead prevents 'reviewed')
         )
@@ -44,8 +44,8 @@ class ReviewCommandService:
         Extract review command from a GitHub comment.
 
         Supported:
-            @bugviper review          → RECURRING_REVIEW
-            @bugviper review complete → FULL_PR_REVIEW
+            @bugviper review      → INCREMENTAL_REVIEW
+            @bugviper full review → FULL_REVIEW
 
         Returns:
             ReviewType or None (if no valid command found)
@@ -57,11 +57,11 @@ class ReviewCommandService:
         if not match:
             return None
 
-        full_match = match.group(0)
-        if "complete" in full_match.lower():
-            return ReviewType.FULL_PR_REVIEW
+        full_match = match.group(0).lower()
+        if "full" in full_match:
+            return ReviewType.FULL_REVIEW
 
-        return ReviewType.RECURRING_REVIEW
+        return ReviewType.INCREMENTAL_REVIEW
 
 
 def is_bot_mentioned(comment_body: str) -> bool:
