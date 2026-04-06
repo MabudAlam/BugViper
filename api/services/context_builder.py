@@ -13,7 +13,6 @@ to the 3-node agent. It includes:
 from pathlib import Path
 from typing import Any, Dict, List
 
-from api.models.ast_results import ParsedFile
 from common.diff_line_mapper import (
     format_file_with_line_numbers,
     get_hunk_ranges,
@@ -30,6 +29,7 @@ def build_file_context(
     previous_issues: str = "",
     explorer_context: str = "",
     code_samples: Dict[str, List[dict]] | None = None,
+    review_type: str = "incremental_review",
 ) -> str:
     """Build the full file context for the review prompt.
 
@@ -41,35 +41,57 @@ def build_file_context(
         previous_issues: Previous issues for this file
         explorer_context: External context from graph exploration
         code_samples: Code samples from Neo4j
+        review_type: "incremental_review" or "full_review"
 
     Returns:
         Markdown string with all context
     """
     ast_summary = _build_ast_summary(file_path, full_file_content, file_ast)
 
+    # Build previous issues section with review type context
+    if review_type == "incremental_review":
+        prev_issues_header = "## Previous Issues (Incremental Review)"
+        prev_issues_note = (
+            "**This is an incremental review.** You MUST validate each previous issue:\n"
+            "- Is it FIXED? Mark as `fixed` and explain what changed.\n"
+            "- Is it STILL_OPEN? Re-report with status `still_open`.\n"
+            "- Is it PARTIALLY_FIXED? Re-report with status `partially_fixed`.\n\n"
+        )
+    else:
+        prev_issues_header = "## Previous Issues"
+        prev_issues_note = (
+            "**This is a full review.** Previous issues are shown for reference only.\n"
+            "Review the entire file from scratch.\n\n"
+        )
+
+    prev_issues_content = previous_issues or "No previous issues for this file."
+
     parts = [
         f"# Review Agent Prompt: {file_path}",
         "",
         "## File Under Review",
         f"**File**: {file_path}",
+        f"**Review Type**: {review_type}",
         "",
         "## Raw Unified Diff",
         "```diff",
         full_diff or "(no diff available)",
         "```",
         "",
+        _build_hunk_ranges_section(full_diff),
+        "",
         "## POST-PR File Content (with line numbers)",
         "```",
         format_file_with_line_numbers(full_file_content) or "(no file content available)",
         "```",
         "",
-        _build_hunk_ranges_section(full_diff),
-        "",
         "## AST Summary",
         ast_summary or "(No AST)",
         "",
-        "## Previous Issues",
-        previous_issues or "No previous issues for this file.",
+        prev_issues_header,
+        "",
+        prev_issues_note,
+        prev_issues_content,
         "",
         "## Explorer Context (Neo4j Graph Intelligence)",
         explorer_context or "No external context available",
