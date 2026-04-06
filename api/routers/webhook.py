@@ -6,11 +6,15 @@ from fastapi import APIRouter, BackgroundTasks, Request
 
 from api.services.cloud_tasks_service import CloudTasksService
 from api.services.code_review_commands import extract_review_command, is_bot_mentioned
-from api.services.review_service import review_pipeline
-from common.github_client import get_github_client
-from common.job_models import IncrementalPRPayload, IncrementalPushPayload, PRReviewPayload
 from api.services.firebase_service import firebase_service
+from api.services.review_service import review_pipeline
 from common.firebase_models import PrReviewStatus
+from common.github_client import get_github_client
+from common.job_models import (
+    IncrementalPRPayload,
+    IncrementalPushPayload,
+    PRReviewPayload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -185,10 +189,11 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
             owner,
             repo_name,
             pr_number,
-            "⚠️ **Repository not indexed.** Please ingest the repository before requesting reviews:\n\n"
+            "⚠️ **Repository not indexed.** "
+            "Please ingest the repository before requesting reviews:\n\n"
             "1. Go to the BugViper dashboard:\n"
             "2. Find your project and click 'Ingest Repository'\n"
-            "3. Wait a few minutes for indexing to complete, then try mentioning @bugviper again!",
+            "3. Wait for indexing, then try mentioning @bugviper again!",
         )
         return {"status": "ignored", "reason": "repository not indexed"}
 
@@ -205,11 +210,25 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
             pr_number,
             "❓ **Unrecognized command.** To trigger a review, mention @bugviper with:\n\n"
             "• `@bugviper review` — incremental review of new changes\n"
-            "• `@bugviper review complete` — complete review of all files",
+            "• `@bugviper full review` — complete review of all files",
         )
         return {"status": "ignored", "reason": "unrecognized command"}
 
-    logger.info("Review triggered: %s/%s#%s (%s)", owner, repo_name, pr_number, review_type.value)
+    comment_id = comment.get("id")
+    logger.info(
+        "Review triggered: %s/%s#%s (type=%s, comment_id=%s)",
+        owner,
+        repo_name,
+        pr_number,
+        review_type.value,
+        comment_id,
+    )
+
+    # Add snake reaction to show we're working on it
+    gh = get_github_client()
+    if comment_id:
+        await gh.create_comment_reaction(owner, repo_name, comment_id, "rocket")
+        logger.info(f"Added 🚀 reaction to comment {comment_id}")
 
     if uid:
         pr_meta = firebase_service.get_pr_metadata(uid, owner, repo_name, pr_number)
@@ -217,7 +236,6 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
             logger.info(
                 "Skipping review for %s/%s#%s — already running", owner, repo_name, pr_number
             )
-            gh = get_github_client()
             await gh.post_comment(
                 owner,
                 repo_name,
@@ -228,11 +246,23 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
             return {"status": "ignored", "reason": "review already running"}
 
     if cloud_tasks.review_is_enabled:
-        review_payload = PRReviewPayload(owner=owner, repo=repo_name, pr_number=pr_number)
+        review_payload = PRReviewPayload(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+            review_type=review_type.value,
+            comment_id=comment_id,
+        )
         cloud_tasks.dispatch_pr_review(review_payload)
     else:
-        # Local dev fallback — runs in-process after response is sent
-        background_tasks.add_task(review_pipeline, owner, repo_name, pr_number)
+        background_tasks.add_task(
+            review_pipeline,
+            owner,
+            repo_name,
+            pr_number,
+            review_type=review_type.value,
+            comment_id=comment_id,
+        )
 
     return {"status": "processing", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
 
