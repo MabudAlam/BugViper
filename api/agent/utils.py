@@ -43,21 +43,3 @@ def load_chat_model(model: str) -> BaseChatModel:
         api_key=os.getenv("OPENROUTER_API_KEY"),
         base_url=OPENROUTER_BASE_URL,
     )
-
-
-def load_chat_model(model: str) -> BaseChatModel:
-    """Load a chat model via OpenRouter.
-
-    Routes to the appropriate provider based on the model name prefix.
-    - 'gemini/' prefix -> ChatOpenAI via OpenRouter (google/ prefix)
-    - All others -> ChatOpenAI via OpenRouter as-is
-    """
-    if model.startswith("gemini/"):
-        gemini_model_name = model.replace("gemini/", "", 1)
-        return load_gemini_model(gemini_model_name)
-
-    return ChatOpenAI(
-        model=model,
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-        base_url=OPENROUTER_BASE_URL,
-    )
