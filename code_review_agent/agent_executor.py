@@ -31,6 +31,8 @@ async def execute_review_agent(
     query_service: CodeSearchService,
     repo_id: str,
     model: str = "anthropic/claude-sonnet-4-5",
+    file_content: str = "",
+    previous_issues: list[dict[str, Any]] | None = None,
     review_dir: Path | None = None,
     safe_filename: str | None = None,
 ) -> dict[str, Any]:
@@ -44,6 +46,8 @@ async def execute_review_agent(
         query_service: Neo4j query service for tools
         repo_id: Repository ID (e.g., "owner/repo")
         model: LLM model to use
+        file_content: Raw file content for validator node
+        previous_issues: Previous issues to validate (for incremental reviews)
         review_dir: Directory to write debug files
         safe_filename: Safe filename for debug files
 
@@ -52,6 +56,7 @@ async def execute_review_agent(
         - file_based_issues: List of FileBasedIssues
         - file_based_positive_findings: List of AgentPositiveFinding
         - file_based_walkthrough: List of FileBasedWalkthrough
+        - validated_previous_issues: List of validated previous issues
         - tool_rounds: Number of tool rounds used
         - sources: List of sources collected
         - error: Error message if failed (only present on failure)
@@ -68,6 +73,9 @@ async def execute_review_agent(
     # Initial state
     initial_state: CodeReviewAgentState = {
         "file_based_context": file_context,
+        "file_content": file_content,
+        "previous_issues": previous_issues or [],
+        "validated_previous_issues": [],
         "messages": [],
         "tool_rounds": 0,
         "sources": [],
@@ -85,6 +93,7 @@ async def execute_review_agent(
             "file_based_issues": [],
             "file_based_positive_findings": [],
             "file_based_walkthrough": [],
+            "validated_previous_issues": [],
             "tool_rounds": 0,
             "sources": [],
             "error": str(e),
@@ -95,22 +104,37 @@ async def execute_review_agent(
         _write_debug_output(final_state, file_path, review_dir, safe_filename)
 
     # Extract results
+    import json
+
     result = {
         "file_based_issues": final_state.get("file_based_issues", []),
         "file_based_positive_findings": final_state.get("file_based_positive_findings", []),
         "file_based_walkthrough": final_state.get("file_based_walkthrough", []),
+        "validated_previous_issues": final_state.get("validated_previous_issues", []),
         "tool_rounds": final_state.get("tool_rounds", 0),
         "sources": final_state.get("sources", []),
+        "raw_output_json": json.dumps(
+            {
+                "file_based_issues": final_state.get("file_based_issues", []),
+                "file_based_positive_findings": final_state.get("file_based_positive_findings", []),
+                "file_based_walkthrough": final_state.get("file_based_walkthrough", []),
+                "validated_previous_issues": final_state.get("validated_previous_issues", []),
+                "tool_rounds": final_state.get("tool_rounds", 0),
+            },
+            indent=2,
+        ),
     }
 
     # Log summary
     total_issues = sum(len(fi.get("issues", [])) for fi in result["file_based_issues"])
+    validated_count = len(result["validated_previous_issues"])
     logger.info(
         f"3-node agent completed for {file_path}: "
         f"{len(result['file_based_issues'])} files with issues, "
         f"{total_issues} total issues, "
         f"{len(result['file_based_positive_findings'])} positive findings, "
         f"{len(result['file_based_walkthrough'])} walkthroughs, "
+        f"{validated_count} validated previous issues, "
         f"{result['tool_rounds']} tool rounds"
     )
 
@@ -154,6 +178,7 @@ def _write_debug_output(
                 lines.append(f"**Type**: {issue.get('issue_type', '?')}")
                 lines.append(f"**Category**: {issue.get('category', '?')}")
                 lines.append(f"**Confidence**: {issue.get('confidence', 0)}/10")
+                lines.append(f"**Status**: {issue.get('status', 'new')}")
                 lines.append(
                     f"**Location**: `{issue.get('file', '?')}:{issue.get('line_start', '?')}`"
                 )
@@ -167,6 +192,19 @@ def _write_debug_output(
                     lines.append("```")
                     lines.append("")
             lines.append("")
+
+    # Validated Previous Issues
+    if state.get("validated_previous_issues"):
+        lines.append("## Validated Previous Issues")
+        lines.append("")
+        for v in state["validated_previous_issues"]:
+            lines.append(f"### {v.get('title', 'Untitled')}")
+            lines.append(f"- **Status**: {v.get('status', '?')}")
+            lines.append(f"- **File**: `{v.get('file', '?')}:{v.get('line_start', '?')}`")
+            lines.append(f"- **Reason**: {v.get('reason', 'No reason provided')}")
+            lines.append(f"- **Confidence**: {v.get('confidence', 0)}/10")
+            lines.append("")
+        lines.append("")
 
     # Positive findings
     if state.get("file_based_positive_findings"):
