@@ -11,9 +11,9 @@ Key design principles:
 4. Support optional tree-sitter dependency
 """
 
-import threading
 import importlib
 import logging
+import threading
 from typing import Dict, Optional
 
 from tree_sitter import Language, Parser
