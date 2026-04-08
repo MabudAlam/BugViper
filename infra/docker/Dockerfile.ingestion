@@ -2,7 +2,7 @@
 # Repository ingestion worker — two-stage build eliminates uv from final image.
 
 # ── Stage 1: Builder ─────────────────────────────────────────────────────────
-FROM ghcr.io/astral-sh/uv:python3.13-dhi AS builder
+FROM ghcr.io/astral-sh/uv:debian-slim AS builder
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./

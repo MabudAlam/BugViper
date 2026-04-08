@@ -16,7 +16,7 @@
 #   Security   → semgrep, gitleaks
 
 # ── Stage 1: Builder ─────────────────────────────────────────────────────────
-FROM ghcr.io/astral-sh/uv:python3.13-dhi AS builder
+FROM ghcr.io/astral-sh/uv:debian-slim AS builder
 
 WORKDIR /app
 
