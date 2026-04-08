@@ -1,6 +1,7 @@
 # ── BugViper Lint Service ─────────────────────────────────────────────────────
 # Multi-language static analysis sandbox.
-# Runs on Cloud Run (gVisor) in production. Locally: docker run -p 8090:8080
+# Two-stage build: builder installs deps, slim runtime runs the service.
+# This eliminates uv from the final image for smaller size.
 #
 # Tools installed:
 #   Python     → ruff, bandit
@@ -14,9 +15,26 @@
 #   Haskell    → hlint
 #   Security   → semgrep, gitleaks
 
+# ── Stage 1: Builder ─────────────────────────────────────────────────────────
+FROM ghcr.io/astral-sh/uv:python3.13-slim AS builder
+
+WORKDIR /app
+
+# Copy only lock file for better caching
+COPY uv.lock pyproject.toml ./
+RUN touch README.md
+
+# Install Python deps into .venv
+RUN uv sync --frozen --no-dev
+
+# Copy lint service source
+COPY src/lint_service/ src/lint_service/
+COPY src/lint_service/default.eslintrc.json .eslintrc.json
+
+# ── Stage 2: Runtime ────────────────────────────────────────────────────────
 FROM python:3.13-slim
 
-# ── System packages ───────────────────────────────────────────────────────────
+# ── System packages (lint tools that need apt) ────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget unzip ca-certificates \
     nodejs npm \
@@ -24,11 +42,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cppcheck \
     default-jre-headless \
     php-cli \
-    hlint \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Python tools ──────────────────────────────────────────────────────────────
-RUN pip install --no-cache-dir uv ruff bandit semgrep fastapi uvicorn pydantic defusedxml
+# ── Python tools (via uv, but uv not needed at runtime) ─────────────────────
+RUN pip install --no-cache-dir gunicorn ruff bandit semgrep fastapi uvicorn pydantic defusedxml
 
 # ── ESLint + plugins ──────────────────────────────────────────────────────────
 RUN npm install -g \
@@ -76,13 +93,13 @@ RUN curl -fsSL \
     https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
     | tar -xz -C /usr/local/bin gitleaks
 
-# ── Application ───────────────────────────────────────────────────────────────
+# ── Copy app from builder ────────────────────────────────────────────────────
 WORKDIR /app
 ENV PYTHONPATH="/app/src"
-COPY src/lint_service/ src/lint_service/
-COPY src/lint_service/default.eslintrc.json .eslintrc.json
+COPY --from=builder /app/src/lint_service ./src/lint_service/
+COPY --from=builder /app/.eslintrc.json .eslintrc.json
+
+ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8080
-CMD ["uvicorn", "lint_service.app:app", \
-     "--host", "0.0.0.0", "--port", "8080", \
-     "--workers", "2", "--timeout-keep-alive", "120"]
+CMD ["exec", "gunicorn", "--bind", ":$PORT", "--workers", "1", "--threads", "8", "--timeout", "0", "lint_service.app:app"]
