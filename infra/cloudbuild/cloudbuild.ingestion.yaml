@@ -3,7 +3,7 @@ steps:
   - name: "gcr.io/cloud-builders/docker"
     env:
       - 'DOCKER_BUILDKIT=1'
-    args: ["build", "-t", "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/ingestion_service:latest", "-f", "infra/docker/Dockerfile.ingestion", "."]
+    args: ["build", "--no-cache", "-t", "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/ingestion_service:latest", "-f", "infra/docker/Dockerfile.ingestion", "."]
   # Step 2: Push the Docker image to Artifact Registry
   - name: "gcr.io/cloud-builders/docker"
     args: ["push", "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/ingestion_service:latest"]
