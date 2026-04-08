@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 def _get_firebase_credentials():
     """Parse SERVICE_FILE_LOC as a JSON string or file path."""
     cert_value = os.environ.get("SERVICE_FILE_LOC", "")
+    if not cert_value or not cert_value.strip():
+        return None
     if cert_value.strip().startswith("{"):
         return credentials.Certificate(json.loads(cert_value))
     return credentials.Certificate(cert_value)
@@ -23,9 +25,8 @@ def _initialize_firebase():
     if firebase_admin._apps:
         return firestore.client()
 
-    cert_value = os.environ.get("SERVICE_FILE_LOC", "")
-    if cert_value:
-        cred = _get_firebase_credentials()
+    cred = _get_firebase_credentials()
+    if cred:
         firebase_admin.initialize_app(cred)
         logger.info("Firebase initialized with explicit credentials")
     else:
