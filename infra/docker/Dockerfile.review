@@ -23,6 +23,8 @@ COPY src/ingestion_service/__init__.py src/ingestion_service/__init__.py
 COPY src/ingestion_service/languages/ src/ingestion_service/languages/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
