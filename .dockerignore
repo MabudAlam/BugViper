@@ -1,0 +1,39 @@
+# Global ignores for all images built from repo root context (.).
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.venv/
+
+# Node / Next
+**/node_modules/
+apps/frontend/.next/
+
+# Git / IDE
+.git/
+.vscode/
+.idea/
+.DS_Store
+
+# Logs / runtime output
+*.log
+logs/
+output/
+
+# Local artifacts
+neo4j_data/
+neo4j_logs/
+milvus_data/
+
+# Secrets (never send in build context)
+.env
+.env.*
+*.pem
+service.json
+github.pem

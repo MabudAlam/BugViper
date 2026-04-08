@@ -77,22 +77,22 @@ curl -X POST http://localhost:8000/api/v1/ingest/setup
 
 **Install dependencies:**
 ```bash
-cd frontend && npm install
+cd apps/frontend && npm install
 ```
 
 **Lint:**
 ```bash
-cd frontend && npm run lint
+cd apps/frontend && npm run lint
 ```
 
 **Build:**
 ```bash
-cd frontend && npm run build
+cd apps/frontend && npm run build
 ```
 
 **Development server:**
 ```bash
-cd frontend && npm run dev
+cd apps/frontend && npm run dev
 # Runs on http://localhost:3000
 ```
 
@@ -309,7 +309,7 @@ common/                      # Shared utilities
 ├── firebase_models.py       # Firebase models
 └── firebase_init.py         # Firebase initialization
 
-frontend/                    # Next.js 16 app
+apps/frontend/               # Next.js 16 app
 ├── app/(protected)/
 │   ├── query/               # Search & analysis
 │   └── repositories/        # Repo management
