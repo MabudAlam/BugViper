@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python tools ──────────────────────────────────────────────────────────────
-RUN pip install --no-cache-dir ruff bandit semgrep fastapi uvicorn
+RUN pip install --no-cache-dir uv ruff bandit semgrep fastapi uvicorn pydantic defusedxml
 
 # ── ESLint + plugins ──────────────────────────────────────────────────────────
 RUN npm install -g \
