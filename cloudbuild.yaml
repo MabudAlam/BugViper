@@ -18,25 +18,25 @@ steps:
   - name: "gcr.io/cloud-builders/docker"
     id: "build-api"
     env: ["DOCKER_BUILDKIT=1"]
-    args: ["build", "-t", "${_ARTIFACT_REGISTRY}/api-service:latest",
+    args: ["build", "--no-cache", "-t", "${_ARTIFACT_REGISTRY}/api-service:latest",
            "-f", "infra/docker/Dockerfile.api", "."]
 
   - name: "gcr.io/cloud-builders/docker"
     id: "build-review"
     env: ["DOCKER_BUILDKIT=1"]
-    args: ["build", "-t", "${_ARTIFACT_REGISTRY}/review-service:latest",
+    args: ["build", "--no-cache", "-t", "${_ARTIFACT_REGISTRY}/review-service:latest",
            "-f", "infra/docker/Dockerfile.review", "."]
 
   - name: "gcr.io/cloud-builders/docker"
     id: "build-ingestion"
     env: ["DOCKER_BUILDKIT=1"]
-    args: ["build", "-t", "${_ARTIFACT_REGISTRY}/ingestion-service:latest",
+    args: ["build", "--no-cache", "-t", "${_ARTIFACT_REGISTRY}/ingestion-service:latest",
            "-f", "infra/docker/Dockerfile.ingestion", "."]
 
   - name: "gcr.io/cloud-builders/docker"
     id: "build-lint"
     env: ["DOCKER_BUILDKIT=1"]
-    args: ["build", "-t", "${_ARTIFACT_REGISTRY}/lint-service:latest",
+    args: ["build", "--no-cache", "-t", "${_ARTIFACT_REGISTRY}/lint-service:latest",
            "-f", "infra/docker/Dockerfile.lint", "."]
 
   - name: "gcr.io/cloud-builders/docker"
@@ -44,6 +44,7 @@ steps:
     env: ["DOCKER_BUILDKIT=1"]
     args:
       - "build"
+      - "--no-cache"
       - "-t"
       - "${_ARTIFACT_REGISTRY}/frontend-service:latest"
       - "-f"
@@ -141,7 +142,7 @@ steps:
       - --cpu
       - "2"
       - --memory
-      - "4Gi"
+      - "2Gi"
       - --no-cpu-throttling
       - --min-instances
       - "0"
@@ -198,7 +199,7 @@ steps:
       - --cpu
       - "2"
       - --memory
-      - "4Gi"
+      - "2Gi"
       - --no-cpu-throttling
       - --min-instances
       - "0"

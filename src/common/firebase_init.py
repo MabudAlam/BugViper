@@ -25,12 +25,19 @@ def _initialize_firebase():
     if firebase_admin._apps:
         return firestore.client()
 
-    cred = _get_firebase_credentials()
-    if cred:
-        firebase_admin.initialize_app(cred)
-        logger.info("Firebase initialized with explicit credentials")
-    else:
-        firebase_admin.initialize_app()
-        logger.info("Firebase initialized with default credentials (Cloud Run)")
+    try:
+        cred = _get_firebase_credentials()
+        if cred:
+            firebase_admin.initialize_app(cred)
+            logger.info("Firebase initialized with explicit credentials")
+        else:
+            firebase_admin.initialize_app()
+            logger.info("Firebase initialized with default credentials (Cloud Run)")
+    except Exception:
+        logger.warning("Firebase initialization failed — firestore calls will error at runtime")
+        try:
+            firebase_admin.initialize_app()
+        except Exception:
+            pass
 
     return firestore.client()
