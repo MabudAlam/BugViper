@@ -2,7 +2,7 @@
 # FastAPI backend — two-stage build eliminates uv from final image.
 
 # ── Stage 1: Builder ─────────────────────────────────────────────────────────
-FROM ghcr.io/astral-sh/uv:python3.13-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.13-dhi AS builder
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
