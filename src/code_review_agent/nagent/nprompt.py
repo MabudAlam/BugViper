@@ -322,8 +322,16 @@ Above you have:
 - Explorer investigation results: tool calls, resolved missing symbols,
   call chains traced, and concerns raised
 
-Read the explorer's findings carefully. They contain evidence about
-symbol definitions, caller relationships, and cross-file dependencies.
+Read the explorer's findings for context, but YOU MUST ALSO independently
+analyze the code in the POST-PR file content and Raw Unified Diff sections.
+The explorer investigates external dependencies and cross-file relationships.
+You are responsible for finding issues IN THE CHANGED CODE ITSELF.
+
+**CRITICAL**: Do NOT conclude no issues exist just because the explorer
+did not report any. The explorer may have spent rounds looking up external
+symbols that were not in the graph. You must read the diff hunks and
+POST-PR code directly to find bugs like division-by-zero, logic errors,
+null pointer issues, and other problems visible in the changed lines.
 
 ---
 

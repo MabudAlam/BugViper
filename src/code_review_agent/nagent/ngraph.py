@@ -80,8 +80,6 @@ def build_code_review_graph(
 
     def explorer_node(state: CodeReviewAgentState) -> dict:
         current_rounds = state["tool_rounds"]
-        if current_rounds >= MAX_TOOL_ROUNDS:
-            return {}
 
         system_prompt = get_explorer_system_prompt(
             file_based_context=state["file_based_context"],

@@ -522,6 +522,19 @@ def format_review_summary(
             parts.append(f"- ~~**{issue.title}**~~ `{issue.file}:{issue.line_start}` — resolved")
         parts.append("")
 
+    # ── Still Not Fixed ────────────────────────────────────────────────────────
+    if open_issues:
+        parts.append(f"### ❌ Still Not Fixed ({len(open_issues)})")
+        parts.append("")
+        for issue in open_issues:
+            line_ref = (
+                f"{issue.line_start}"
+                if not issue.line_end or issue.line_end == issue.line_start
+                else f"{issue.line_start}–{issue.line_end}"
+            )
+            parts.append(f"- **{issue.title}** `{issue.file}:{line_ref}` — still present")
+        parts.append("")
+
     # ── Nitpicks toggle (all <7 confidence actionable issues) ─────────────────
     if nitpicks:
         parts.append("<details>")

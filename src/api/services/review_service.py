@@ -493,18 +493,21 @@ async def review_pipeline(
             f"{total_tool_rounds} tool rounds"
         )
 
-        # Build set of validated issue keys for deduplication
-        validated_issue_keys = set()
+        # Build set of FIXED issue keys for deduplication
+        # Only fixed issues should be skipped (not still_open which need to be shown)
+        fixed_issue_keys = set()
         for validated in all_validated_issues:
-            key = (validated.get("file"), validated.get("title"))
-            validated_issue_keys.add(key)
+            if validated.get("status") == "fixed":
+                key = (validated.get("file"), validated.get("title"))
+                fixed_issue_keys.add(key)
 
-        # Convert to Issue format, skipping duplicates
+        # Convert to Issue format, skipping duplicates of FIXED issues
+        # still_open issues are NOT skipped - they need to be shown as actionable
         all_issues_formatted = []
         for file_issue in all_issues:
             for issue in file_issue.get("issues", []):
                 issue_key = (issue.get("file"), issue.get("title"))
-                if issue_key in validated_issue_keys:
+                if issue_key in fixed_issue_keys:
                     logger.info(
                         f"Skipping duplicate issue: {issue.get('title')} in {issue.get('file')}"
                     )
