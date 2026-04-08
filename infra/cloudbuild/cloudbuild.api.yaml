@@ -1,0 +1,29 @@
+steps:
+  # Step 1: Build the Docker image with BuildKit enabled
+  - name: "gcr.io/cloud-builders/docker"
+    env:
+      - 'DOCKER_BUILDKIT=1'
+    args: ["build", "-t", "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/api-service:latest", "-f", "infra/docker/Dockerfile.api", "."]
+  # Step 2: Push the Docker image to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/api-service:latest"]
+  # Step 3: Deploy the Docker image to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args: [
+        "run",
+        "deploy",
+        "api-service",
+        "--image",
+        "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/api-service:latest",
+        "--region",
+        "us-central1",
+        "--platform",
+        "managed",
+        "--allow-unauthenticated",
+      ]
+images:
+  - "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/api-service:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

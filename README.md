@@ -294,7 +294,7 @@ common/                      # Shared utilities
 ├── diff_parser.py           # Unified diff parsing
 └── bugviper_firebase_service.py
 
-frontend/                    # Next.js 16 frontend
+apps/frontend/               # Next.js 16 frontend
 ├── app/(protected)/
 │   ├── query/               # Search + Analysis + CodeFinder + Review tabs
 │   └── repositories/        # Repo management + ingestion
@@ -324,7 +324,7 @@ uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload
 ### Frontend
 
 ```bash
-cd frontend && npm install && npm run dev   # http://localhost:3000
+cd apps/frontend && npm install && npm run dev   # http://localhost:3000
 ```
 
 ### All-in-one
@@ -405,7 +405,7 @@ pytest           # tests
 pytest --cov     # coverage
 
 # Frontend
-cd frontend && npm run lint && npm run build
+cd apps/frontend && npm run lint && npm run build
 ```
 
 ---
@@ -418,5 +418,4 @@ cd frontend && npm run lint && npm run build
 - [ ] Guardrails and output validation
 - [ ] GitHub push, PR, and branch webhook coverage
 - [ ] Auto-tag CLAUDE.md from ingested repo
-
 

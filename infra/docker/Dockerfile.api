@@ -1,0 +1,37 @@
+# ── Builder stage ────────────────────────────────────────────────────────────
+FROM python:3.13-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN pip install uv
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN touch README.md
+RUN uv sync --frozen --no-dev
+
+# ── Runtime stage ────────────────────────────────────────────────────────────
+FROM python:3.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app/src"
+
+# Copy application code
+COPY src/api/ src/api/
+COPY src/common/ src/common/
+COPY src/db/ src/db/
+COPY src/code_review_agent/ src/code_review_agent/
+# Language parsers live in ingestion_service/languages/ but are imported by
+# review_service.py via common/languages.py::LANG_PARSER_REGISTRY
+COPY src/ingestion_service/__init__.py src/ingestion_service/__init__.py
+COPY src/ingestion_service/languages/ src/ingestion_service/languages/
+
+
+EXPOSE 8080
+
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8080"]

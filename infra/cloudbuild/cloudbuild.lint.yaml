@@ -1,0 +1,48 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    env:
+      - 'DOCKER_BUILDKIT=1'
+    args:
+      - "build"
+      - "-t"
+      - "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/lint-service:latest"
+      - "-f"
+      - "infra/docker/Dockerfile.lint"
+      - "."
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/lint-service:latest"
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: "gcloud"
+    args:
+      - "run"
+      - "deploy"
+      - "lint-service"
+      - "--image"
+      - "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/lint-service:latest"
+      - "--region"
+      - "us-central1"
+      - "--platform"
+      - "managed"
+      - "--no-allow-unauthenticated"
+      - "--timeout"
+      - "120s"
+      - "--concurrency"
+      - "20"
+      - "--cpu"
+      - "1"
+      - "--memory"
+      - "1Gi"
+      - "--min-instances"
+      - "0"
+      - "--max-instances"
+      - "10"
+
+images:
+  - "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/lint-service:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
