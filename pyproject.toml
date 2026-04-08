@@ -1,9 +1,8 @@
 [project]
 name = "BugViperion"
-version = "0.1.0"
-description = "Code Review Tool - Repository Ingestion Engine with Tree-sitter and Neo4j"
-readme = "README.md"
-requires-python = ">=3.13"
+    version = "0.1.0"
+    description = "Code Review Tool - Repository Ingestion Engine with Tree-sitter and Neo4j"
+    requires-python = ">=3.13"
 authors = [
     {name = "Code Review Team", email = "team@example.com"}
 ]
