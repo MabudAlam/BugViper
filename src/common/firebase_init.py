@@ -20,24 +20,29 @@ def _get_firebase_credentials():
     return credentials.Certificate(cert_value)
 
 
-def _initialize_firebase():
-    """Initialize the Firebase Admin SDK (idempotent). Returns a Firestore client."""
+def initialize_firebase_local():
+    """Initialize Firebase using SERVICE_FILE_LOC (local development)."""
     if firebase_admin._apps:
         return firestore.client()
 
-    try:
-        cred = _get_firebase_credentials()
-        if cred:
-            firebase_admin.initialize_app(cred)
-            logger.info("Firebase initialized with explicit credentials")
-        else:
-            firebase_admin.initialize_app()
-            logger.info("Firebase initialized with default credentials (Cloud Run)")
-    except Exception:
-        logger.warning("Firebase initialization failed — firestore calls will error at runtime")
-        try:
-            firebase_admin.initialize_app()
-        except Exception:
-            pass
-
+    cred = _get_firebase_credentials()
+    if not cred:
+        raise ValueError("SERVICE_FILE_LOC is required for local Firebase initialization")
+    firebase_admin.initialize_app(cred)
+    logger.info("Firebase initialized with explicit credentials (local)")
     return firestore.client()
+
+
+def initialize_firebase_server():
+    """Initialize Firebase using default credentials (Cloud Run / production)."""
+    if firebase_admin._apps:
+        return firestore.client()
+
+    firebase_admin.initialize_app()
+    logger.info("Firebase initialized with default credentials (Cloud Run)")
+    return firestore.client()
+
+
+def _initialize_firebase():
+    """Default initialization — delegates to server mode."""
+    return initialize_firebase_server()
