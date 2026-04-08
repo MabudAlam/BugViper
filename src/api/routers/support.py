@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, field_validator
 
-from api.services.firebase_service import firebase_service
+from common.firebase_service import firebase_service
 
 logger = logging.getLogger(__name__)
 

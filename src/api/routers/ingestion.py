@@ -12,7 +12,7 @@ from api.models.schemas import (
     JobStatusResponse,
 )
 from api.services.cloud_tasks_service import CloudTasksService
-from api.services.firebase_service import firebase_service
+from common.firebase_service import firebase_service
 from common.firebase_models import RepoIngestionError, RepoIngestionUpdate, RepoMetadata
 from common.github_client import get_github_client
 from common.job_models import (

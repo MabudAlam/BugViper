@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Request
 
 from api.services.cloud_tasks_service import CloudTasksService
 from api.services.code_review_commands import extract_review_command, is_bot_mentioned
-from api.services.firebase_service import firebase_service
+from common.firebase_service import firebase_service
 from api.services.review_service import review_pipeline
 from common.firebase_models import PrReviewStatus
 from common.github_client import get_github_client

@@ -25,7 +25,7 @@ from api.services.context_builder import (
     build_pr_symbol_map,
     format_previous_issues,
 )
-from api.services.firebase_service import firebase_service
+from common.firebase_service import firebase_service
 from api.services.lint_service import run_lint
 from api.services.parse_file_to_ast import _ast_parse_file_full
 from api.utils.comment_formatter import (

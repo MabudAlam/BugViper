@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.middleware.firebase_auth import FirebaseAuthMiddleware
 from api.routers import auth, ingestion, query, rag, repository, support, webhook
-from api.services.firebase_service import firebase_service  # noqa: F401 — init on import
+from common.firebase_service import firebase_service  # noqa: F401 — init on import
 
 logger = logging.getLogger(__name__)
 

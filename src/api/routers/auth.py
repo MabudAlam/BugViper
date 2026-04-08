@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.dependencies import get_current_user
-from api.services.firebase_service import firebase_service
+from common.firebase_service import firebase_service
 from common.github_client import github_oauth_service
 
 logger = logging.getLogger(__name__)

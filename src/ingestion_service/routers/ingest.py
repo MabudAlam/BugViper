@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
-from api.services.firebase_service import firebase_service
+from common.firebase_service import firebase_service
 from common.firebase_models import RepoIngestionError, RepoIngestionUpdate
 from common.github_client import get_github_client
 from common.job_models import IngestionJobStats, IngestionTaskPayload, JobStatus

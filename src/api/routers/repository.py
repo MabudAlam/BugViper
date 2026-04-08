@@ -4,7 +4,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from api.dependencies import get_current_user, get_neo4j_client
-from api.services.firebase_service import firebase_service
+from common.firebase_service import firebase_service
 from db.client import Neo4jClient
 from db.code_serarch_layer import CodeSearchService
 from db.schema import CodeGraphSchema
