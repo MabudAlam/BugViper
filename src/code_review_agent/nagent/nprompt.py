@@ -269,6 +269,7 @@ Begin your investigation now."""
 def get_reviewer_system_prompt(
     file_based_context: str,
     validated_issues_json: str = "",
+    entity_risk_json: str = "",
 ) -> str:
     """Build the system prompt for the reviewer node.
 
@@ -278,10 +279,34 @@ def get_reviewer_system_prompt(
     Args:
         file_based_context: Raw markdown context containing diff, code, AST, etc.
         validated_issues_json: JSON string of AI-validated previous issues
+        entity_risk_json: JSON string of entity risk data from inspect-style triage
 
     Returns:
         System prompt for the reviewer LLM
     """
+    entity_risk_section = ""
+    if entity_risk_json:
+        entity_risk_section = f"""
+
+---
+
+# Entity Risk Analysis (inspect-style triage)
+
+This data comes from automated entity-level diff analysis before human review began.
+
+{entity_risk_json}
+
+**How to use this data:**
+- You are doing INDEPENDENT analysis — this is one input among many
+- Do not simply repeat entity risk conclusions; verify them yourself
+- For entities with risk_level "critical" or "high", pay extra attention to:
+  - Edge cases and error handling gaps
+  - Security implications (injection, auth, data exposure)
+  - Breaking changes to public APIs (functions/classes called by other files)
+  - Blast radius (entities whose callers outside this PR may be affected)
+- Entity risk helps you prioritize WHERE to look, but you must confirm issues exist
+- Low-risk entities can still have high-severity bugs — don't use risk level as a shortcut to skip analysis
+"""
     validated_section = ""
     if validated_issues_json:
         validated_section = f"""
@@ -309,6 +334,7 @@ You are a senior staff engineer writing a code review. You receive evidence
 from an investigation phase and must produce a precise, actionable review.
 
 {file_based_context}
+{entity_risk_section}
 {validated_section}
 
 ---

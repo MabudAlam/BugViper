@@ -167,6 +167,7 @@ def build_code_review_graph(
         system_prompt = get_reviewer_system_prompt(
             file_based_context=state["file_based_context"],
             validated_issues_json=validated_issues_json,
+            entity_risk_json=state.get("entity_risk_context", ""),
         )
         exploration_summary = _format_messages(state["messages"])
 

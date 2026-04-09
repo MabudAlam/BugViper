@@ -35,6 +35,7 @@ async def execute_review_agent(
     previous_issues: list[dict[str, Any]] | None = None,
     review_dir: Path | None = None,
     safe_filename: str | None = None,
+    entity_risk_context: str = "",
 ) -> dict[str, Any]:
     """Execute the 3-node code review agent on a single file.
 
@@ -50,6 +51,7 @@ async def execute_review_agent(
         previous_issues: Previous issues to validate (for incremental reviews)
         review_dir: Directory to write debug files
         safe_filename: Safe filename for debug files
+        entity_risk_context: JSON string of entity risk from inspect-style triage
 
     Returns:
         Dictionary with:
@@ -76,6 +78,7 @@ async def execute_review_agent(
         "file_content": file_content,
         "previous_issues": previous_issues or [],
         "validated_previous_issues": [],
+        "entity_risk_context": entity_risk_context,
         "messages": [],
         "tool_rounds": 0,
         "sources": [],

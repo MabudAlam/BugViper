@@ -563,6 +563,118 @@ class CodeSearchService:
     # Matches queries that look like code patterns: method calls, paths, indexing
     _CODE_PATTERN_RE = re.compile(r"[.()\[\]{}/<>]")
 
+    def get_repo_entities(
+        self, repo_id: str, limit: int = 200, file_paths: list[str] | None = None
+    ) -> List[Dict[str, Any]]:
+        """Get Function/Class/Variable entities for a repository, optionally filtered by files."""
+        if file_paths:
+            query = """
+                MATCH (node)
+                WHERE (node:Function OR node:Class OR node:Variable)
+                  AND node.repo = $repo_id
+                  AND coalesce(node.path, '') IN $file_paths
+                OPTIONAL MATCH (f:File)-[:CONTAINS]->(node)
+                RETURN
+                    CASE WHEN node:Function THEN 'function'
+                         WHEN node:Class THEN 'class'
+                         ELSE 'variable' END as type,
+                    node.name as name,
+                    coalesce(f.path, node.path) as path,
+                    coalesce(node.line_number, 0) as line_number,
+                    coalesce(node.source_code, node.source) as source_code,
+                    node.docstring as docstring
+                ORDER BY node.name
+                LIMIT $limit
+            """
+            params = {"repo_id": repo_id, "limit": limit, "file_paths": file_paths}
+        else:
+            query = """
+                MATCH (node)
+                WHERE (node:Function OR node:Class OR node:Variable)
+                  AND node.repo = $repo_id
+                OPTIONAL MATCH (f:File)-[:CONTAINS]->(node)
+                RETURN
+                    CASE WHEN node:Function THEN 'function'
+                         WHEN node:Class THEN 'class'
+                         ELSE 'variable' END as type,
+                    node.name as name,
+                    coalesce(f.path, node.path) as path,
+                    coalesce(node.line_number, 0) as line_number,
+                    coalesce(node.source_code, node.source) as source_code,
+                    node.docstring as docstring
+                ORDER BY node.name
+                LIMIT $limit
+            """
+            params = {"repo_id": repo_id, "limit": limit}
+        try:
+            records, _, _ = self.db.run_query(query, params)
+            return [
+                {
+                    "type": r["type"],
+                    "name": r["name"],
+                    "path": r["path"],
+                    "line_number": r["line_number"],
+                    "source_code": r.get("source_code"),
+                    "docstring": r.get("docstring"),
+                }
+                for r in records
+            ]
+        except Exception as e:
+            logger.warning(f"get_repo_entities failed: {e}")
+            return []
+
+    def get_repo_call_edges(
+        self, repo_id: str, limit: int = 500, file_paths: list[str] | None = None
+    ) -> List[Dict[str, Any]]:
+        """Get CALLS edges for entities in a repository, optionally filtered by file paths."""
+        if file_paths:
+            query = """
+                MATCH (caller_file:File)-[:DEFINES]->(caller)
+                WHERE caller.repo = $repo_id
+                  AND caller_file.path IN $file_paths
+                MATCH (caller)-[call:CALLS]->(callee)
+                OPTIONAL MATCH (callee_file:File)-[:DEFINES]->(callee)
+                RETURN
+                    caller.name as caller_name,
+                    caller_file.path as caller_path,
+                    callee.name as callee_name,
+                    coalesce(callee_file.path, callee.path) as callee_path,
+                    call.line_number as call_line
+                LIMIT $limit
+            """
+            params = {"repo_id": repo_id, "limit": limit, "file_paths": file_paths}
+        else:
+            query = """
+                MATCH (caller)-[call:CALLS]->(callee)
+                WHERE caller.repo = $repo_id AND callee.repo = $repo_id
+                OPTIONAL MATCH (caller_file:File)-[:DEFINES]->(caller)
+                OPTIONAL MATCH (callee_file:File)-[:DEFINES]->(callee)
+                RETURN
+                    caller.name as caller_name,
+                    caller_file.path as caller_path,
+                    callee.name as callee_name,
+                    coalesce(callee_file.path, callee.path) as callee_path,
+                    call.line_number as call_line
+                ORDER BY caller_file.path, call.line_number
+                LIMIT $limit
+            """
+            params = {"repo_id": repo_id, "limit": limit}
+        try:
+            records, _, _ = self.db.run_query(query, params)
+            return [
+                {
+                    "caller_name": r["caller_name"],
+                    "caller_path": r["caller_path"],
+                    "callee_name": r["callee_name"],
+                    "call_line": r.get("call_line"),
+                    "callee_path": r.get("callee_path"),
+                }
+                for r in records
+            ]
+        except Exception as e:
+            logger.warning(f"get_repo_call_edges failed: {e}")
+            return []
+
     def search_code(self, search_term: str, repo_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Three-tier code search: fulltext index → name CONTAINS → file content.
 

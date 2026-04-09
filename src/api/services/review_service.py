@@ -36,6 +36,13 @@ from api.utils.comment_formatter import (
 )
 from code_review_agent.agent_executor import execute_review_agent
 from code_review_agent.config import config
+from code_review_agent.entity_review import (
+    FileChange,
+    build_entity_graph_from_neo4j,
+    run_entity_review_pipeline,
+    suggest_verdict,
+)
+from code_review_agent.entity_review.pipeline import analyze_with_neo4j_graph
 from code_review_agent.models.agent_schemas import ContextData, Issue, ReconciledReview
 from common.debug_writer import make_review_dir, write_step
 from common.diff_line_mapper import (
@@ -266,6 +273,55 @@ async def review_pipeline(
                         code_samples_by_file[pf.path]["functions"].append(sample)
 
         # ─────────────────────────────────────────────────────────────────────────────
+        # Phase 0 (NEW): Entity-level risk triage via inspect-style pipeline
+        # Runs BEFORE file agents to prioritize high-risk entities
+        # ─────────────────────────────────────────────────────────────────────────────
+
+        entity_result = None
+        try:
+            file_pairs: list[FileChange] = []
+            for fp in files_changed:
+                after_content = pr_files.get(fp, "")
+                patch = file_diffs.get(fp, "")
+                before_content = ""
+                if patch:
+                    before_content = _extract_before_content_from_patch(patch, after_content)
+                status = "modified"
+                if fp not in pr_files:
+                    status = "deleted"
+                elif not before_content and after_content:
+                    status = "added"
+                file_pairs.append(
+                    FileChange(
+                        file_path=fp,
+                        status=status,
+                        before_content=before_content,
+                        after_content=after_content,
+                    )
+                )
+
+            entity_result = analyze_with_neo4j_graph(
+                file_pairs=file_pairs,
+                repo_id=repo_id,
+                query_service=query_service,
+                options=None,
+                review_dir=review_dir,
+            )
+
+            entity_verdict = suggest_verdict(entity_result)
+            logger.info(
+                f"Entity triage: {entity_result.stats.total_entities} entities, "
+                f"verdict={entity_verdict.value}, "
+                f"critical={entity_result.stats.by_risk.critical}, "
+                f"high={entity_result.stats.by_risk.high}, "
+                f"medium={entity_result.stats.by_risk.medium}, "
+                f"low={entity_result.stats.by_risk.low}"
+            )
+        except Exception as e:
+            logger.warning(f"Entity triage failed (skipping): {e}")
+            entity_result = None
+
+        # ─────────────────────────────────────────────────────────────────────────────
         # Phase 1: Build file contexts, then run all per-file agents in parallel
         # ─────────────────────────────────────────────────────────────────────────────
 
@@ -274,6 +330,7 @@ async def review_pipeline(
 
         # Step 2: Build markdown context for each changed file (sequential, fast)
         file_review_tasks: list[dict] = []
+        explorer_context = ""
 
         for file_path in files_changed:
             file_content = pr_files.get(file_path, "")
@@ -290,6 +347,12 @@ async def review_pipeline(
             file_previous_issues = previous_issues_by_file.get(file_path, [])
             prev_issues_str = format_previous_issues(file_previous_issues)
 
+            # Build entity risk context from inspect-style triage results
+            entity_risk_context = _build_entity_risk_context(file_path, entity_result)
+            combined_explorer_context = (explorer_context + "\n\n" + entity_risk_context).strip()
+            if not combined_explorer_context:
+                combined_explorer_context = "No external context available"
+
             # Build the full markdown prompt that the agent will receive
             file_context = build_file_context(
                 file_path=file_path,
@@ -297,7 +360,7 @@ async def review_pipeline(
                 full_file_content=file_content,
                 file_ast=file_ast,
                 previous_issues=prev_issues_str,
-                explorer_context="",
+                explorer_context=combined_explorer_context,
                 code_samples=file_code_samples,
                 review_type=review_type,
                 pr_symbol_map=pr_symbol_map,
@@ -311,6 +374,12 @@ async def review_pipeline(
                     f"# Review Agent Prompt: {file_path}\n\n{file_context}",
                 )
 
+            # Compute per-file entity risk summary from entity triage results
+            file_entity_risk = _get_file_entity_risk(file_path, entity_result)
+            file_risk_level = "none"
+            if file_entity_risk:
+                file_risk_level = file_entity_risk.get("risk_level", "none")
+
             file_review_tasks.append(
                 {
                     "file_path": file_path,
@@ -318,6 +387,9 @@ async def review_pipeline(
                     "file_content": file_content,
                     "previous_issues": file_previous_issues,
                     "safe_filename": safe_filename,
+                    "entity_risk": file_entity_risk,
+                    "entity_risk_json": _build_entity_risk_json(file_path, entity_result),
+                    "risk_level": file_risk_level,
                 }
             )
 
@@ -338,9 +410,18 @@ async def review_pipeline(
                 previous_issues=task.get("previous_issues"),
                 review_dir=review_dir,
                 safe_filename=task["safe_filename"],
+                entity_risk_context=task.get("entity_risk_json", ""),
             )
             result["_file_path"] = task["file_path"]
             return result
+
+        risk_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "none": 4}
+        file_review_tasks.sort(
+            key=lambda t: (
+                risk_order.get(t.get("risk_level", "none"), 5),
+                -(t.get("entity_risk") or {}).get("risk_score", 0.0) or 0.0,
+            )
+        )
 
         # Launch all agents + lint simultaneously and wait for all to complete
         agent_results = await asyncio.gather(
@@ -564,6 +645,10 @@ async def review_pipeline(
             risk_level="medium",
         )
 
+        if entity_result:
+            ev = suggest_verdict(entity_result)
+            context_data.risk_level = ev.value
+
         valid_comment_lines = get_valid_comment_lines(diff_text)
         hunk_ranges = get_hunk_ranges(diff_text)
 
@@ -731,3 +816,175 @@ async def review_pipeline(
                     failed_reasons=[error_msg],
                 ),
             )
+
+
+def _extract_before_content_from_patch(patch: str, after_content: str) -> str:
+    result_lines: list[str] = []
+    for line in patch.splitlines():
+        if line.startswith("-") and not line.startswith("---"):
+            content = line[1:]
+            if content.startswith(" "):
+                content = content[1:]
+            result_lines.append(content)
+        elif line.startswith(" "):
+            content = line[1:]
+            if content.startswith(" "):
+                content = content[1:]
+            result_lines.append(content)
+    while result_lines and result_lines[-1] == "":
+        result_lines.pop()
+    return "\n".join(result_lines)
+
+
+def _get_file_entity_risk(file_path: str, entity_result: object) -> dict | None:
+    if entity_result is None:
+        return None
+    reviews = entity_result.entity_reviews
+    file_reviews = [r for r in reviews if r.file_path == file_path]
+    if not file_reviews:
+        return None
+
+    highest_level = "low"
+    max_score = 0.0
+    total_entities = len(file_reviews)
+    critical_count = sum(1 for r in file_reviews if r.risk_level.value == "critical")
+    high_count = sum(1 for r in file_reviews if r.risk_level.value == "high")
+    medium_count = sum(1 for r in file_reviews if r.risk_level.value == "medium")
+    low_count = sum(1 for r in file_reviews if r.risk_level.value == "low")
+    total_blast = sum(r.blast_radius for r in file_reviews)
+    functional_count = sum(
+        1
+        for r in file_reviews
+        if r.classification.value
+        in ("functional", "text+functional", "syntax+functional", "text+syntax+functional")
+    )
+
+    for r in file_reviews:
+        if r.risk_score > max_score:
+            max_score = r.risk_score
+        if r.risk_level.value == "critical":
+            highest_level = "critical"
+        elif r.risk_level.value == "high" and highest_level != "critical":
+            highest_level = "high"
+        elif r.risk_level.value == "medium" and highest_level not in ("critical", "high"):
+            highest_level = "medium"
+
+    return {
+        "risk_level": highest_level,
+        "risk_score": round(max_score, 3),
+        "total_entities": total_entities,
+        "critical": critical_count,
+        "high": high_count,
+        "medium": medium_count,
+        "low": low_count,
+        "blast_radius": total_blast,
+        "functional_count": functional_count,
+        "top_entities": [
+            {
+                "entity_name": r.entity_name,
+                "entity_type": r.entity_type,
+                "classification": r.classification.value,
+                "risk_score": round(r.risk_score, 3),
+                "risk_level": r.risk_level.value,
+                "blast_radius": r.blast_radius,
+                "is_public_api": r.is_public_api,
+                "start_line": r.start_line,
+            }
+            for r in sorted(file_reviews, key=lambda x: x.risk_score, reverse=True)
+        ],
+    }
+
+
+def _build_entity_risk_json(file_path: str, entity_result: object) -> str:
+    """Build structured JSON entity risk for the Reviewer agent."""
+    import json
+
+    file_risk = _get_file_entity_risk(file_path, entity_result)
+    if not file_risk:
+        return ""
+
+    risk_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
+        file_risk["risk_level"], "⚪"
+    )
+
+    data = {
+        "file_risk_level": file_risk["risk_level"],
+        "file_risk_icon": risk_icon,
+        "max_risk_score": file_risk["risk_score"],
+        "total_entities": file_risk["total_entities"],
+        "functional_count": file_risk["functional_count"],
+        "blast_radius": file_risk["blast_radius"],
+        "risk_distribution": {
+            "critical": file_risk["critical"],
+            "high": file_risk["high"],
+            "medium": file_risk["medium"],
+            "low": file_risk["low"],
+        },
+        "top_entities": [
+            {
+                "entity_name": ent["entity_name"],
+                "entity_type": ent["entity_type"],
+                "risk_score": ent["risk_score"],
+                "risk_level": ent["risk_level"],
+                "classification": ent["classification"],
+                "is_public_api": ent["is_public_api"],
+                "blast_radius": ent["blast_radius"],
+                "start_line": ent["start_line"],
+            }
+            for ent in (file_risk.get("top_entities") or [])
+        ],
+    }
+    return json.dumps(data, indent=2)
+
+
+def _build_entity_risk_context(file_path: str, entity_result: object) -> str:
+    file_risk = _get_file_entity_risk(file_path, entity_result)
+    if not file_risk:
+        return ""
+
+    risk_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(
+        file_risk["risk_level"], "⚪"
+    )
+
+    parts = [
+        "## Entity-Level Risk Analysis (inspect-style)",
+        "",
+        f"**File risk level:** {file_risk['risk_level'].upper()} {risk_icon}",
+        f"**Max risk score:** {file_risk['risk_score']}",
+        f"**Total changed entities:** {file_risk['total_entities']}",
+        f"**Functional entities:** {file_risk['functional_count']}",
+        f"**Blast radius (transitive dependents):** {file_risk['blast_radius']}",
+        "",
+    ]
+
+    stats_parts = []
+    if file_risk["critical"] > 0:
+        stats_parts.append(f"critical={file_risk['critical']}")
+    if file_risk["high"] > 0:
+        stats_parts.append(f"high={file_risk['high']}")
+    if file_risk["medium"] > 0:
+        stats_parts.append(f"medium={file_risk['medium']}")
+    if stats_parts:
+        parts.append(f"Risk distribution: {', '.join(stats_parts)}")
+        parts.append("")
+
+    if file_risk["top_entities"]:
+        parts.append("### Top Entities by Risk")
+        parts.append("")
+        for ent in file_risk["top_entities"]:
+            api_marker = " [PUBLIC API]" if ent["is_public_api"] else ""
+            blast_note = f", blast={ent['blast_radius']}" if ent["blast_radius"] > 0 else ""
+            parts.append(
+                f"- **{ent['entity_name']}** ({ent['entity_type']}) — "
+                f"score={ent['risk_score']:.3f} [{ent['risk_level']}], "
+                f"class={ent['classification']}{api_marker}{blast_note}"
+            )
+        parts.append("")
+        parts.append(
+            "**Priority guidance:** Review entities with highest risk scores first. "
+            f"Entities with blast_radius > 0 affect other code transitively — "
+            "changes may break unmodified callers."
+        )
+        parts.append("")
+
+    return "\n".join(parts)

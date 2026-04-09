@@ -201,6 +201,7 @@ class CodeReviewAgentState(TypedDict):
     file_content: str
     previous_issues: list[dict[str, Any]]
     validated_previous_issues: list[dict[str, Any]]
+    entity_risk_context: str
 
     messages: Annotated[list[AnyMessage], add_messages]
     tool_rounds: int
