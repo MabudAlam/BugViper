@@ -1,11 +1,25 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
+import confetti from "canvas-confetti";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   listRepositories,
@@ -14,8 +28,72 @@ import {
   getIngestionJobStatus,
   getGitHubRepos,
   embedRepository,
+  getLanguages,
   type GitHubRepo,
 } from "@/lib/api";
+
+function fireConfetti() {
+  confetti({
+    particleCount: 80,
+    spread: 70,
+    origin: { y: 0.6 },
+  });
+}
+
+const DEFAULT_COLOUR = "#8b949e";
+
+const LANG_COLOURS: Record<string, string> = {
+  Python: "#3572A5",
+  JavaScript: "#f1e05a",
+  TypeScript: "#3178c6",
+  Go: "#00ADD8",
+  Rust: "#dea584",
+  Java: "#b07219",
+  Ruby: "#701516",
+  C: "#555555",
+  Cpp: "#f34b7d",
+  CSharp: "#4F5D95",
+  Kotlin: "#A97BFF",
+  Scala: "#c22d40",
+  Swift: "#F05138",
+  PHP: "#4F5D95",
+  Haskell: "#5e5086",
+};
+
+function getLangColour(lang: string | null | undefined): string {
+  if (!lang) return DEFAULT_COLOUR;
+  return LANG_COLOURS[lang] ?? DEFAULT_COLOUR;
+}
+
+function getLanguageSet(languages: string[]): Set<string> {
+  const mapping: Record<string, string> = {
+    python: "Python",
+    javascript: "JavaScript",
+    typescript: "TypeScript",
+    go: "Go",
+    rust: "Rust",
+    java: "Java",
+    ruby: "Ruby",
+    c: "C",
+    cpp: "Cpp",
+    csharp: "CSharp",
+    kotlin: "Kotlin",
+    scala: "Scala",
+    swift: "Swift",
+    php: "PHP",
+    haskell: "Haskell",
+  };
+  const set = new Set<string>();
+  for (const lang of languages) {
+    const displayName = mapping[lang.toLowerCase()];
+    if (displayName) {
+      set.add(displayName);
+    } else {
+      set.add(lang);
+    }
+  }
+  return set;
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -108,22 +186,10 @@ function StatusBadge({ status }: { status?: string }) {
   return null;
 }
 
-// ── Language dot colour ────────────────────────────────────────────────────────
-
-const LANG_COLOURS: Record<string, string> = {
-  Go: "#00ADD8", Python: "#3572A5", TypeScript: "#3178c6", JavaScript: "#f1e05a",
-  Rust: "#dea584", Java: "#b07219", "C++": "#f34b7d", C: "#555555",
-  Ruby: "#701516", Swift: "#F05138", Kotlin: "#A97BFF", PHP: "#4F5D95",
-  Scala: "#c22d40", Shell: "#89e051", Dart: "#00B4AB", HTML: "#e34c26",
-  CSS: "#563d7c",
-};
-
 function LangDot({ lang }: { lang?: string | null }) {
-  if (!lang) return null;
-  const colour = LANG_COLOURS[lang] ?? "#8b949e";
   return (
     <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colour }} />
+      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: getLangColour(lang) }} />
       {lang}
     </span>
   );
@@ -156,10 +222,8 @@ function RepoCard({
 
   return (
     <div className="group rounded-xl border bg-card hover:border-primary/30 transition-colors duration-150 overflow-hidden">
-      {/* Top bar */}
       <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3">
         <div className="flex-1 min-w-0 space-y-1.5">
-          {/* Repo name row */}
           <div className="flex items-center gap-2 flex-wrap">
             <svg className="w-4 h-4 text-muted-foreground shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
@@ -181,7 +245,6 @@ function RepoCard({
             <StatusBadge status={status} />
           </div>
 
-          {/* Description */}
           {repo.description && (
             <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
               {repo.description}
@@ -189,9 +252,7 @@ function RepoCard({
           )}
         </div>
 
-        {/* Action buttons */}
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0">
-          {/* Re-embed button */}
           <button
             onClick={onReEmbed}
             disabled={isEmbedding}
@@ -210,7 +271,6 @@ function RepoCard({
             </svg>
           </button>
 
-          {/* Delete button */}
           <button
             onClick={onDelete}
             aria-label={`Delete ${key}`}
@@ -223,7 +283,6 @@ function RepoCard({
         </div>
       </div>
 
-      {/* Stats row */}
       {stats.length > 0 && (
         <div className="px-5 pb-3">
           <div className="flex flex-wrap gap-x-4 gap-y-1">
@@ -236,7 +295,6 @@ function RepoCard({
         </div>
       )}
 
-      {/* Footer */}
       <div className="flex items-center gap-3 px-5 py-2.5 border-t bg-muted/30 flex-wrap">
         <LangDot lang={repo.language} />
 
@@ -284,7 +342,7 @@ function RepoCard({
   );
 }
 
-// ── Pending card (optimistic, not yet in Firestore) ────────────────────────────
+// ── Pending card ────────────────────────────────────────────────────────────────
 
 function PendingCard({ job }: { job: IngestingJob }) {
   return (
@@ -309,18 +367,183 @@ function PendingCard({ job }: { job: IngestingJob }) {
   );
 }
 
+// ── Add Repository Sheet ────────────────────────────────────────────────────────
+
+function AddRepoSheet({
+  open,
+  onOpenChange,
+  repositories,
+  ingestingJobs,
+  existingKeys,
+  startingRepo,
+  loadingRepos,
+  supportedLanguages,
+  onStart,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  repositories: GitHubRepo[];
+  ingestingJobs: Record<string, IngestingJob>;
+  existingKeys: Set<string>;
+  startingRepo: string | null;
+  loadingRepos: boolean;
+  supportedLanguages: Set<string>;
+  onStart: (repo: GitHubRepo) => void;
+}) {
+  const [search, setSearch] = useState("");
+
+  const filteredRepos = repositories.filter(
+    (r) =>
+      r.full_name.toLowerCase().includes(search.toLowerCase()) ||
+      (r.description ?? "").toLowerCase().includes(search.toLowerCase())
+  );
+
+  const supportedRepos = filteredRepos.filter((r) => {
+    if (!r.language) return false;
+    return supportedLanguages.has(r.language);
+  });
+  const unsupportedRepos = filteredRepos.filter((r) => {
+    if (!r.language) return true;
+    return !supportedLanguages.has(r.language);
+  });
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-md flex flex-col">
+        <SheetHeader>
+          <SheetTitle>Add Repository</SheetTitle>
+          <SheetDescription>
+            Select a repository to index. Only repositories with supported languages can be indexed.
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="px-4 py-3">
+          <Input
+            placeholder="Search repositories..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-9"
+          />
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 pb-4">
+          {loadingRepos ? (
+            <div className="space-y-2">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <Skeleton key={n} className="h-16 w-full rounded-lg" />
+              ))}
+            </div>
+          ) : filteredRepos.length === 0 ? (
+            <div className="text-center py-10 text-sm text-muted-foreground">
+              {search ? "No matching repositories" : "No repositories found"}
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {supportedRepos.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Supported ({supportedRepos.length})
+                  </p>
+                  {supportedRepos.map((repo) => {
+                    const isStarting = startingRepo === repo.full_name;
+                    const alreadyIngesting = repo.full_name in ingestingJobs;
+                    const alreadyIngested = existingKeys.has(repo.full_name);
+                    const disabled = isStarting || alreadyIngesting || alreadyIngested;
+
+                    return (
+                      <div
+                        key={repo.full_name}
+                        className="flex items-center justify-between gap-3 p-3 rounded-lg border hover:bg-accent/50 transition-colors"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm truncate">{repo.full_name}</span>
+                            {repo.private && (
+                              <span className="text-xs text-muted-foreground border rounded px-1 shrink-0">Private</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <LangDot lang={repo.language} />
+                            {repo.stargazers_count > 0 && (
+                              <span className="text-xs text-muted-foreground">★ {repo.stargazers_count}</span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant={alreadyIngested ? "outline" : "default"}
+                          disabled={disabled}
+                          onClick={() => onStart(repo)}
+                          className="shrink-0 h-8 text-xs"
+                        >
+                          {isStarting ? (
+                            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75 fill-current" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+                            </svg>
+                          ) : alreadyIngested ? "Indexed" : alreadyIngesting ? "Indexing…" : "Index"}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {unsupportedRepos.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Unsupported ({unsupportedRepos.length})
+                  </p>
+                  {unsupportedRepos.map((repo) => {
+                    const alreadyIngested = existingKeys.has(repo.full_name);
+
+                    return (
+                      <div
+                        key={repo.full_name}
+                        className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/30 opacity-60"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm truncate">{repo.full_name}</span>
+                            {repo.private && (
+                              <span className="text-xs text-muted-foreground border rounded px-1 shrink-0">Private</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <LangDot lang={repo.language} />
+                            {repo.stargazers_count > 0 && (
+                              <span className="text-xs text-muted-foreground">★ {repo.stargazers_count}</span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-xs text-muted-foreground shrink-0" title={`${repo.language} is not supported`}>
+                          {alreadyIngested ? "Indexed" : "Unsupported"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function RepositoriesPage() {
   const [repositories, setRepositories] = useState<FirestoreRepo[]>([]);
   const [isLoadingRepos, setIsLoadingRepos] = useState(true);
 
-  // GitHub picker
+  // GitHub picker sheet
   const [showPicker, setShowPicker] = useState(false);
   const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
   const [loadingGithubRepos, setLoadingGithubRepos] = useState(false);
-  const [pickerSearch, setPickerSearch] = useState("");
   const [startingRepo, setStartingRepo] = useState<string | null>(null);
+  const [supportedLanguages, setSupportedLanguages] = useState<Set<string>>(new Set());
 
   // Delete dialog
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -329,9 +552,10 @@ export default function RepositoriesPage() {
   // Re-embed
   const [embeddingRepo, setEmbeddingRepo] = useState<string | null>(null);
 
-  // Active ingestion jobs (keyed by full_name e.g. "Pavel401/JobsScraper")
+  // Active ingestion jobs
   const [ingestingJobs, setIngestingJobs] = useState<Record<string, IngestingJob>>({});
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isPollingRef = useRef(false);
   const ingestingJobsRef = useRef(ingestingJobs);
   useEffect(() => { ingestingJobsRef.current = ingestingJobs; }, [ingestingJobs]);
 
@@ -350,9 +574,9 @@ export default function RepositoriesPage() {
     }
   }
 
-  useEffect(() => { loadRepositories(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadRepositories(); }, []);
 
-  // ── Job polling ───────────────────────────────────────────────────────────────
+  // ── Job polling ─────────────────────────────────────────────────────────────
 
   const activeJobIds = useMemo(
     () =>
@@ -371,9 +595,13 @@ export default function RepositoriesPage() {
     }
 
     async function poll() {
+      if (isPollingRef.current) return;
+      isPollingRef.current = true;
+
       const jobs = Object.values(ingestingJobsRef.current).filter(
         (j) => !["completed", "failed"].includes(j.status)
       );
+
       for (const job of jobs) {
         try {
           const res = await getIngestionJobStatus(job.jobId);
@@ -386,6 +614,7 @@ export default function RepositoriesPage() {
 
           if (next === "completed") {
             toast.success(`${job.repo.full_name} indexed successfully`);
+            fireConfetti();
             loadRepositories();
             setTimeout(() => {
               setIngestingJobs((prev) => {
@@ -401,22 +630,28 @@ export default function RepositoriesPage() {
           // silent
         }
       }
+
+      isPollingRef.current = false;
     }
 
     poll();
-    pollRef.current = setInterval(poll, 3000);
+    pollRef.current = setInterval(poll, 10000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [activeJobIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeJobIds]);
 
-  // ── Picker ────────────────────────────────────────────────────────────────────
+  // ── Picker ───────────────────────────────────────────────────────────────────
 
   async function openPicker() {
     setShowPicker(true);
-    setPickerSearch("");
     if (githubRepos.length > 0) return;
     setLoadingGithubRepos(true);
     try {
-      setGithubRepos(await getGitHubRepos());
+      const [repos, langData] = await Promise.all([
+        getGitHubRepos(),
+        getLanguages(),
+      ]);
+      setGithubRepos(repos);
+      setSupportedLanguages(getLanguageSet(langData.languages));
     } catch {
       toast.error("Failed to load GitHub repositories");
     } finally {
@@ -429,11 +664,13 @@ export default function RepositoriesPage() {
     try {
       const [owner, repoName] = repo.full_name.split("/");
       const res = await ingestGithub({ owner, repo_name: repoName, branch: repo.default_branch });
-      setShowPicker(false);
       setIngestingJobs((prev) => ({
         ...prev,
         [repo.full_name]: { jobId: res.job_id, status: res.status, repo },
       }));
+      setShowPicker(false);
+      toast.success(`Indexing started for ${repo.full_name}`);
+      fireConfetti();
     } catch (err) {
       toast.error(`Failed to start: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -479,11 +716,6 @@ export default function RepositoriesPage() {
   const existingKeys = new Set(repositories.map((r) => r.fullName ?? `${r.owner}/${r.repoName}`));
   const pendingCards = Object.values(ingestingJobs).filter(
     (j) => !existingKeys.has(j.repo.full_name)
-  );
-  const filteredRepos = githubRepos.filter(
-    (r) =>
-      r.full_name.toLowerCase().includes(pickerSearch.toLowerCase()) ||
-      (r.description ?? "").toLowerCase().includes(pickerSearch.toLowerCase())
   );
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -551,150 +783,55 @@ export default function RepositoriesPage() {
       </div>
 
       {/* Delete confirmation dialog */}
-      <Dialog.Root
-        open={deleteTarget !== null}
-        onOpenChange={(open) => { if (!open && !isDeleting) setDeleteTarget(null); }}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
-          <Dialog.Content
-            className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 mx-4 bg-background border rounded-xl shadow-2xl focus:outline-none"
-            onInteractOutside={(e) => { if (isDeleting) e.preventDefault(); }}
-          >
-            <div className="flex items-start gap-3 px-6 pt-6 pb-4">
-              <div className="flex items-center justify-center w-9 h-9 rounded-full bg-destructive/10 shrink-0 mt-0.5">
-                <svg className="w-4 h-4 text-destructive" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </div>
-              <div className="space-y-1">
-                <Dialog.Title className="font-semibold text-sm">Delete repository</Dialog.Title>
-                <Dialog.Description className="text-sm text-muted-foreground">
-                  Remove{" "}
-                  <span className="font-medium text-foreground">{deleteTarget}</span>{" "}
-                  from the graph? All indexed data will be permanently deleted.
-                </Dialog.Description>
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t">
-              <Dialog.Close asChild>
-                <button
-                  disabled={isDeleting}
-                  className="px-3 py-1.5 text-sm rounded-md border hover:bg-accent transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-              </Dialog.Close>
-              <button
-                onClick={confirmDelete}
-                disabled={isDeleting}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              >
-                {isDeleting ? (
-                  <>
-                    <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
-                    </svg>
-                    Deleting…
-                  </>
-                ) : "Delete"}
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !isDeleting) setDeleteTarget(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete repository</DialogTitle>
+            <DialogDescription>
+              Remove <span className="font-medium text-foreground">{deleteTarget}</span> from the graph? All indexed data will be permanently deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              disabled={isDeleting}
+              onClick={() => setDeleteTarget(null)}
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={isDeleting}
+              onClick={confirmDelete}
+              className="flex-1"
+            >
+              {isDeleting ? (
+                <>
+                  <svg className="w-3 h-3 animate-spin mr-1.5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75 fill-current" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
+                  </svg>
+                  Deleting…
+                </>
+              ) : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {/* GitHub Repo Picker */}
-      {showPicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={() => setShowPicker(false)}
-          />
-          <div className="relative z-10 w-full max-w-md mx-4 bg-background border rounded-xl shadow-2xl flex flex-col max-h-[75vh]">
-            <div className="flex items-center justify-between px-5 py-4 border-b">
-              <h2 className="font-semibold">Add Repository</h2>
-              <button
-                onClick={() => setShowPicker(false)}
-                className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-accent"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="px-4 py-3 border-b">
-              <Input
-                placeholder="Search repositories..."
-                value={pickerSearch}
-                onChange={(e) => setPickerSearch(e.target.value)}
-                autoFocus
-                className="h-8 text-sm"
-              />
-            </div>
-
-            <div className="flex-1 overflow-y-auto py-1">
-              {loadingGithubRepos ? (
-                <div className="space-y-1 p-3">
-                  {[1, 2, 3, 4, 5].map((n) => <Skeleton key={n} className="h-14 w-full rounded-lg" />)}
-                </div>
-              ) : filteredRepos.length === 0 ? (
-                <div className="text-center py-10 text-sm text-muted-foreground">
-                  {pickerSearch ? "No matching repositories" : "No repositories found"}
-                </div>
-              ) : (
-                filteredRepos.map((repo) => {
-                  const isStarting = startingRepo === repo.full_name;
-                  const alreadyIngesting = repo.full_name in ingestingJobs;
-                  const alreadyIngested = existingKeys.has(repo.full_name);
-                  const disabled = isStarting || alreadyIngesting || alreadyIngested;
-
-                  return (
-                    <div
-                      key={repo.full_name}
-                      className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-accent/50 transition-colors"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm truncate">{repo.full_name}</span>
-                          {repo.private && (
-                            <span className="text-xs text-muted-foreground border rounded px-1 shrink-0">Private</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <LangDot lang={repo.language} />
-                          {repo.stargazers_count > 0 && (
-                            <span className="text-xs text-muted-foreground">★ {repo.stargazers_count}</span>
-                          )}
-                          {repo.description && (
-                            <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
-                          )}
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant={alreadyIngested ? "outline" : "default"}
-                        disabled={disabled}
-                        onClick={() => handleStart(repo)}
-                        className="shrink-0 h-7 text-xs px-3"
-                      >
-                        {isStarting ? (
-                          <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
-                          </svg>
-                        ) : alreadyIngested ? "Indexed" : alreadyIngesting ? "Indexing…" : "Index"}
-                      </Button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Add Repository Sheet */}
+      <AddRepoSheet
+        open={showPicker}
+        onOpenChange={setShowPicker}
+        repositories={githubRepos}
+        ingestingJobs={ingestingJobs}
+        existingKeys={existingKeys}
+        startingRepo={startingRepo}
+        loadingRepos={loadingGithubRepos}
+        supportedLanguages={supportedLanguages}
+        onStart={handleStart}
+      />
     </div>
   );
 }
