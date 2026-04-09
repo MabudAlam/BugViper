@@ -79,3 +79,10 @@ service.json
 output/
 Claude.md
 CYPHER_GUIDE.md
+
+
+.agents
+
+skills-lock.json
+
+
