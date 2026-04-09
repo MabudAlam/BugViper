@@ -2,12 +2,12 @@ import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import { getAuth, GithubAuthProvider, type Auth } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  apiKey: "AIzaSyCD964AoX_VoFcfWUeyRfkhgFJwPp2kCB4",
+  authDomain: "mealai-f58b5.firebaseapp.com",
+  projectId: "mealai-f58b5",
+  storageBucket: "mealai-f58b5.firebasestorage.app",
+  messagingSenderId: "760266971868",
+  appId: "1:760266971868:web:05e8fea3e7ced1baed7219",
 };
 
 function getFirebaseApp(): FirebaseApp {

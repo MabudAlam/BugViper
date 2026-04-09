@@ -32,8 +32,8 @@ neo4j_logs/
 milvus_data/
 
 # Secrets (never send in build context)
-.env
-.env.*
+.env.local
+.env.*.local
 *.pem
 service.json
 github.pem
