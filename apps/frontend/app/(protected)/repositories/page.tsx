@@ -155,7 +155,7 @@ function RepoCard({
   ].filter((s) => s.value !== null);
 
   return (
-    <div className="group rounded-xl border bg-card hover:border-primary/30 transition-all duration-150 overflow-hidden">
+    <div className="group rounded-xl border bg-card hover:border-primary/30 transition-colors duration-150 overflow-hidden">
       {/* Top bar */}
       <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3">
         <div className="flex-1 min-w-0 space-y-1.5">
@@ -190,7 +190,7 @@ function RepoCard({
         </div>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all shrink-0">
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0">
           {/* Re-embed button */}
           <button
             onClick={onReEmbed}
@@ -531,18 +531,19 @@ export default function RepositoriesPage() {
             {pendingCards.map((job) => (
               <PendingCard key={job.repo.full_name} job={job} />
             ))}
-            {repositories.map((repo) => {
+            {repositories.map((repo, i) => {
               const key = repo.fullName ?? `${repo.owner}/${repo.repoName}`;
               const job = ingestingJobs[key];
               return (
-                <RepoCard
-                  key={key}
-                  repo={repo}
-                  liveStatus={job?.status}
-                  onDelete={() => setDeleteTarget(`${repo.owner}/${repo.repoName}`)}
-                  onReEmbed={() => handleReEmbed(repo.owner, repo.repoName)}
-                  isEmbedding={embeddingRepo === key}
-                />
+                <div key={key} className={`animate-fade-in-up stagger-${Math.min(i + 1, 8)}`}>
+                  <RepoCard
+                    repo={repo}
+                    liveStatus={job?.status}
+                    onDelete={() => setDeleteTarget(`${repo.owner}/${repo.repoName}`)}
+                    onReEmbed={() => handleReEmbed(repo.owner, repo.repoName)}
+                    isEmbedding={embeddingRepo === key}
+                  />
+                </div>
               );
             })}
           </>

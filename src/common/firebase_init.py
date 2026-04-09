@@ -9,7 +9,7 @@ from firebase_admin import credentials, firestore
 
 logger = logging.getLogger(__name__)
 
-isLocal = False
+isLocal = True
 
 
 def _get_firebase_credentials():

@@ -239,9 +239,9 @@ export default function LandingPage() {
             return (
               <div
                 key={feature.title}
-                className="group rounded-2xl border border-white/8 bg-white/4 backdrop-blur-sm p-6 hover:bg-white/[0.07] hover:border-white/15 transition-all duration-300"
+                className="group rounded-2xl border border-white/8 bg-white/4 backdrop-blur-sm p-6 hover:bg-white/[0.07] hover:border-white/15 transition-colors duration-200"
               >
-                <div className="w-9 h-9 rounded-lg bg-[oklch(0.723_0.219_142.1)]/10 border border-[oklch(0.723_0.219_142.1)]/20 flex items-center justify-center mb-4 group-hover:bg-[oklch(0.723_0.219_142.1)]/20 transition-colors duration-300">
+                <div className="w-9 h-9 rounded-lg bg-[oklch(0.723_0.219_142.1)]/10 border border-[oklch(0.723_0.219_142.1)]/20 flex items-center justify-center mb-4 group-hover:bg-[oklch(0.723_0.219_142.1)]/20 transition-colors duration-200">
                   <Icon className="w-4 h-4 text-[oklch(0.723_0.219_142.1)]" />
                 </div>
                 <h3 className="font-semibold mb-2">{feature.title}</h3>
