@@ -323,6 +323,14 @@ export const getCurrentUser = () => apiFetch("/api/v1/auth/me");
 
 export const getGitHubRepos = (): Promise<GitHubRepo[]> => apiFetch("/api/v1/auth/github/repos");
 
+export interface LanguagesResponse {
+  languages: string[];
+  extensions: string[];
+  colours: Record<string, string>;
+}
+
+export const getLanguages = (): Promise<LanguagesResponse> => apiFetch("/api/v1/languages");
+
 // Additional query functions
 export const getComplexity = (functionName: string, path?: string) => {
   const params = new URLSearchParams({ function_name: functionName });
