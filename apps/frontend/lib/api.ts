@@ -201,7 +201,14 @@ export const findByLine = (query: string, filter?: RepoFilter) => {
   appendRepoParams(params, filter?.repoOwner, filter?.repoName);
   return apiFetch(`/api/v1/query/code-finder/line?${params}`);
 };
-export const peekFileLines = (path: string, line: number, above: number, below: number, repoOwner?: string, repoName?: string) => {
+export const peekFileLines = (
+  path: string,
+  line: number,
+  above: number,
+  below: number,
+  repoOwner?: string,
+  repoName?: string
+) => {
   const params = new URLSearchParams({
     path,
     line: String(line),
@@ -228,8 +235,15 @@ export const getTopComplexFunctions = (filter?: RepoFilter) => {
 };
 
 // Query - Code Review / Diff Context
-export const getSymbolsAtLines = (repoId: string, filePath: string, startLine: number, endLine: number) =>
-  apiFetch(`/api/v1/query/symbols-at-lines-relative?repo_id=${encodeURIComponent(repoId)}&file_path=${encodeURIComponent(filePath)}&start_line=${startLine}&end_line=${endLine}`);
+export const getSymbolsAtLines = (
+  repoId: string,
+  filePath: string,
+  startLine: number,
+  endLine: number
+) =>
+  apiFetch(
+    `/api/v1/query/symbols-at-lines-relative?repo_id=${encodeURIComponent(repoId)}&file_path=${encodeURIComponent(filePath)}&start_line=${startLine}&end_line=${endLine}`
+  );
 
 export const getDiffContext = (data: {
   repo_id: string;
@@ -237,7 +251,9 @@ export const getDiffContext = (data: {
 }) => apiFetch("/api/v1/query/diff-context", { method: "POST", body: JSON.stringify(data) });
 
 export const getFileSource = (repoId: string, filePath: string) =>
-  apiFetch(`/api/v1/query/file-source?repo_id=${encodeURIComponent(repoId)}&file_path=${encodeURIComponent(filePath)}`);
+  apiFetch(
+    `/api/v1/query/file-source?repo_id=${encodeURIComponent(repoId)}&file_path=${encodeURIComponent(filePath)}`
+  );
 
 // Semantic search
 export interface SemanticHit {
@@ -282,10 +298,7 @@ export interface SessionHistoryResponse {
   messages: AgentChatMessage[];
 }
 
-export const askAgent = (data: {
-  question: string;
-  repo_id?: string;
-}): Promise<AgentResponse> =>
+export const askAgent = (data: { question: string; repo_id?: string }): Promise<AgentResponse> =>
   apiFetch("/api/v1/rag/answer", { method: "POST", body: JSON.stringify(data) });
 
 /** Load the current user's history for a repo (or all-repos if omitted). */
@@ -304,13 +317,11 @@ export const clearMySession = (repoId?: string): Promise<void> => {
 export const loginUser = (data: { github_access_token: string }) =>
   apiFetch("/api/v1/auth/login", { method: "POST", body: JSON.stringify(data) });
 
-export const ensureUser = () =>
-  apiFetch("/api/v1/auth/ensure", { method: "POST" });
+export const ensureUser = () => apiFetch("/api/v1/auth/ensure", { method: "POST" });
 
 export const getCurrentUser = () => apiFetch("/api/v1/auth/me");
 
-export const getGitHubRepos = (): Promise<GitHubRepo[]> =>
-  apiFetch("/api/v1/auth/github/repos");
+export const getGitHubRepos = (): Promise<GitHubRepo[]> => apiFetch("/api/v1/auth/github/repos");
 
 // Additional query functions
 export const getComplexity = (functionName: string, path?: string) => {
@@ -331,7 +342,7 @@ export const getLanguageSymbols = (language: string, symbolType: string, limit =
 
 export const findDefinition = (symbolName: string, repoId?: string) =>
   apiFetch(
-    `/api/v1/query/search?query=${encodeURIComponent(symbolName)}${repoId ? `&repo_id=${encodeURIComponent(repoId)}` : ''}`
+    `/api/v1/query/search?query=${encodeURIComponent(symbolName)}${repoId ? `&repo_id=${encodeURIComponent(repoId)}` : ""}`
   );
 
 export const findMethodUsages = (methodName: string) =>
@@ -349,8 +360,8 @@ export const analyzeRelationships = (queryType: string, target: string, context?
     queryType === "class_hierarchy"
       ? `/api/v1/query/class_hierarchy?class_name=${encodeURIComponent(target)}`
       : queryType === "change_impact"
-      ? `/api/v1/query/change_impact?symbol_name=${encodeURIComponent(target)}`
-      : `/api/v1/query/find_callers?symbol_name=${encodeURIComponent(target)}&query_type=${encodeURIComponent(queryType)}`;
+        ? `/api/v1/query/change_impact?symbol_name=${encodeURIComponent(target)}`
+        : `/api/v1/query/find_callers?symbol_name=${encodeURIComponent(target)}&query_type=${encodeURIComponent(queryType)}`;
   return apiFetch(endpoint);
 };
 
