@@ -10,8 +10,9 @@ steps:
       - "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/frontend-service:latest"
       - "-f"
       - "infra/docker/Dockerfile.frontend"
+      - "--build-arg"
+      - "NEXT_PUBLIC_API_BASE_URL=${_NEXT_PUBLIC_API_BASE_URL}"
       - "."
-
   # Step 2: Push to Artifact Registry
   - name: "gcr.io/cloud-builders/docker"
     args:
@@ -38,3 +39,6 @@ images:
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _NEXT_PUBLIC_API_BASE_URL: https://api.bugviper.dev
