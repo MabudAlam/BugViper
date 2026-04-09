@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.middleware.firebase_auth import FirebaseAuthMiddleware
-from api.routers import auth, ingestion, query, rag, repository, support, webhook
+from api.routers import auth, ingestion, languages, query, rag, repository, support, webhook
 from common.firebase_service import firebase_service  # noqa: F401 — init on import
 
 logger = logging.getLogger(__name__)
@@ -99,6 +99,8 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(rag.router, prefix="/api/v1/rag", tags=["Agent"])
 
 app.include_router(support.router, prefix="/api/v1/support", tags=["Support"])
+
+app.include_router(languages.router, prefix="/api/v1/languages", tags=["Languages"])
 
 
 def run_server():
