@@ -1,6 +1,6 @@
 import { getAuth } from "@/lib/firebase";
 
-const API_BASE = process.env.API_BASE_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
 // Always fetches the freshest token directly from Firebase.
 // Firebase caches the token and auto-refreshes it before expiry — no manual
