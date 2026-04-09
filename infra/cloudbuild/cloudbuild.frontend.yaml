@@ -1,5 +1,5 @@
 steps:
-  # Step 1: Build with NEXT_PUBLIC_API_URL passed as build arg
+  # Step 1: Build Docker image
   - name: "gcr.io/cloud-builders/docker"
     env:
       - 'DOCKER_BUILDKIT=1'
@@ -10,8 +10,6 @@ steps:
       - "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/frontend-service:latest"
       - "-f"
       - "infra/docker/Dockerfile.frontend"
-      - "--build-arg"
-      - "NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}"
       - "."
 
   # Step 2: Push to Artifact Registry
@@ -37,9 +35,6 @@ steps:
 
 images:
   - "us-central1-docker.pkg.dev/mealai-f58b5/bugviper/frontend-service:latest"
-
-substitutions:
-  _NEXT_PUBLIC_API_URL: ${_NEXT_PUBLIC_API_URL}
 
 options:
   logging: CLOUD_LOGGING_ONLY
