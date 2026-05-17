@@ -154,7 +154,7 @@ function StatusBadge({ status }: { status?: string }) {
   const s = status ?? "";
   if (["pending", "dispatched", "running"].includes(s)) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 dark:border-amber-500/20">
         <svg className="w-2.5 h-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
@@ -165,7 +165,7 @@ function StatusBadge({ status }: { status?: string }) {
   }
   if (s === "ingested" || s === "completed") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 dark:border-emerald-500/20">
         <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
         </svg>
@@ -295,7 +295,7 @@ function RepoCard({
         </div>
       )}
 
-      <div className="flex items-center gap-3 px-5 py-2.5 border-t bg-muted/30 flex-wrap">
+      <div className="flex items-center gap-3 px-5 py-2.5 border-t bg-muted/50 dark:bg-muted/30 flex-wrap">
         <LangDot lang={repo.language} />
 
         {(repo.stars ?? 0) > 0 && (
@@ -320,7 +320,7 @@ function RepoCard({
         {repo.topics && repo.topics.length > 0 && (
           <div className="flex gap-1 flex-wrap">
             {repo.topics.slice(0, 4).map((t) => (
-              <span key={t} className="px-1.5 py-0.5 rounded-full text-xs bg-primary/10 text-primary/80 border border-primary/10">
+              <span key={t} className="px-1.5 py-0.5 rounded-full text-xs bg-primary/10 text-primary border border-primary/20">
                 {t}
               </span>
             ))}

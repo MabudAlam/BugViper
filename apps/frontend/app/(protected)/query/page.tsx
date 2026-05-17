@@ -124,7 +124,7 @@ function PeekViewer({ path, anchorLine }: { path: string; anchorLine: number }) 
                 : "hover:bg-muted/40"
               }`}
             >
-              <span className="select-none w-12 text-right px-2 py-0.5 text-muted-foreground/60 shrink-0 border-r border-border">
+              <span className="select-none w-12 text-right px-2 py-0.5 text-muted-foreground/80 dark:text-muted-foreground/60 shrink-0 border-r border-border">
                 {ln.line_number}
               </span>
               <span className="px-3 py-0.5 whitespace-pre">{ln.content}</span>
@@ -139,10 +139,10 @@ function PeekViewer({ path, anchorLine }: { path: string; anchorLine: number }) 
 // ─── Type badge colours ───────────────────────────────────────────────────────
 
 const TYPE_STYLES: Record<string, string> = {
-  function: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
-  class:    "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
-  variable: "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20",
-  line:     "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20",
+  function: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/25",
+  class:    "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/25",
+  variable: "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/25",
+  line:     "bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-500/25",
 };
 
 function TypeBadge({ type }: { type: string }) {
@@ -171,7 +171,7 @@ function SearchHitCard({ hit }: { hit: SearchHit }) {
           {hit.name ?? hit.match_line?.trim()}
         </span>
         {hit.score != null && (
-          <span className="ml-auto shrink-0 text-xs text-muted-foreground/50">
+          <span className="ml-auto shrink-0 text-xs text-muted-foreground/70">
             {hit.score.toFixed(2)}
           </span>
         )}
@@ -398,12 +398,12 @@ function DefinitionCard({ def }: { def: FunctionDefinition }) {
       {/* Header */}
       <div className="px-4 pt-4 pb-3 space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20">
+          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/25">
             {def.symbol_type?.toLowerCase() ?? "fn"}
           </span>
           {def.class_name && (
             <>
-              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500 border border-purple-500/20">
+              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-500/25">
                 {def.class_name}
               </span>
               <span className="text-muted-foreground text-xs">·</span>
@@ -551,7 +551,7 @@ function MethodUsagesView({ data }: { data: { usages: MethodUsageEntry[] } }) {
             <div className="rounded-lg border border-primary/30 bg-primary/5 overflow-hidden">
               <div className="px-4 py-3 space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20 font-medium">fn</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/25 font-medium">fn</span>
                   <span className="font-mono font-bold text-sm">{methodName}</span>
                   {u.file && (
                     <span className="ml-auto text-xs font-mono text-muted-foreground">
@@ -656,7 +656,7 @@ function CodeFinderItem({ item, itemType }: { item: CodeFinderItem; itemType?: s
     return (
       <div className="rounded-lg border border-border bg-card px-4 py-3 space-y-1.5">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-500 border border-cyan-500/20 font-medium">import</span>
+          <span className="text-xs px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border border-cyan-500/25 font-medium">import</span>
           <span className="font-mono font-semibold text-sm">
             {item.imported_name ?? item.alias ?? item.module_name ?? "—"}
           </span>
@@ -703,7 +703,7 @@ function CodeFinderItem({ item, itemType }: { item: CodeFinderItem; itemType?: s
   if (!item.path && item.name) {
     return (
       <div className="rounded-lg border border-border bg-card px-4 py-3 flex items-center gap-2">
-        <span className="text-xs px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-500 border border-orange-500/20 font-medium">module</span>
+        <span className="text-xs px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-700 dark:text-orange-400 border border-orange-500/25 font-medium">module</span>
         <span className="font-mono text-sm font-medium">{item.name}</span>
         {item.lang && <span className="ml-auto text-xs text-muted-foreground">{item.lang}</span>}
       </div>
@@ -712,9 +712,9 @@ function CodeFinderItem({ item, itemType }: { item: CodeFinderItem; itemType?: s
 
   // Standard function/class/variable entry
   const typeStyle: Record<string, string> = {
-    function: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-    class:    "bg-purple-500/10 text-purple-500 border-purple-500/20",
-    variable: "bg-green-500/10 text-green-500 border-green-500/20",
+    function: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/25",
+    class:    "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/25",
+    variable: "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/25",
   };
 
   return (
@@ -867,7 +867,7 @@ function ClassHierarchyView({ data }: { data: unknown }) {
       <div className="rounded-lg border border-primary/40 bg-primary/5 overflow-hidden">
         <div className="px-4 py-3 space-y-1">
           <div className="flex items-center gap-2">
-            <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500 border border-purple-500/20 font-medium">class</span>
+            <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-500/25 font-medium">class</span>
             <span className="font-mono font-bold">{String(obj.class_name)}</span>
             {filename && (
               <span className="ml-auto text-xs font-mono text-muted-foreground">
@@ -930,7 +930,7 @@ function HierarchyRow({ node, direction }: { node: HierarchyNode; direction: "up
         disabled={!canExpand}
       >
         <span className="text-muted-foreground text-xs shrink-0">{direction === "up" ? "↑" : "↓"}</span>
-        <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-500 border border-purple-500/20 font-medium shrink-0">class</span>
+        <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-500/25 font-medium shrink-0">class</span>
         <span className="font-mono font-medium">{node.name ?? "—"}</span>
         {node.docstring && (
           <span className="text-xs text-muted-foreground truncate hidden sm:block ml-2">{node.docstring}</span>

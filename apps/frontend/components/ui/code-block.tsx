@@ -36,7 +36,7 @@ export function CodeBlock({
             return (
               <div key={i} className="flex hover:bg-muted/50">
                 <span
-                  className="select-none text-muted-foreground text-right pr-3 pl-2 border-r border-border bg-muted/30 shrink-0"
+                  className="select-none text-muted-foreground/80 dark:text-muted-foreground/60 text-right pr-3 pl-2 border-r border-border bg-muted/40 dark:bg-muted/30 shrink-0"
                   style={{ minWidth: `${lineNumberWidth + 2}ch` }}
                 >
                   {lineNum}
