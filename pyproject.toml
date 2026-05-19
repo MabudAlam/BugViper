@@ -1,14 +1,14 @@
 [project]
-name = "BugViperion"
-    version = "0.1.0"
-    description = "Code Review Tool - Repository Ingestion Engine with Tree-sitter and Neo4j"
-    requires-python = ">=3.13"
+name = "BugViper"
+version = "0.1.0"
+description = "Code Review Tool - Repository Ingestion Engine with Tree-sitter and Neo4j"
+requires-python = ">=3.13"
 authors = [
     {name = "Code Review Team", email = "team@example.com"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers", 
+    "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
