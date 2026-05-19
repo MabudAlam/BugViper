@@ -161,6 +161,7 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
     """Trigger an AI review when @bugviper is mentioned in a PR comment."""
     if payload.get("action") != "created":
         return {"status": "ignored", "reason": "not a new comment"}
+    
 
     repo_info = payload.get("repository", {})
     issue = payload.get("issue", {})
@@ -171,6 +172,7 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
 
     if commenter_type == "Bot" or "[bot]" in commenter_login:
         return {"status": "ignored", "reason": "comment from bot"}
+    
 
     owner = repo_info.get("owner", {}).get("login", "")
     repo_name = repo_info.get("name", "")
@@ -180,7 +182,16 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
         return {"status": "ignored", "reason": "comment is not on a pull request"}
 
     comment_body = comment.get("body", "")
+
+    if not is_bot_mentioned(comment_body) and not comment_body.strip().startswith("@bugviper"):
+        return {"status": "ignored", "reason": "@bugviper mentioned but not at start of comment"}
+    
+
     uid = firebase_service.find_project_owner_id(owner)
+
+    if uid is None:
+     return {"status": "ignored", "reason": "project owner not found in BugViper"}
+    
     isRepoIndexed = firebase_service.checkIfRepoIndexedOrNot(uid=uid, owner=owner, repo=repo_name)
 
     if not isRepoIndexed:
@@ -197,8 +208,6 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
         )
         return {"status": "ignored", "reason": "repository not indexed"}
 
-    if not is_bot_mentioned(comment_body):
-        return {"status": "ignored", "reason": "@bugviper not mentioned"}
 
     review_type = extract_review_command(comment_body)
 
