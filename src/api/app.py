@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.middleware.firebase_auth import FirebaseAuthMiddleware
 from api.routers import auth, ingestion, languages, query, rag, repository, support, webhook
 from common.firebase_service import firebase_service  # noqa: F401 — init on import
+from db.client import close_neo4j_client  # Add this import
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,10 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     yield
-    # Shutdown - cleanup will be handled by new system
+    # Shutdown - cleanup resources
+    logger.info("Shutting down application...")
+    close_neo4j_client()
+    logger.info("Neo4j client closed")
 
 
 # Create FastAPI application
@@ -114,3 +118,4 @@ def run_server():
 
 if __name__ == "__main__":
     run_server()
+
