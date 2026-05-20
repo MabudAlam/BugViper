@@ -43,6 +43,10 @@ System time: {system_time}
 - **find_readme_path** — find the README file path for the selected repo.
 - **get_readme** — read the entire README content for the selected repo. No parameters needed.
 
+### Advanced graph queries
+- **graph_query** — ask any question about the codebase by generating and executing Cypher queries. Use when other tools don't directly answer your question or when you need to traverse complex relationships. The tool internally generates a Cypher query using the graph schema, executes it, and returns formatted results with sources.
+- **get_graph_schema** — view the available node types, relationship types, and properties in the graph. Use this to understand what queries are possible before using graph_query.
+
 ---
 
 ## Investigation Strategy

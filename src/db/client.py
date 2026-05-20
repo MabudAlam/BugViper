@@ -114,6 +114,77 @@ class Neo4jClient:
         if last_error:
             raise last_error
 
+    def get_schema(self) -> str:
+        """
+        Introspect the Neo4j graph schema for LLM context.
+
+        Returns a formatted string describing:
+        - All node labels and their properties
+        - All relationship types and their properties
+        - Sample relationships between node types
+
+        Returns:
+            Formatted schema string for LLM consumption
+        """
+        if not self.connected:
+            return "Database not connected"
+
+        try:
+            schema_parts = []
+            node_labels = []
+            records, _, _ = self.run_query("CALL db.labels() YIELD label RETURN label ORDER BY label")
+            for record in records:
+                node_labels.append(record["label"])
+
+            schema_parts.append("## Node Types\n")
+            for label in node_labels:
+                prop_query = f"""
+                MATCH (n:{label})
+                WHERE n IS NOT NULL
+                WITH keys(n) as k
+                UNWIND k as prop
+                RETURN collect(DISTINCT prop) as properties
+                LIMIT 1
+                """
+                try:
+                    props_records, _, _ = self.run_query(prop_query)
+                    if props_records and props_records[0].get("properties"):
+                        props = props_records[0]["properties"]
+                        schema_parts.append(f"- {label}: {', '.join(sorted(props))}")
+                    else:
+                        schema_parts.append(f"- {label}")
+                except Exception:
+                    schema_parts.append(f"- {label}")
+
+            schema_parts.append("\n## Relationship Types\n")
+            rel_records, _, _ = self.run_query("CALL db.relationshipTypes() YIELD relationshipType ORDER BY relationshipType")
+            for record in rel_records:
+                rel = record["relationshipType"]
+                schema_parts.append(f"- [:{rel}]")
+
+            schema_parts.append("\n## Relationship Patterns (sample)")
+            sample_query = """
+            MATCH (a)-[r]->(b)
+            WHERE labels(a)[0] IS NOT NULL AND labels(b)[0] IS NOT NULL
+            WITH labels(a)[0] as start_type, type(r) as rel_type, labels(b)[0] as end_type
+            DISTINCT start_type, rel_type, end_type
+            RETURN start_type, collect(DISTINCT rel_type) as rel_types, collect(DISTINCT end_type) as end_types
+            ORDER BY start_type
+            LIMIT 30
+            """
+            rel_pattern_records, _, _ = self.run_query(sample_query)
+            for record in rel_pattern_records:
+                start = record["start_type"]
+                rels = record["rel_types"]
+                ends = record["end_types"]
+                schema_parts.append(f"- ({start})-[:{'|'.join(rels)}]->({', '.join(ends)})")
+
+        except Exception as e:
+            logger.warning(f"Schema introspection failed: {e}")
+            return f"Schema introspection failed: {e}"
+
+        return "\n".join(schema_parts)
+
     def __enter__(self):
         """Context manager entry."""
         return self

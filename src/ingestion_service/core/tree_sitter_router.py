@@ -139,62 +139,61 @@ class GraphBuilder:
     def create_schema(self):
         """Create constraints and indexes in Neo4j."""
         # When adding a new node type with a unique key, add its constraint here.
-        # NOTE: We use 'repo' (format: "owner/name") + relative 'path' for uniqueness
+        # NOTE: We use 'repo_id' (format: "owner/name") + relative 'path' for uniqueness
         with self.driver.session() as session:
             try:
-                # Repository uses repo (owner/name) as unique key
+                # Repository uses repo_id (owner/name) as unique key
                 session.run(
-                    "CREATE CONSTRAINT repository_repo IF NOT EXISTS FOR (r:Repository) REQUIRE r.repo IS UNIQUE"
+                    "CREATE CONSTRAINT repository_repo IF NOT EXISTS FOR (r:Repository) REQUIRE r.repo_id IS UNIQUE"
                 )
-                # File uses repo + relative path
+                # File uses repo_id + relative path
                 session.run(
-                    "CREATE CONSTRAINT file_unique IF NOT EXISTS FOR (f:File) REQUIRE (f.repo, f.path) IS UNIQUE"
+                    "CREATE CONSTRAINT file_unique IF NOT EXISTS FOR (f:File) REQUIRE (f.repo_id, f.path) IS UNIQUE"
                 )
-                # Directory uses repo + relative path
+                # Directory uses repo_id + relative path
                 session.run(
-                    "CREATE CONSTRAINT directory_unique IF NOT EXISTS FOR (d:Directory) REQUIRE (d.repo, d.path) IS UNIQUE"
+                    "CREATE CONSTRAINT directory_unique IF NOT EXISTS FOR (d:Directory) REQUIRE (d.repo_id, d.path) IS UNIQUE"
                 )
-                # Code elements use repo + relative path + line_number
+                # Code elements use repo_id + relative path + line_number
                 session.run(
-                    "CREATE CONSTRAINT function_unique IF NOT EXISTS FOR (f:Function) REQUIRE (f.name, f.repo, f.path, f.line_number) IS UNIQUE"
-                )
-                session.run(
-                    "CREATE CONSTRAINT class_unique IF NOT EXISTS FOR (c:Class) REQUIRE (c.name, c.repo, c.path, c.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT function_unique IF NOT EXISTS FOR (f:Function) REQUIRE (f.name, f.repo_id, f.path, f.line_number) IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT trait_unique IF NOT EXISTS FOR (t:Trait) REQUIRE (t.name, t.repo, t.path, t.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT class_unique IF NOT EXISTS FOR (c:Class) REQUIRE (c.name, c.repo_id, c.path, c.line_number) IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT interface_unique IF NOT EXISTS FOR (i:Interface) REQUIRE (i.name, i.repo, i.path, i.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT trait_unique IF NOT EXISTS FOR (t:Trait) REQUIRE (t.name, t.repo_id, t.path, t.line_number) IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT macro_unique IF NOT EXISTS FOR (m:Macro) REQUIRE (m.name, m.repo, m.path, m.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT interface_unique IF NOT EXISTS FOR (i:Interface) REQUIRE (i.name, i.repo_id, i.path, i.line_number) IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT variable_unique IF NOT EXISTS FOR (v:Variable) REQUIRE (v.name, v.repo, v.path, v.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT macro_unique IF NOT EXISTS FOR (m:Macro) REQUIRE (m.name, m.repo_id, m.path, m.line_number) IS UNIQUE"
+                )
+                session.run(
+                    "CREATE CONSTRAINT variable_unique IF NOT EXISTS FOR (v:Variable) REQUIRE (v.name, v.repo_id, v.path, v.line_number) IS UNIQUE"
                 )
                 session.run(
                     "CREATE CONSTRAINT module_name IF NOT EXISTS FOR (m:Module) REQUIRE m.name IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT struct_unique IF NOT EXISTS FOR (cstruct: Struct) REQUIRE (cstruct.name, cstruct.repo, cstruct.path, cstruct.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT struct_unique IF NOT EXISTS FOR (cstruct: Struct) REQUIRE (cstruct.name, cstruct.repo_id, cstruct.path, cstruct.line_number) IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT enum_unique IF NOT EXISTS FOR (cenum: Enum) REQUIRE (cenum.name, cenum.repo, cenum.path, cenum.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT enum_unique IF NOT EXISTS FOR (cenum: Enum) REQUIRE (cenum.name, cenum.repo_id, cenum.path, cenum.line_number) IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT union_unique IF NOT EXISTS FOR (cunion: Union) REQUIRE (cunion.name, cunion.repo, cunion.path, cunion.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT union_unique IF NOT EXISTS FOR (cunion: Union) REQUIRE (cunion.name, cunion.repo_id, cunion.path, cunion.line_number) IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT annotation_unique IF NOT EXISTS FOR (a:Annotation) REQUIRE (a.name, a.repo, a.path, a.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT annotation_unique IF NOT EXISTS FOR (a:Annotation) REQUIRE (a.name, a.repo_id, a.path, a.line_number) IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT record_unique IF NOT EXISTS FOR (r:Record) REQUIRE (r.name, r.repo, r.path, r.line_number) IS UNIQUE"
+                    "CREATE CONSTRAINT record_unique IF NOT EXISTS FOR (r:Record) REQUIRE (r.name, r.repo_id, r.path, r.line_number) IS UNIQUE"
                 )
                 session.run(
-                    "CREATE CONSTRAINT property_unique IF NOT EXISTS FOR (p:Property) REQUIRE (p.name, p.repo, p.path, p.line_number) IS UNIQUE"
-                )
-
+                    "CREATE CONSTRAINT property_unique IF NOT EXISTS FOR (p:Property) REQUIRE (p.name, p.repo_id, p.path, p.line_number) IS UNIQUE"
+)
                 # Indexes for language attribute
                 session.run("CREATE INDEX function_lang IF NOT EXISTS FOR (f:Function) ON (f.lang)")
                 session.run("CREATE INDEX class_lang IF NOT EXISTS FOR (c:Class) ON (c.lang)")
@@ -580,7 +579,7 @@ class GraphBuilder:
         with self.driver.session() as session:
             session.run(
                 """
-                MERGE (r:Repository {repo: $repo})
+                MERGE (r:Repository {repo_id: $repo})
                 SET r.owner = $owner, r.name = $name, r.is_dependency = $is_dependency
                 """,
                 repo=repo_identifier,
@@ -635,7 +634,7 @@ class GraphBuilder:
             # Create/update File node with repo + relative path as unique key
             session.run(
                 """
-                MERGE (f:File {repo: $repo, path: $path})
+                MERGE (f:File {repo_id: $repo, path: $path})
                 SET f.name = $name,
                     f.is_dependency = $is_dependency,
                     f.source_code = $source_code,
@@ -663,8 +662,8 @@ class GraphBuilder:
                 if parent_label == "Repository":
                     session.run(
                         """
-                        MATCH (p:Repository {repo: $repo})
-                        MERGE (d:Directory {repo: $repo, path: $current_path})
+                        MATCH (p:Repository {repo_id: $repo})
+                        MERGE (d:Directory {repo_id: $repo, path: $current_path})
                         SET d.name = $part
                         MERGE (p)-[:CONTAINS]->(d)
                     """,
@@ -675,8 +674,8 @@ class GraphBuilder:
                 else:
                     session.run(
                         """
-                        MATCH (p:Directory {repo: $repo, path: $parent_path})
-                        MERGE (d:Directory {repo: $repo, path: $current_path})
+                        MATCH (p:Directory {repo_id: $repo, path: $parent_path})
+                        MERGE (d:Directory {repo_id: $repo, path: $current_path})
                         SET d.name = $part
                         MERGE (p)-[:CONTAINS]->(d)
                     """,
@@ -693,8 +692,8 @@ class GraphBuilder:
             if parent_label == "Repository":
                 session.run(
                     """
-                    MATCH (p:Repository {repo: $repo})
-                    MATCH (f:File {repo: $repo, path: $path})
+                    MATCH (p:Repository {repo_id: $repo})
+                    MATCH (f:File {repo_id: $repo, path: $path})
                     MERGE (p)-[:CONTAINS]->(f)
                 """,
                     repo=repo_identifier,
@@ -703,8 +702,8 @@ class GraphBuilder:
             else:
                 session.run(
                     """
-                    MATCH (p:Directory {repo: $repo, path: $parent_path})
-                    MATCH (f:File {repo: $repo, path: $path})
+                    MATCH (p:Directory {repo_id: $repo, path: $parent_path})
+                    MATCH (f:File {repo_id: $repo, path: $path})
                     MERGE (p)-[:CONTAINS]->(f)
                 """,
                     repo=repo_identifier,
@@ -737,11 +736,11 @@ class GraphBuilder:
                         item["cyclomatic_complexity"] = 1
 
                     # Add repo to item props for storage
-                    item_props = {**item, "repo": repo_identifier, "path": relative_path}
+                    item_props = {**item, "repo_id": repo_identifier, "path": relative_path}
 
                     query = f"""
-                        MATCH (f:File {{repo: $repo, path: $path}})
-                        MERGE (n:{label} {{name: $name, repo: $repo, path: $path, line_number: $line_number}})
+                        MATCH (f:File {{repo_id: $repo, path: $path}})
+                        MERGE (n:{label} {{name: $name, repo_id: $repo, path: $path, line_number: $line_number}})
                         SET n += $props
                         MERGE (f)-[:CONTAINS]->(n)
                     """
@@ -759,8 +758,8 @@ class GraphBuilder:
                         for arg_name in item.get("args", []):
                             session.run(
                                 """
-                                MATCH (fn:Function {name: $func_name, repo: $repo, path: $path, line_number: $line_number})
-                                MERGE (p:Parameter {name: $arg_name, repo: $repo, path: $path, function_line_number: $line_number})
+                                MATCH (fn:Function {name: $func_name, repo_id: $repo, path: $path, line_number: $line_number})
+                                MERGE (p:Parameter {name: $arg_name, repo_id: $repo, path: $path, function_line_number: $line_number})
                                 MERGE (fn)-[:HAS_PARAMETER]->(p)
                             """,
                                 func_name=item["name"],
@@ -787,8 +786,8 @@ class GraphBuilder:
                 if item.get("context_type") == "function_definition":
                     session.run(
                         """
-                        MATCH (outer:Function {name: $context, repo: $repo, path: $path})
-                        MATCH (inner:Function {name: $name, repo: $repo, path: $path, line_number: $line_number})
+                        MATCH (outer:Function {name: $context, repo_id: $repo, path: $path})
+                        MATCH (inner:Function {name: $name, repo_id: $repo, path: $path, line_number: $line_number})
                         MERGE (outer)-[:CONTAINS]->(inner)
                     """,
                         context=item["context"],
@@ -815,7 +814,7 @@ class GraphBuilder:
 
                     session.run(
                         """
-                        MATCH (f:File {repo: $repo, path: $path})
+                        MATCH (f:File {repo_id: $repo, path: $path})
                         MERGE (m:Module {name: $module_name})
                         MERGE (f)-[r:IMPORTS]->(m)
                         SET r += $props
@@ -842,7 +841,7 @@ class GraphBuilder:
 
                     session.run(
                         f"""
-                        MATCH (f:File {{repo: $repo, path: $path}})
+                        MATCH (f:File {{repo_id: $repo, path: $path}})
                         MERGE (m:Module {{name: $name}})
                         SET {set_clause_str}
                         MERGE (f)-[r:IMPORTS]->(m)
@@ -859,8 +858,8 @@ class GraphBuilder:
                 if func.get("class_context"):
                     session.run(
                         """
-                        MATCH (c:Class {name: $class_name, repo: $repo, path: $path})
-                        MATCH (fn:Function {name: $func_name, repo: $repo, path: $path, line_number: $func_line})
+                        MATCH (c:Class {name: $class_name, repo_id: $repo, path: $path})
+                        MATCH (fn:Function {name: $func_name, repo_id: $repo, path: $path, line_number: $func_line})
                         MERGE (c)-[:CONTAINS]->(fn)
                     """,
                         class_name=func["class_context"],
@@ -874,7 +873,7 @@ class GraphBuilder:
             for inc in file_data.get("module_inclusions", []):
                 session.run(
                     """
-                    MATCH (c:Class {name: $class_name, repo: $repo, path: $path})
+                    MATCH (c:Class {name: $class_name, repo_id: $repo, path: $path})
                     MERGE (m:Module {name: $module_name})
                     MERGE (c)-[:INCLUDES]->(m)
                 """,
@@ -915,7 +914,7 @@ class GraphBuilder:
         with self.driver.session() as session:
             session.run(
                 """
-                MERGE (f:File {repo: $repo, path: $path})
+                MERGE (f:File {repo_id: $repo, path: $path})
                 SET f.name = $name,
                     f.is_dependency = false,
                     f.source_code = $source_code,
@@ -1090,12 +1089,12 @@ class GraphBuilder:
                     UNWIND $rows AS row
                     MATCH (caller) WHERE (caller:Function OR caller:Class)
                       AND caller.name = row.caller_name
-                      AND caller.repo = row.repo
+                      AND caller.repo_id = row.repo_id
                       AND caller.path = row.caller_path
                       AND caller.line_number = row.caller_line_number
                     MATCH (called) WHERE (called:Function OR called:Class)
                       AND called.name = row.called_name
-                      AND called.repo = row.repo
+                      AND called.repo_id = row.repo_id
                       AND called.path = row.called_path
                     WITH caller, called, row
                     OPTIONAL MATCH (called)-[:CONTAINS]->(init:Function)
@@ -1112,10 +1111,10 @@ class GraphBuilder:
                 session.run(
                     """
                     UNWIND $rows AS row
-                    MATCH (caller:File {repo: row.repo, path: row.caller_path})
+                    MATCH (caller:File {repo_id: row.repo_id, path: row.caller_path})
                     MATCH (called) WHERE (called:Function OR called:Class)
                       AND called.name = row.called_name
-                      AND called.repo = row.repo
+                      AND called.repo_id = row.repo_id
                       AND called.path = row.called_path
                     WITH caller, called, row
                     OPTIONAL MATCH (called)-[:CONTAINS]->(init:Function)
@@ -1186,8 +1185,8 @@ class GraphBuilder:
                 if resolved_path:
                     session.run(
                         """
-                        MATCH (child:Class {name: $child_name, repo: $repo, path: $path})
-                        MATCH (parent:Class {name: $parent_name, repo: $repo, path: $resolved_parent_path})
+                        MATCH (child:Class {name: $child_name, repo_id: $repo, path: $path})
+                        MATCH (parent:Class {name: $parent_name, repo_id: $repo, path: $resolved_parent_path})
                         MERGE (child)-[:INHERITS]->(parent)
                     """,
                         child_name=class_item["name"],
@@ -1250,9 +1249,9 @@ class GraphBuilder:
                     if is_interface or (base_index > 0 and type_label == "Class"):
                         session.run(
                             """
-                            MATCH (child {name: $child_name, repo: $repo, path: $path})
+                            MATCH (child {name: $child_name, repo_id: $repo, path: $path})
                             WHERE child:Class OR child:Struct OR child:Record
-                            MATCH (iface:Interface {name: $interface_name, repo: $repo})
+                            MATCH (iface:Interface {name: $interface_name, repo_id: $repo})
                             MERGE (child)-[:IMPLEMENTS]->(iface)
                         """,
                             child_name=type_item["name"],
@@ -1263,9 +1262,9 @@ class GraphBuilder:
                     else:
                         session.run(
                             """
-                            MATCH (child {name: $child_name, repo: $repo, path: $path})
+                            MATCH (child {name: $child_name, repo_id: $repo, path: $path})
                             WHERE child:Class OR child:Record OR child:Interface
-                            MATCH (parent {name: $parent_name, repo: $repo})
+                            MATCH (parent {name: $parent_name, repo_id: $repo})
                             WHERE parent:Class OR parent:Record OR parent:Interface
                             MERGE (child)-[:INHERITS]->(parent)
                         """,
@@ -1297,7 +1296,7 @@ class GraphBuilder:
             # Get parent directories for cleanup
             parents_res = session.run(
                 """
-                MATCH (f:File {repo: $repo, path: $path})<-[:CONTAINS*]-(d:Directory)
+                MATCH (f:File {repo_id: $repo, path: $path})<-[:CONTAINS*]-(d:Directory)
                 RETURN d.path as path ORDER BY d.path DESC
             """,
                 repo=repo_identifier,
@@ -1308,7 +1307,7 @@ class GraphBuilder:
             # Delete file and its elements
             session.run(
                 """
-                MATCH (f:File {repo: $repo, path: $path})
+                MATCH (f:File {repo_id: $repo, path: $path})
                 OPTIONAL MATCH (f)-[:CONTAINS]->(element)
                 DETACH DELETE f, element
             """,
@@ -1323,7 +1322,7 @@ class GraphBuilder:
             for dir_path in parent_paths:
                 session.run(
                     """
-                    MATCH (d:Directory {repo: $repo, path: $path})
+                    MATCH (d:Directory {repo_id: $repo, path: $path})
                     WHERE NOT (d)-[:CONTAINS]->()
                     DETACH DELETE d
                 """,
@@ -1343,7 +1342,7 @@ class GraphBuilder:
         """
         with self.driver.session() as session:
             result = session.run(
-                "MATCH (r:Repository {repo: $repo}) RETURN count(r) as cnt", repo=repo_identifier
+                "MATCH (r:Repository {repo_id: $repo}) RETURN count(r) as cnt", repo=repo_identifier
             ).single()
             if not result or result["cnt"] == 0:
                 warning_logger(f"Attempted to delete non-existent repository: {repo_identifier}")
@@ -1351,7 +1350,7 @@ class GraphBuilder:
 
             session.run(
                 """
-                MATCH (r:Repository {repo: $repo})
+                MATCH (r:Repository {repo_id: $repo})
                 OPTIONAL MATCH (r)-[:CONTAINS*]->(e)
                 DETACH DELETE r, e
             """,

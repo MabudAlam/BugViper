@@ -165,7 +165,7 @@ class IncrementalGraphUpdater:
         with self.driver.session() as session:
             result = session.run(
                 """
-                MATCH (r:Repository {repo: $repo})
+                MATCH (r:Repository {repo_id: $repo})
                 RETURN count(r) as cnt
             """,
                 repo=repo_identifier,
@@ -201,7 +201,7 @@ class IncrementalGraphUpdater:
             # Get parent directories for cleanup
             parents_res = session.run(
                 """
-                MATCH (f:File {repo: $repo, path: $path})<-[:CONTAINS*]-(d:Directory)
+                MATCH (f:File {repo_id: $repo, path: $path})<-[:CONTAINS*]-(d:Directory)
                 RETURN d.path as path ORDER BY d.path DESC
             """,
                 repo=repo_identifier,
@@ -212,7 +212,7 @@ class IncrementalGraphUpdater:
             # Delete all elements contained by the file
             session.run(
                 """
-                MATCH (f:File {repo: $repo, path: $path})
+                MATCH (f:File {repo_id: $repo, path: $path})
                 OPTIONAL MATCH (f)-[:CONTAINS*]->(element)
                 DETACH DELETE element
             """,
@@ -223,7 +223,7 @@ class IncrementalGraphUpdater:
             # Delete the file node itself
             session.run(
                 """
-                MATCH (f:File {repo: $repo, path: $path})
+                MATCH (f:File {repo_id: $repo, path: $path})
                 DETACH DELETE f
             """,
                 repo=repo_identifier,
@@ -236,7 +236,7 @@ class IncrementalGraphUpdater:
             for dir_path in parent_paths:
                 session.run(
                     """
-                    MATCH (d:Directory {repo: $repo, path: $path})
+                    MATCH (d:Directory {repo_id: $repo, path: $path})
                     WHERE NOT (d)-[:CONTAINS]->()
                     DETACH DELETE d
                 """,
@@ -261,7 +261,7 @@ class IncrementalGraphUpdater:
             result = session.run(
                 """
                 MATCH (caller)-[r:CALLS]->(callee)
-                WHERE callee.repo = $repo AND callee.path = $path
+                WHERE callee.repo_id = $repo AND callee.path = $path
                   AND caller.path <> $path
                 DELETE r
                 RETURN count(r) as deleted_count
@@ -283,7 +283,7 @@ class IncrementalGraphUpdater:
             result = session.run(
                 """
                 MATCH (caller)-[:CALLS]->(callee)
-                WHERE callee.repo = $repo AND callee.path = $path
+                WHERE callee.repo_id = $repo AND callee.path = $path
                   AND caller.path <> $path
                 RETURN DISTINCT caller.path as caller_path
             """,
@@ -303,7 +303,7 @@ class IncrementalGraphUpdater:
             result = session.run(
                 """
                 MATCH (child)-[:INHERITS]->(parent)
-                WHERE parent.repo = $repo AND parent.path = $path
+                WHERE parent.repo_id = $repo AND parent.path = $path
                   AND child.path <> $path
                 RETURN DISTINCT child.path as child_path
             """,
@@ -337,7 +337,7 @@ class IncrementalGraphUpdater:
                 """
                 MATCH (n)
                 WHERE (n:Function OR n:Class OR n:Trait OR n:Interface OR n:Struct)
-                AND n.repo = $repo
+                AND n.repo_id = $repo
                 RETURN n.name as name, n.path as path
             """,
                 repo=repo_identifier,

@@ -1,14 +1,51 @@
 import asyncio
 import json
+import os
+import re
 
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
 from common.embedder import embed_texts
+from common.llm import load_chat_model
 from db.code_serarch_layer import CodeSearchService
 
-# Artifact item shape: {"path": str, "line_number": int|None, "name": str|None, "type": str|None}
-# Every tool returns (content_for_llm: str, sources: list[dict]).
-# LangChain stores sources in ToolMessage.artifact — zero parsing needed downstream.
+GRAPH_QUERY_TEMPLATE = """You are a Cypher query generator for a code knowledge graph.
+
+Schema:
+{schema}
+
+The graph contains code repositories with the following structure:
+- Repository contains Module and File nodes
+- File contains Function, Class, Variable nodes
+- File IMPORTS Module nodes
+- Function CALLS Function/Method nodes
+- Class INHERITS Class nodes
+- Class HAS_METHOD Method nodes
+
+Task: Generate a Cypher query to answer the user's question.
+- Use MATCH patterns to traverse the graph
+- Use WHERE clauses for filtering
+- Always include a RETURN clause
+- For repo-specific queries, filter by repo_id property
+- Keep queries efficient with appropriate LIMIT
+
+Note: Do not include any explanations or apologies in your response.
+Only output the generated Cypher query without any markdown formatting.
+
+Examples:
+# Find all functions that call 'auth'
+MATCH (caller)-[:CALLS]->(callee:Function)
+WHERE callee.name = 'auth'
+RETURN caller.name as caller, caller.path as path, caller.line_number as line
+
+# Find all classes in a repository
+MATCH (r:Repository {repo_id: $repo_id})-[:CONTAINS*]->(f:File)-[:DEFINES]->(c:Class)
+RETURN c.name as name, f.path as path, c.line_number as line
+
+Question: {question}
+
+Cypher Query:"""
 
 _S = dict  # shorthand for a source dict
 
@@ -514,26 +551,135 @@ def get_tools(query_service: CodeSearchService, repo_id: str | None = None) -> l
         lines = result.get("lines_count", 0)
         return f"README: {path} ({lines} lines)", [_src(path, None, typ="readme")]
 
+
+
+
+    @tool(response_format="content_and_artifact")
+    def get_directory_tree(max_depth: int = 5) -> tuple[str, list[_S]]:
+        """Get a tree view of the repository directory structure.
+        Use this to understand the project layout and file organization.
+        Args:
+            max_depth: Maximum depth of directories to show (default 5, max 10)
+        Returns: Tree representation of the directory structure.
+        """
+        if not repo_id:
+            return "No repository selected. Please select a repository first.", []
+
+        max_depth = min(max_depth, 10)
+        query = f"""
+        MATCH (r:Repository)
+        WHERE r.repo_id = $repo_id
+        OPTIONAL MATCH (r)-[:CONTAINS*1..{max_depth}]->(child)
+        WHERE child:Module OR child:File
+        RETURN labels(child)[0] as type,
+               child.name as name,
+               child.path as path,
+               child.is_package as is_package
+        ORDER BY path
+        """
+        records, _, _ = query_service.db.run_query(query, {"repo_id": repo_id})
+
+        if not records:
+            return f"No directory structure found for repository '{repo_id}'.", []
+
+        tree_lines = []
+        for record in records:
+            node_type = record.get("type", "")
+            name = record.get("name") or ""
+            path = record.get("path") or ""
+
+            if not path:
+                continue
+
+            depth = len(path.split("/")) - 1
+
+            if depth == 0:
+                tree_lines.append(f"📁 {name}/")
+            elif node_type == "Module":
+                indent = "  " * (depth - 1)
+                tree_lines.append(f"{indent}📁 {name}/")
+            else:
+                indent = "  " * (depth - 1)
+                tree_lines.append(f"{indent}📄 {name}")
+
+        return "## Directory Tree\n\n" + "\n".join(tree_lines), []
+
+    @tool(response_format="content_and_artifact")
+    def graph_query(question: str) -> tuple[str, list[_S]]:
+        """Ask any question about the codebase by generating and executing Cypher queries.
+        Use this when other tools don't directly answer your question or when you need
+        to traverse complex relationships in the code graph.
+
+        This tool uses the graph schema to understand what's possible, generates an
+        appropriate Cypher query internally, executes it, and returns the formatted
+        answer with source citations.
+
+        Examples:
+        - "What functions call the authentication module?"
+        - "Show me the call graph for user login"
+        - "What classes inherit from BaseModel?"
+        - "Find all files that import the utils module"
+        - "List the directory structure of the project"
+        - "What is the inheritance hierarchy for class X?"
+        """
+        schema = query_service.get_graph_schema()
+        cypher_llm = load_chat_model(os.getenv("GRAPH_QUERY_MODEL", "openai/gpt-4o-mini"))
+
+        prompt = GRAPH_QUERY_TEMPLATE.format(schema=schema, question=question)
+
+        try:
+            response = cypher_llm.invoke([HumanMessage(content=prompt)])
+            cypher_query = response.content.strip()
+
+            cypher_query = re.sub(r"^```cypher\s*", "", cypher_query)
+            cypher_query = re.sub(r"^```\s*", "", cypher_query)
+            cypher_query = re.sub(r"\s*```$", "", cypher_query)
+
+            if not cypher_query:
+                return "Failed to generate a valid Cypher query. Try rephrasing your question.", []
+
+            result_str, sources = query_service.execute_safe_cypher(
+                cypher_query, repo_id=repo_id
+            )
+            return result_str, sources
+
+        except Exception as e:
+            return f"Error generating or executing query: {e}", []
+
+    @tool(response_format="content_and_artifact")
+    def get_graph_schema() -> tuple[str, list[_S]]:
+        """Get the schema of the code knowledge graph.
+        Use this to understand what node types, relationship types, and properties
+        are available in the graph before using graph_query.
+
+        Returns: The graph schema describing all node types, relationships, and properties.
+        """
+        schema = query_service.get_graph_schema()
+        return f"## Code Graph Schema\n\n{schema}\n\nUse this schema to understand what queries you can make with graph_query.", []
+
     return [
-        search_code,
-        peek_code,
+        # search_code,
+        # peek_code,
         semantic_search,
-        find_function,
-        find_class,
-        find_variable,
-        find_by_content,
-        find_by_line,
-        find_module,
-        find_imports,
-        find_method_usages,
-        find_callers,
-        get_class_hierarchy,
-        get_change_impact,
-        get_complexity,
-        get_top_complex_functions,
-        get_file_source,
-        get_language_stats,
-        get_repo_stats,
-        find_readme_path,
+        # find_function,
+        # find_class,
+        # find_variable,
+        # find_by_content,
+        # find_by_line,
+        # find_module,
+        # find_imports,
+        # find_method_usages,
+        # find_callers,
+        # get_class_hierarchy,
+        # get_change_impact,
+        # get_complexity,
+        # get_top_complex_functions,
+        # get_file_source,
+        # get_language_stats,
+        # get_repo_stats,
+        # find_readme_path,
         get_readme,
+        get_directory_tree,
+        graph_query,
+        get_graph_schema,
     ]

@@ -113,7 +113,7 @@ class CodeSearchService:
         try:
             query = """
             MATCH (r:Repository)
-            WHERE r.id = $repo_id OR r.repo = $repo_id
+            WHERE r.id = $repo_id OR r.repo_id = $repo_id
             OPTIONAL MATCH (r)-[:CONTAINS*]->(n)
             DETACH DELETE r, n
             RETURN count(r) as deleted_count
@@ -154,7 +154,7 @@ class CodeSearchService:
         """Get all files in a repository."""
         query = """
         MATCH (r:Repository)
-        WHERE r.id = $repo_id OR r.repo = $repo_id
+        WHERE r.id = $repo_id OR r.repo_id = $repo_id
         MATCH (r)-[:CONTAINS*]->(f:File)
         RETURN f.id as id, f.path as path, f.language as language,
                f.lines_count as lines_count
@@ -188,7 +188,7 @@ class CodeSearchService:
         """Verify that all files in a repository have source_code stored."""
         query = """
         MATCH (r:Repository)
-        WHERE r.id = $repo_id OR r.repo = $repo_id
+        WHERE r.id = $repo_id OR r.repo_id = $repo_id
         MATCH (r)-[:CONTAINS*]->(f:File)
         RETURN count(f) as total_files,
                sum(CASE WHEN f.source_code IS NOT NULL THEN 1 ELSE 0 END) as files_with_source,
@@ -206,7 +206,7 @@ class CodeSearchService:
 
         problem_records, _, _ = self.db.run_query(
             """
-            MATCH (r:Repository) WHERE r.id = $repo_id OR r.repo = $repo_id
+            MATCH (r:Repository) WHERE r.id = $repo_id OR r.repo_id = $repo_id
             MATCH (r)-[:CONTAINS*]->(f:File) WHERE f.source_code IS NULL
             RETURN f.path as path LIMIT 10
             """,
@@ -230,7 +230,7 @@ class CodeSearchService:
         """Get all config files in a repository."""
         query = """
         MATCH (r:Repository)
-        WHERE r.id = $repo_id OR r.repo = $repo_id
+        WHERE r.id = $repo_id OR r.repo_id = $repo_id
         MATCH (r)-[:HAS_CONFIG]->(cf:ConfigFile)
         RETURN cf.id as id, cf.path as path, cf.file_type as file_type,
                cf.project_name as project_name, cf.version as version,
@@ -254,7 +254,7 @@ class CodeSearchService:
         """Get all package dependencies declared in a repository."""
         query = """
         MATCH (r:Repository)
-        WHERE r.id = $repo_id OR r.repo = $repo_id
+        WHERE r.id = $repo_id OR r.repo_id = $repo_id
         MATCH (r)-[:HAS_CONFIG]->(cf:ConfigFile)-[:HAS_DEPENDENCY]->(d:Dependency)
         RETURN d.name as name, d.version_spec as version, d.is_dev as is_dev,
                d.source as source, cf.path as config_file
@@ -358,7 +358,7 @@ class CodeSearchService:
             WHERE f.source_code CONTAINS $call_pattern
               AND NOT f.path IN $exclude_paths
               AND (f.is_dependency IS NULL OR f.is_dependency = false)
-              AND ($repo_id IS NULL OR f.repo = $repo_id)
+              AND ($repo_id IS NULL OR f.repo_id = $repo_id)
             RETURN f.path AS file_path, f.source_code AS source_code
             LIMIT 10
             """,
@@ -582,7 +582,7 @@ class CodeSearchService:
                 query = """
                     CALL db.index.fulltext.queryNodes('code_search', $search_term)
                     YIELD node, score
-                    WHERE $repo_id IS NULL OR node.repo = $repo_id
+                    WHERE $repo_id IS NULL OR node.repo_id = $repo_id
                     OPTIONAL MATCH (f:File)-[:CONTAINS]->(node)
                     RETURN
                         CASE WHEN node:Function THEN 'function'
@@ -658,7 +658,7 @@ class CodeSearchService:
                 """
                 CALL db.index.fulltext.queryNodes('file_content_search', $search_term) YIELD node, score
                 WHERE node.source_code IS NOT NULL AND size(node.source_code) < $max_bytes
-                  AND ($repo_id IS NULL OR node.repo = $repo_id)
+                  AND ($repo_id IS NULL OR node.repo_id = $repo_id)
                 WITH node, score, split(node.source_code, '\n') as lines
                 LIMIT 10
                 UNWIND range(0, size(lines) - 1) AS idx
@@ -694,7 +694,7 @@ class CodeSearchService:
             MATCH (f:File)
             WHERE f.source_code IS NOT NULL AND f.source_code CONTAINS $raw_term
               AND size(f.source_code) < $max_bytes
-              AND ($repo_id IS NULL OR f.repo = $repo_id)
+              AND ($repo_id IS NULL OR f.repo_id = $repo_id)
             WITH f, split(f.source_code, '\n') AS lines
             LIMIT 5
             UNWIND range(0, size(lines) - 1) AS idx
@@ -731,7 +731,7 @@ class CodeSearchService:
             records, _, _ = self.db.run_query(
                 """
                 MATCH (f:File)
-                WHERE f.repo = $repo_id AND f.path = $path AND f.source_code IS NOT NULL
+                WHERE f.repo_id = $repo_id AND f.path = $path AND f.source_code IS NOT NULL
                 RETURN f.source_code as source_code, f.is_markdown as is_markdown
                 LIMIT 1
                 """,
@@ -810,7 +810,7 @@ class CodeSearchService:
         repo_id: Optional[str] = None,
     ) -> str:
         repo_filter = (
-            "AND ($repo_id IS NULL OR node.repo = $repo_id)" if repo_id is not None else ""
+            "AND ($repo_id IS NULL OR node.repo_id = $repo_id)" if repo_id is not None else ""
         )
         return f"""
             CALL db.index.fulltext.queryNodes("code_search_index", $search_term) YIELD node, score
@@ -829,7 +829,7 @@ class CodeSearchService:
         with self.driver.session() as session:
             if not fuzzy_search:
                 return session.run(
-                    "MATCH (n:Function {name: $name}) WHERE $repo_id IS NULL OR n.repo = $repo_id RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
+                    "MATCH (n:Function {name: $name}) WHERE $repo_id IS NULL OR n.repo_id = $repo_id RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
                     name=search_term,
                     repo_id=repo_id,
                 ).data()
@@ -846,7 +846,7 @@ class CodeSearchService:
         with self.driver.session() as session:
             if not fuzzy_search:
                 return session.run(
-                    "MATCH (n:Class {name: $name}) WHERE $repo_id IS NULL OR n.repo = $repo_id RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
+                    "MATCH (n:Class {name: $name}) WHERE $repo_id IS NULL OR n.repo_id = $repo_id RETURN n.name as name, n.path as path, n.line_number as line_number, n.source as source, n.docstring as docstring, n.is_dependency as is_dependency LIMIT 20",
                     name=search_term,
                     repo_id=repo_id,
                 ).data()
@@ -860,7 +860,7 @@ class CodeSearchService:
         """Find variables by name substring."""
         with self.driver.session() as session:
             return session.run(
-                "MATCH (v:Variable) WHERE v.name CONTAINS $search_term AND ($repo_id IS NULL OR v.repo = $repo_id) RETURN v.name as name, v.path as path, v.line_number as line_number, v.value as value, v.context as context, v.is_dependency as is_dependency ORDER BY v.is_dependency ASC, v.name LIMIT 20",
+                "MATCH (v:Variable) WHERE v.name CONTAINS $search_term AND ($repo_id IS NULL OR v.repo_id = $repo_id) RETURN v.name as name, v.path as path, v.line_number as line_number, v.value as value, v.context as context, v.is_dependency as is_dependency ORDER BY v.is_dependency ASC, v.name LIMIT 20",
                 search_term=search_term,
                 repo_id=repo_id,
             ).data()
@@ -873,7 +873,7 @@ class CodeSearchService:
                     """
                     CALL db.index.fulltext.queryNodes("code_search_index", $search_term) YIELD node, score
                     WITH node, score WHERE (node:Function OR node:Class OR node:Variable)
-                      AND ($repo_id IS NULL OR node.repo = $repo_id)
+                      AND ($repo_id IS NULL OR node.repo_id = $repo_id)
                     RETURN CASE WHEN node:Function THEN 'function' WHEN node:Class THEN 'class' ELSE 'variable' END as type,
                         node.name as name, node.path as path, node.line_number as line_number,
                         node.source as source, node.docstring as docstring, node.is_dependency as is_dependency
@@ -887,7 +887,7 @@ class CodeSearchService:
                     """
                     MATCH (node) WHERE (node:Function OR node:Class OR node:Variable)
                       AND (node.name CONTAINS $search_term OR node.source CONTAINS $search_term OR node.docstring CONTAINS $search_term)
-                      AND ($repo_id IS NULL OR node.repo = $repo_id)
+                      AND ($repo_id IS NULL OR node.repo_id = $repo_id)
                     RETURN CASE WHEN node:Function THEN 'function' WHEN node:Class THEN 'class' ELSE 'variable' END as type,
                         node.name as name, node.path as path, node.line_number as line_number,
                         node.source as source, node.docstring as docstring, node.is_dependency as is_dependency
@@ -912,7 +912,7 @@ class CodeSearchService:
                 """
                 MATCH (f:File)-[r:IMPORTS]->(m:Module)
                 WHERE (r.alias = $search_term OR r.imported_name = $search_term)
-                  AND ($repo_id IS NULL OR f.repo = $repo_id)
+                  AND ($repo_id IS NULL OR f.repo_id = $repo_id)
                 RETURN r.alias as alias, r.imported_name as imported_name,
                        m.name as module_name, f.path as path, r.line_number as line_number
                 ORDER BY f.path LIMIT 20
@@ -956,14 +956,14 @@ class CodeSearchService:
         with self.driver.session() as session:
             if path:
                 results = session.run(
-                    "MATCH (f:Function {name: $name}) WHERE (f.path ENDS WITH $path OR f.path = $path) AND ($repo_id IS NULL OR f.repo = $repo_id) RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number",
+                    "MATCH (f:Function {name: $name}) WHERE (f.path ENDS WITH $path OR f.path = $path) AND ($repo_id IS NULL OR f.repo_id = $repo_id) RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number",
                     name=function_name,
                     path=path,
                     repo_id=repo_id,
                 ).data()
             else:
                 results = session.run(
-                    "MATCH (f:Function {name: $name}) WHERE $repo_id IS NULL OR f.repo = $repo_id RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number",
+                    "MATCH (f:Function {name: $name}) WHERE $repo_id IS NULL OR f.repo_id = $repo_id RETURN f.name as function_name, f.cyclomatic_complexity as complexity, f.path as path, f.line_number as line_number",
                     name=function_name,
                     repo_id=repo_id,
                 ).data()
@@ -979,7 +979,7 @@ class CodeSearchService:
                 MATCH (file:File)-[:CONTAINS]->(f:Function)
                 WHERE f.cyclomatic_complexity IS NOT NULL
                   AND (f.is_dependency = false OR f.is_dependency IS NULL)
-                  AND ($repo_id IS NULL OR file.repo = $repo_id)
+                  AND ($repo_id IS NULL OR file.repo_id = $repo_id)
                 RETURN f.name as function_name, f.path as path, f.cyclomatic_complexity as complexity, f.line_number as line_number
                 ORDER BY f.cyclomatic_complexity DESC LIMIT $limit
                 """,
@@ -998,7 +998,7 @@ class CodeSearchService:
         records, _, _ = self.db.run_query(
             """
             MATCH (f:File)
-            WHERE f.path = $relative_path AND f.repo = $repo_id
+            WHERE f.path = $relative_path AND f.repo_id = $repo_id
             MATCH (f)-[:CONTAINS]->(n)
             WHERE (n:Function OR n:Class OR n:Variable)
               AND n.line_number IS NOT NULL
@@ -1038,7 +1038,7 @@ class CodeSearchService:
                 """
                 MATCH (f:File)
                 WHERE f.language = $language
-                  AND ($repo_id IS NULL OR f.repo = $repo_id)
+                  AND ($repo_id IS NULL OR f.repo_id = $repo_id)
                 OPTIONAL MATCH (f)-[:CONTAINS]->(func:Function)
                 OPTIONAL MATCH (f)-[:CONTAINS]->(cls:Class)
                 OPTIONAL MATCH (f)-[:CONTAINS]->(var:Variable)
@@ -1057,7 +1057,7 @@ class CodeSearchService:
                 """
                 MATCH (f:File)
                 WHERE f.language IS NOT NULL
-                  AND ($repo_id IS NULL OR f.repo = $repo_id)
+                  AND ($repo_id IS NULL OR f.repo_id = $repo_id)
                 OPTIONAL MATCH (f)-[:CONTAINS]->(func:Function)
                 OPTIONAL MATCH (f)-[:CONTAINS]->(cls:Class)
                 OPTIONAL MATCH (f)-[:CONTAINS]->(var:Variable)
@@ -1084,7 +1084,7 @@ class CodeSearchService:
         records, _, _ = self.db.run_query(
             """
             MATCH (f:File)
-            WHERE f.path = $relative_path AND f.repo = $repo_id
+            WHERE f.path = $relative_path AND f.repo_id = $repo_id
             RETURN f.source_code AS source_code,
                    f.path AS path,
                    f.language AS language,
@@ -1108,7 +1108,7 @@ class CodeSearchService:
         records, _, _ = self.db.run_query(
             """
             MATCH (f:File)
-            WHERE f.repo = $repo_id
+            WHERE f.repo_id = $repo_id
               AND (f.name =~ '(?i)readme.*' OR f.path =~ '.*(?i)readme.*')
               AND f.is_markdown = true
             RETURN f.source_code AS source_code,
@@ -1136,7 +1136,7 @@ class CodeSearchService:
         records, _, _ = self.db.run_query(
             """
             MATCH (f:File)
-            WHERE f.repo = $repo_id AND f.path = $path AND f.source_code IS NOT NULL
+            WHERE f.repo_id = $repo_id AND f.path = $path AND f.source_code IS NOT NULL
             RETURN f.source_code AS source_code
             LIMIT 1
             """,
@@ -1180,7 +1180,7 @@ class CodeSearchService:
         """Query all vector indexes and return ranked, deduplicated results.
 
         The caller is responsible for producing the embedding vector.
-        If repo_id is given, results are filtered via node.repo = $repo_id in Cypher.
+        If repo_id is given, results are filtered via node.repo_id = $repo_id in Cypher.
         """
         all_results: List[Dict[str, Any]] = []
 
@@ -1190,7 +1190,7 @@ class CodeSearchService:
                     f"""
                     CALL db.index.vector.queryNodes('{index_name}', $k, $embedding)
                     YIELD node, score
-                    WHERE $repo_id IS NULL OR node.repo = $repo_id
+                    WHERE $repo_id IS NULL OR node.repo_id = $repo_id
                     OPTIONAL MATCH (f:File)-[:CONTAINS]->(node)
                     RETURN node.name                               AS name,
                            '{node_type}'                           AS type,
@@ -1219,6 +1219,84 @@ class CodeSearchService:
         return deduped
 
     # =========================================================================
+    # Schema Introspection & Safe Cypher Execution (for GraphRAG)
+    # =========================================================================
+
+    def get_graph_schema(self) -> str:
+        """Get the full graph schema formatted for LLM consumption."""
+        return self.db.get_schema()
+
+    def execute_safe_cypher(
+        self,
+        query: str,
+        max_results: int = 100,
+        repo_id: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """
+        Execute a Cypher query safely with validation and formatting.
+
+        Args:
+            query: A Cypher query string to execute
+            max_results: Maximum number of results to return (default 100)
+            repo_id: Optional repository ID to scope the query
+
+        Returns:
+            Tuple of (formatted_results_string, list_of_source_dicts)
+        """
+        forbidden_keywords = ["DELETE", "DROP", "MERGE", "SET", "REMOVE", "CREATE"]
+        query_upper = query.upper()
+        for keyword in forbidden_keywords:
+            if keyword in query_upper:
+                return f"Query blocked: '{keyword}' is not allowed for safety reasons.", []
+
+        if "RETURN" not in query_upper and "WITH" not in query_upper:
+            return "Query must include a RETURN clause for safety.", []
+
+        if repo_id:
+            if "$repo_id" not in query and "repo_id" not in query:
+                query = query.rstrip(";") + f" WHERE node.repo_id = '{repo_id}' OR $repo_id IS NULL"
+
+        try:
+            records, _, keys = self.db.run_query(query, {"repo_id": repo_id})
+        except Exception as e:
+            return f"Query execution error: {e}", []
+
+        if not records:
+            return "No results found.", []
+
+        formatted_lines = []
+        sources = []
+
+        for i, record in enumerate(records[:max_results]):
+            row_parts = []
+            for key in keys:
+                val = record.get(key)
+                if val is not None:
+                    if hasattr(val, "to_iso_format"):
+                        val = val.to_iso_format()
+                    elif isinstance(val, list):
+                        val = str([str(v) for v in val[:5]])
+                    elif isinstance(val, dict):
+                        val = str({k: str(v) for k, v in list(val.items())[:5]})
+                    row_parts.append(f"{key}={val}")
+            formatted_lines.append(f"  {i + 1}. {', '.join(row_parts)}")
+
+            path = record.get("path") or record.get("file_path")
+            if path:
+                sources.append({
+                    "path": path,
+                    "line_number": record.get("line_number") or record.get("line"),
+                    "name": record.get("name"),
+                    "type": record.get("type") or record.get("label"),
+                })
+
+        result_str = f"Found {len(records)} result(s):\n" + "\n".join(formatted_lines)
+        if len(records) > max_results:
+            result_str += f"\n  ... and {len(records) - max_results} more results"
+
+        return result_str, sources
+
+    # =========================================================================
     # Diff Context (Review Pipeline)
     # =========================================================================
 
@@ -1242,7 +1320,7 @@ class CodeSearchService:
                 records, _, _ = self.db.run_query(
                     """
                     MATCH (caller)-[:CALLS]->(target)
-                    WHERE target.name = $name AND target.repo = $repo_id
+                    WHERE target.name = $name AND target.repo_id = $repo_id
                     RETURN CASE WHEN caller:Function THEN 'function' WHEN caller:Class THEN 'class' ELSE 'other' END as type,
                         caller.name as name, caller.path as path,
                         caller.line_number as line_number, caller.source as source
@@ -1261,7 +1339,7 @@ class CodeSearchService:
 
             for cls in [s for s in symbols if s["type"] == "class"]:
                 records, _, _ = self.db.run_query(
-                    "MATCH (c:Class {name: $name})-[:INHERITS*0..5]->(parent:Class) WHERE c.repo = $repo_id RETURN parent.name as name, parent.path as path, parent.source as source, parent.docstring as docstring",
+                    "MATCH (c:Class {name: $name})-[:INHERITS*0..5]->(parent:Class) WHERE c.repo_id = $repo_id RETURN parent.name as name, parent.path as path, parent.source as source, parent.docstring as docstring",
                     {"name": cls["name"], "repo_id": repo_id},
                 )
                 if records:
@@ -1270,7 +1348,7 @@ class CodeSearchService:
                     )
 
             records, _, _ = self.db.run_query(
-                "MATCH (f:File) WHERE f.relative_path = $relative_path AND f.repo = $repo_id RETURN f.source_code as source_code LIMIT 1",
+                "MATCH (f:File) WHERE f.relative_path = $relative_path AND f.repo_id = $repo_id RETURN f.source_code as source_code LIMIT 1",
                 {"relative_path": file_path, "repo_id": repo_id},
             )
             if records and records[0].get("source_code"):

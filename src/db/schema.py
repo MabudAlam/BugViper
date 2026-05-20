@@ -41,7 +41,7 @@ class CodeGraphSchema:
         constraints = [
             # Unique constraints
             "CREATE CONSTRAINT user_username IF NOT EXISTS FOR (u:User) REQUIRE u.username IS UNIQUE",
-            # Repository uniqueness is handled by graph_builder's constraint on r.repo (owner/name format)
+            # Repository uniqueness is handled by graph_builder's constraint on r.repo_id (owner/name format)
             # "CREATE CONSTRAINT repo_unique IF NOT EXISTS FOR (r:Repository) REQUIRE (r.owner, r.name) IS UNIQUE",
             "CREATE CONSTRAINT file_path IF NOT EXISTS FOR (f:File) REQUIRE (f.repo_id, f.path) IS UNIQUE",
             "CREATE CONSTRAINT branch_unique IF NOT EXISTS FOR (b:Branch) REQUIRE (b.repo_id, b.name) IS UNIQUE",
@@ -104,7 +104,7 @@ class CodeGraphSchema:
             repo_id: Repository ID (format: username/repo_name)
         """
         query = """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         OPTIONAL MATCH (r)-[*]->(n)
         DETACH DELETE n, r
         """
@@ -120,7 +120,7 @@ class CodeGraphSchema:
             commit_hash: Git commit hash
         """
         query = """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         SET r.last_commit_hash = $commit_hash,
             r.last_updated_at = datetime()
         RETURN r
@@ -138,7 +138,7 @@ class CodeGraphSchema:
             Commit hash or None if not set
         """
         query = """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         RETURN r.last_commit_hash as commit_hash
         """
         records, _, _ = self.db.run_query(query, {"repo_id": repo_id})
@@ -157,7 +157,7 @@ class CodeGraphSchema:
             Dictionary with repository metadata or None if not found
         """
         query = """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         RETURN r.id as id,
                r.name as name,
                r.owner as owner,
@@ -329,7 +329,7 @@ CYPHER_QUERIES = {
     """,
     "get_repo_stats": """
         MATCH (r:Repository)
-        WHERE r.repo = $repo_id OR r.id = $repo_id
+        WHERE r.repo_id = $repo_id OR r.id = $repo_id
         OPTIONAL MATCH (r)-[:CONTAINS*]->(f:File)
         WITH r, collect(DISTINCT f) as files
         WITH r, files,
@@ -392,7 +392,7 @@ CYPHER_QUERIES = {
     # -------------------------------------------------------------------------
     "create_repository": """
         MATCH (u:User {username: $username})
-        MERGE (r:Repository {repo: $repo_id})
+        MERGE (r:Repository {repo_id: $repo_id})
         ON CREATE SET
             r.owner = $username,
             r.name = $repo_name,
@@ -406,7 +406,7 @@ CYPHER_QUERIES = {
         RETURN r
     """,
     "create_branch": """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         MERGE (b:Branch {repo_id: $repo_id, name: $branch_name})
         ON CREATE SET b.commit_sha = $commit_sha, b.is_default = $is_default
         MERGE (r)-[:HAS_BRANCH]->(b)
@@ -416,7 +416,7 @@ CYPHER_QUERIES = {
     # Module Operations
     # -------------------------------------------------------------------------
     "create_module": """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         MERGE (m:Module {repo_id: $repo_id, path: $path})
         ON CREATE SET
             m.name = $name,
@@ -444,7 +444,7 @@ CYPHER_QUERIES = {
     # File Operations
     # -------------------------------------------------------------------------
     "create_file": """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         MERGE (f:File {repo_id: $repo_id, path: $path})
         ON CREATE SET
             f.id = $file_id,
@@ -598,10 +598,10 @@ CYPHER_QUERIES = {
     # -------------------------------------------------------------------------
     "find_method_usages": """
         MATCH (m:Function {name: $method_name})
-        WHERE $repo_id IS NULL OR m.repo = $repo_id
+        WHERE $repo_id IS NULL OR m.repo_id = $repo_id
         OPTIONAL MATCH (f:File)-[:CONTAINS]->(m)
         OPTIONAL MATCH (caller:Function)-[call:CALLS]->(m)
-        WHERE $repo_id IS NULL OR caller.repo = $repo_id
+        WHERE $repo_id IS NULL OR caller.repo_id = $repo_id
         OPTIONAL MATCH (caller_file:File)-[:CONTAINS]->(caller)
         RETURN m.name                              AS method_name,
                coalesce(m.line_number, m.line_start) AS line_number,
@@ -619,7 +619,7 @@ CYPHER_QUERIES = {
     "find_function_definition": """
         MATCH (m)
         WHERE (m:Function OR m:Class) AND m.name = $name
-          AND ($repo_id IS NULL OR m.repo = $repo_id)
+          AND ($repo_id IS NULL OR m.repo_id = $repo_id)
         OPTIONAL MATCH (f:File)-[:CONTAINS]->(m)
         OPTIONAL MATCH (f2:File)-[:DEFINES]->(m)
         OPTIONAL MATCH (cls:Class)-[:CONTAINS]->(m)
@@ -640,7 +640,7 @@ CYPHER_QUERIES = {
         MATCH (m {name: $name})
         WHERE m:Function OR m:Class
         MATCH (caller)-[c:CALLS]->(m)
-        WHERE $repo_id IS NULL OR caller.repo = $repo_id
+        WHERE $repo_id IS NULL OR caller.repo_id = $repo_id
         OPTIONAL MATCH (f:File)-[:CONTAINS]->(caller)
         RETURN caller.name as caller_name, labels(caller)[0] as caller_type,
                f.path as file_path, c.line_number as call_line,
@@ -649,7 +649,7 @@ CYPHER_QUERIES = {
     """,
     "get_class_hierarchy": """
         MATCH (c:Class {name: $class_name})
-        WHERE $repo_id IS NULL OR c.repo = $repo_id
+        WHERE $repo_id IS NULL OR c.repo_id = $repo_id
         OPTIONAL MATCH (self_file:File)-[:CONTAINS]->(c)
         OPTIONAL MATCH (self_file2:File)-[:DEFINES]->(c)
         OPTIONAL MATCH (c)-[:INHERITS*]->(ancestor:Class)
@@ -679,7 +679,7 @@ CYPHER_QUERIES = {
                }) as descendants
     """,
     "get_repo_overview": """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         OPTIONAL MATCH (r)-[:CONTAINS*]->(f:File)
         OPTIONAL MATCH (f)-[:DEFINES]->(c:Class)
         OPTIONAL MATCH (f)-[:DEFINES]->(fn:Function)
@@ -690,7 +690,7 @@ CYPHER_QUERIES = {
                collect(DISTINCT f.language) as languages
     """,
     "get_module_tree": """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         OPTIONAL MATCH path = (r)-[:CONTAINS*]->(m:Module)
         WITH m, length(path) as depth
         WHERE m IS NOT NULL
@@ -767,7 +767,7 @@ CYPHER_QUERIES = {
     # Config File Operations
     # -------------------------------------------------------------------------
     "create_config_file": """
-        MATCH (r:Repository {id: $repo_id})
+        MATCH (r:Repository {repo_id: $repo_id})
         MERGE (cf:ConfigFile {repo_id: $repo_id, path: $path})
         ON CREATE SET
             cf.id = $config_id,
