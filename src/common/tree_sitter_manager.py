@@ -23,15 +23,9 @@ from common.languages import LANG_PARSER_REGISTRY
 
 logger = logging.getLogger(__name__)
 
-_parser_cache: Dict[str, object] = {}
-
 
 def _get_lang_parser(lang: str, index_source: bool = True):
     """Get language-specific parser with source extraction enabled."""
-    if lang in _parser_cache:
-        parser = _parser_cache[lang]
-        parser.index_source = index_source
-        return parser
     if lang not in LANG_PARSER_REGISTRY:
         return None
     module_path, class_name = LANG_PARSER_REGISTRY[lang]
@@ -49,7 +43,6 @@ def _get_lang_parser(lang: str, index_source: bool = True):
         parser_class = getattr(module, class_name)
         parser_instance = parser_class(adapter)
         parser_instance.index_source = index_source
-        _parser_cache[lang] = parser_instance
         return parser_instance
     except Exception as e:
         logger.warning("Failed to load parser for %s: %s", lang, e)
@@ -307,4 +300,6 @@ def execute_query(language: Language, query_string: str, node):
 
     except Exception as e:
         # Provide helpful error message
-        raise Exception(f"Failed to execute query: {e}\nQuery string: {query_string[:100]}...")
+        raise Exception(
+            f"Failed to execute query: {e}\nQuery string: {query_string[:100]}..."
+        )
