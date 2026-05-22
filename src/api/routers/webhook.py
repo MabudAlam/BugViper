@@ -2,8 +2,12 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
+from api.middleware.webhook_auth import (
+    verify_github_webhook_signature,
+    verify_marketplace_webhook_signature,
+)
 from api.services.cloud_tasks_service import CloudTasksService
 from api.services.code_review_commands import extract_review_command, is_bot_mentioned
 from common.firebase_service import firebase_service
@@ -22,7 +26,7 @@ router = APIRouter()
 cloud_tasks = CloudTasksService()
 
 
-@router.post("/onComment")
+@router.post("/onComment", dependencies=[Depends(verify_github_webhook_signature)])
 async def on_comment(request: Request, background_tasks: BackgroundTasks):
     """
     Single GitHub webhook endpoint. Routes all events by X-GitHub-Event header:
@@ -289,7 +293,7 @@ _MARKETPLACE_ACTIONS = {
 }
 
 
-@router.post("/marketplace")
+@router.post("/marketplace", dependencies=[Depends(verify_marketplace_webhook_signature)])
 async def on_marketplace(request: Request):
     """
     GitHub Marketplace webhook.
