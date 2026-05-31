@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
 from neo4j import GraphDatabase
@@ -123,22 +124,59 @@ class Neo4jClient:
         self.close()
 
 
+# Global singleton instance with thread-safety
+_client_instance = None
+_client_lock = Lock()
+
+
 def get_neo4j_client() -> "Neo4jClient":
-    """Build a Neo4jClient from environment variables.
+    """Build a Neo4jClient from environment variables (singleton pattern).
 
     Reads NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, and NEO4J_DATABASE.
     Raises ValueError if required variables are missing.
+    
+    Returns a single shared instance across all requests (thread-safe).
+    Uses double-check locking pattern for efficient concurrent access.
     """
-    uri = os.getenv("NEO4J_URI", "")
-    user = os.getenv("NEO4J_USERNAME", "neo4j")
-    password = os.getenv("NEO4J_PASSWORD", "")
-    database = os.getenv("NEO4J_DATABASE", "neo4j")
+    global _client_instance
+    
+    # Fast path - no lock needed
+    if _client_instance is not None:
+        return _client_instance
+    
+    # Lock only when needed
+    with _client_lock:
+        # Double-check pattern
+        if _client_instance is not None:
+            return _client_instance
+        
+        uri = os.getenv("NEO4J_URI", "")
+        user = os.getenv("NEO4J_USERNAME", "neo4j")
+        password = os.getenv("NEO4J_PASSWORD", "")
+        database = os.getenv("NEO4J_DATABASE", "neo4j")
 
-    if not uri:
-        raise ValueError("NEO4J_URI environment variable is required")
-    if not user:
-        raise ValueError("NEO4J_USERNAME environment variable is required")
-    if not password:
-        raise ValueError("NEO4J_PASSWORD environment variable is required")
+        if not uri:
+            raise ValueError("NEO4J_URI environment variable is required")
+        if not user:
+            raise ValueError("NEO4J_USERNAME environment variable is required")
+        if not password:
+            raise ValueError("NEO4J_PASSWORD environment variable is required")
 
-    return Neo4jClient(uri=uri, user=user, password=password, database=database)
+        _client_instance = Neo4jClient(uri=uri, user=user, password=password, database=database)
+        logger.info("Neo4j client initialized (singleton)")
+        return _client_instance
+
+
+def close_neo4j_client() -> None:
+    """Close the Neo4j client and cleanup resources.
+    
+    Call this during application shutdown to properly close database connections.
+    """
+    global _client_instance
+    with _client_lock:
+        if _client_instance is not None:
+            _client_instance.close()
+            _client_instance = None
+            logger.info("Neo4j client closed")
+
+            
