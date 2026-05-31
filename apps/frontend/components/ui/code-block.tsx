@@ -1,5 +1,5 @@
 "use client";
-
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface CodeBlockProps {
@@ -17,10 +17,12 @@ export function CodeBlock({
   maxHeight = "max-h-64",
   className
 }: CodeBlockProps) {
+  const [expanded, setExpanded] = useState(false);
   if (!code) return null;
 
   const lines = code.split("\n");
   const lineNumberWidth = String(startLine + lines.length - 1).length;
+  const shouldCollapse = lines.length > 12;
 
   return (
     <div className={cn("rounded border border-border overflow-hidden", className)}>
@@ -29,7 +31,12 @@ export function CodeBlock({
           {language}
         </div>
       )}
-      <pre className={cn("text-xs font-mono overflow-auto", maxHeight)}>
+      <pre
+        className={cn(
+          "text-xs font-mono overflow-auto transition-all",
+          shouldCollapse && !expanded ? "max-h-48" : maxHeight
+        )}
+      >
         <code className="block">
           {lines.map((line, i) => {
             const lineNum = startLine + i;
@@ -47,6 +54,18 @@ export function CodeBlock({
           })}
         </code>
       </pre>
+
+      {shouldCollapse && (
+        <div className="border-t border-border bg-muted/30 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="text-xs text-primary hover:underline"
+          >
+            {expanded ? "Show Less" : "Show More"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
