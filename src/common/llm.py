@@ -4,6 +4,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+MINIMAX_BASE_URL = "https://api.minimax.io/v1"
 
 
 def load_gemini_model(model: str) -> BaseChatModel:
@@ -14,10 +15,26 @@ def load_gemini_model(model: str) -> BaseChatModel:
     )
 
 
+def load_minimax_model(model: str) -> BaseChatModel:
+    """Load a model via MiniMax's OpenAI-compatible endpoint.
+
+    Requires `MINIMAX_API_KEY` in the environment.
+    """
+    api_key = os.getenv("MINIMAX_API_KEY")
+    if not api_key:
+        raise RuntimeError("MINIMAX_API_KEY is not set")
+    return ChatOpenAI(
+        model=model,
+        api_key=api_key,
+        base_url=MINIMAX_BASE_URL,
+    )
+
+
 def load_chat_model(model: str) -> BaseChatModel:
     if model.startswith("gemini/"):
-        gemini_model_name = model.replace("gemini/", "", 1)
-        return load_gemini_model(gemini_model_name)
+        return load_gemini_model(model.replace("gemini/", "", 1))
+    if model.startswith("MiniMax-") or model.startswith("MiniMax/"):
+        return load_minimax_model(model)
 
     return ChatOpenAI(
         model=model,

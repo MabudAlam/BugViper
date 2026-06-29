@@ -33,7 +33,20 @@ async def handle_review_task(payload: PRReviewPayload):
     """
     logger.info("Review task received: %s/%s#%s", payload.owner, payload.repo, payload.pr_number)
     try:
-        await review_pipeline(payload.owner, payload.repo, payload.pr_number)
+        from ncodereview.config import config as deep_config
+
+        if deep_config.use_deepagent_review:
+            from ncodereview import run_review_pipeline
+
+            await run_review_pipeline(
+                payload.owner,
+                payload.repo,
+                payload.pr_number,
+                review_type=payload.review_type,
+                comment_id=payload.comment_id,
+            )
+        else:
+            await review_pipeline(payload.owner, payload.repo, payload.pr_number)
     except Exception:
         logger.exception(
             "Unhandled error in review task for %s/%s#%s",

@@ -10,9 +10,9 @@ from api.middleware.webhook_auth import (
 )
 from api.services.cloud_tasks_service import CloudTasksService
 from api.services.code_review_commands import extract_review_command, is_bot_mentioned
-from common.firebase_service import firebase_service
 from api.services.review_service import review_pipeline
 from common.firebase_models import PrReviewStatus
+from common.firebase_service import firebase_service
 from common.github_client import get_github_client
 from common.job_models import (
     IncrementalPRPayload,
@@ -24,6 +24,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 cloud_tasks = CloudTasksService()
+
+
+def _use_deepagent_review() -> bool:
+    """Read the flag fresh so a deploy without restart picks up the change."""
+    from ncodereview.config import config
+
+    return bool(config.use_deepagent_review)
 
 
 @router.post("/onComment", dependencies=[Depends(verify_github_webhook_signature)])
@@ -165,7 +172,6 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
     """Trigger an AI review when @bugviper is mentioned in a PR comment."""
     if payload.get("action") != "created":
         return {"status": "ignored", "reason": "not a new comment"}
-    
 
     repo_info = payload.get("repository", {})
     issue = payload.get("issue", {})
@@ -176,7 +182,6 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
 
     if commenter_type == "Bot" or "[bot]" in commenter_login:
         return {"status": "ignored", "reason": "comment from bot"}
-    
 
     owner = repo_info.get("owner", {}).get("login", "")
     repo_name = repo_info.get("name", "")
@@ -189,29 +194,30 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
 
     if not is_bot_mentioned(comment_body) and not comment_body.strip().startswith("@bugviper"):
         return {"status": "ignored", "reason": "@bugviper mentioned but not at start of comment"}
-    
 
     uid = firebase_service.find_project_owner_id(owner)
 
     if uid is None:
-     return {"status": "ignored", "reason": "project owner not found in BugViper"}
-    
-    isRepoIndexed = firebase_service.checkIfRepoIndexedOrNot(uid=uid, owner=owner, repo=repo_name)
+        return {"status": "ignored", "reason": "project owner not found in BugViper"}
 
-    if not isRepoIndexed:
-        gh = get_github_client()
-        await gh.post_comment(
-            owner,
-            repo_name,
-            pr_number,
-            "⚠️ **Repository not indexed.** "
-            "Please ingest the repository before requesting reviews:\n\n"
-            "1. Go to the BugViper dashboard:\n"
-            "2. Find your project and click 'Ingest Repository'\n"
-            "3. Wait for indexing, then try mentioning @bugviper again!",
+    if not _use_deepagent_review():
+        isRepoIndexed = firebase_service.checkIfRepoIndexedOrNot(
+            uid=uid, owner=owner, repo=repo_name
         )
-        return {"status": "ignored", "reason": "repository not indexed"}
 
+        if not isRepoIndexed:
+            gh = get_github_client()
+            await gh.post_comment(
+                owner,
+                repo_name,
+                pr_number,
+                "⚠️ **Repository not indexed.** "
+                "Please ingest the repository before requesting reviews:\n\n"
+                "1. Go to the BugViper dashboard:\n"
+                "2. Find your project and click 'Ingest Repository'\n"
+                "3. Wait for indexing, then try mentioning @bugviper again!",
+            )
+            return {"status": "ignored", "reason": "repository not indexed"}
 
     review_type = extract_review_command(comment_body)
 
@@ -267,6 +273,17 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
             comment_id=comment_id,
         )
         cloud_tasks.dispatch_pr_review(review_payload)
+    elif _use_deepagent_review():
+        from ncodereview import run_review_pipeline
+
+        background_tasks.add_task(
+            run_review_pipeline,
+            owner,
+            repo_name,
+            pr_number,
+            review_type=review_type.value,
+            comment_id=comment_id,
+        )
     else:
         background_tasks.add_task(
             review_pipeline,

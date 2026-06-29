@@ -58,6 +58,10 @@ dependencies = [
     "vulture>=2.16",
     "langchain-community>=0.4.1",
     "langchain-anthropic>=1.4.0",
+    # Sandboxed DeepAgent code review (e2b + deepagents)
+    "e2b>=1.0.0",
+    "langchain-e2b>=0.0.4",
+    "deepagents>=0.2.0",
 ]
 
 [project.optional-dependencies]
@@ -88,6 +92,7 @@ packages = [
     "src/db",
     "src/ingestion_service",
     "src/lint_service",
+    "src/ncodereview",
 ]
 
 [tool.ruff]
