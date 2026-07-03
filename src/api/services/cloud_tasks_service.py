@@ -8,6 +8,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from common.job_models import (
+    GraphUploadPayload,
     IncrementalPRPayload,
     IncrementalPushPayload,
     IngestionTaskPayload,
@@ -124,3 +125,7 @@ class CloudTasksService:
             service_url=self._review_url,
             queue=self._review_queue,
         )
+
+    def dispatch_graph_upload(self, payload: GraphUploadPayload) -> Optional[str]:
+        """Dispatch a graph upload task to the ingestion service."""
+        return self._dispatch("/tasks/graph-upload", payload)

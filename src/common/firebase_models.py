@@ -130,6 +130,12 @@ class PRMetadata(BaseModel):
     )
     review_count: int = Field(default=0, serialization_alias="reviewCount")
     open_issue_count: int = Field(default=0, serialization_alias="openIssueCount")
+    total_issues_raised: int = Field(default=0, serialization_alias="totalIssuesRaised")
+    total_positives: int = Field(default=0, serialization_alias="totalPositives")
+    last_review_type: Optional[str] = Field(None, serialization_alias="lastReviewType")
+    last_reviewed_sha: Optional[str] = Field(None, serialization_alias="lastReviewedSha")
+    last_review_base_sha: Optional[str] = Field(None, serialization_alias="lastReviewBaseSha")
+    last_reviewed_at: Optional[str] = Field(None, serialization_alias="lastReviewedAt")
     created_at: Optional[str] = Field(None, serialization_alias="createdAt")
     updated_at: Optional[str] = Field(None, serialization_alias="updatedAt")
     failed_reasons: list[str] = Field(default_factory=list, serialization_alias="failedReasons")
@@ -150,3 +156,17 @@ class ReviewRunData(BaseModel):
     files_changed: list[str] = Field(default_factory=list, serialization_alias="filesChanged")
     repo_id: str = Field(serialization_alias="repoId")
     pr_number: int = Field(serialization_alias="prNumber")
+    review_type: str = Field(default="incremental_review", serialization_alias="reviewType")
+    issues_count: int = Field(default=0, serialization_alias="issuesCount")
+    positives_count: int = Field(default=0, serialization_alias="positivesCount")
+    walkthrough_count: int = Field(default=0, serialization_alias="walkthroughCount")
+    head_sha: Optional[str] = Field(None, serialization_alias="headSha")
+    base_sha: Optional[str] = Field(None, serialization_alias="baseSha")
+    github_comment_ids: list[dict] = Field(
+        default_factory=list,
+        serialization_alias="githubCommentIds",
+        description="List of {comment_id, thread_id, file, line} for inline comments posted",
+    )
+    started_at: Optional[str] = Field(None, serialization_alias="startedAt")
+    ended_at: Optional[str] = Field(None, serialization_alias="endedAt")
+    duration_seconds: Optional[float] = Field(None, serialization_alias="durationSeconds")

@@ -1,5 +1,13 @@
+import os
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def ensure_env() -> None:
+    if not os.getenv("OPENROUTER_API_KEY") and not os.getenv("MINIMAX_API_KEY"):
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
 
 
 class DeepAgentConfig(BaseSettings):
@@ -8,11 +16,6 @@ class DeepAgentConfig(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
-    )
-
-    use_deepagent_review: bool = Field(
-        default=False,
-        description="Route @bugviper reviews to the sandboxed DeepAgent pipeline.",
     )
 
     e2b_api_key: str = Field(
@@ -37,6 +40,15 @@ class DeepAgentConfig(BaseSettings):
     deepagent_max_tool_rounds: int = Field(
         default=40,
         description="Soft cap on tool rounds for the orchestrator. Subagents inherit.",
+    )
+
+    deepagent_review_mode: str = Field(
+        default="normal",
+        description=(
+            "Review depth: 'fast' (generalist, ~4 steps/lens), "
+            "'normal' (generalist, ~20 steps/lens), "
+            "'deep' (3 specialized agents in parallel, ~100 steps each)."
+        ),
     )
 
     @classmethod

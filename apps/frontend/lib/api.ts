@@ -71,6 +71,81 @@ export const deleteRepository = (id: string) =>
 export const getRepositoryStats = (owner: string, repoName: string) =>
   apiFetch(`/api/v1/repos/${owner}/${repoName}/stats`);
 
+// Dashboard
+export interface DashboardStats {
+  total_repos: number;
+  total_prs: number;
+  total_reviews: number;
+  total_issues_raised: number;
+  total_issues_resolved: number;
+  total_positives: number;
+}
+export const getDashboardStats = (): Promise<DashboardStats> =>
+  apiFetch("/api/v1/repos/dashboard/stats");
+
+export interface RepoSummary {
+  owner: string;
+  repoName: string;
+  fullName: string;
+  description: string | null;
+  language: string | null;
+  stars: number;
+  forks: number;
+  private: boolean;
+  defaultBranch: string;
+  topics: string[];
+  ingestionStatus: string;
+  filesProcessed: number | null;
+  filesSkipped: number | null;
+  classesFound: number | null;
+  functionsFound: number | null;
+  importsFound: number | null;
+  totalLines: number | null;
+  ingestedAt: string | null;
+  openIssueCount: number;
+  totalIssuesRaised: number;
+  reviewCount: number;
+}
+
+export interface PRReviewSummary {
+  owner: string;
+  repo: string;
+  prNumber: number;
+  repoId: string;
+  reviewStatus: string | null;
+  reviewCount: number;
+  openIssueCount: number;
+  totalIssuesRaised: number;
+  totalPositives: number;
+  lastReviewType: string | null;
+  lastReviewedAt: string | null;
+  lastReviewedSha: string | null;
+  createdAt: string | null;
+}
+
+export interface ReviewRunSummary {
+  runNumber: number;
+  issuesCount: number;
+  positivesCount: number;
+  walkthroughCount: number;
+  summary: string;
+  filesChanged: string[];
+  reviewType: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationSeconds: number | null;
+}
+
+export const listRepoPRs = (owner: string, repo: string): Promise<PRReviewSummary[]> =>
+  apiFetch(`/api/v1/repos/${owner}/${repo}/prs`);
+
+export const listPRReviews = (
+  owner: string,
+  repo: string,
+  prNumber: number
+): Promise<ReviewRunSummary[]> =>
+  apiFetch(`/api/v1/repos/${owner}/${repo}/prs/${prNumber}/reviews`);
+
 // Ingestion
 export interface IngestionJobResponse {
   job_id: string;

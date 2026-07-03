@@ -1,223 +1,208 @@
-"""Host-side tools exposed to the DeepAgent.
+"""Host-side review posting — called from pipeline.py after the agent finishes.
 
-These run on the API server, not inside the e2b sandbox, so credentials never
-leave the host. The DeepAgent invokes them via its `task` tool — subagents
-return structured JSON, the orchestrator aggregates, then calls `submit_review`
-exactly once.
+This used to be a tool that subagents could accidentally invoke, posting
+partial/empty results. Now it's a regular async function that the pipeline
+calls once, with the orchestrator's final structured output.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Any
-
-from langchain_core.tools import tool
 
 from api.services.lint_service import run_lint
 from api.utils.comment_formatter import format_inline_comment, format_review_summary
+from common.diff_parser import (
+    calculate_comment_line,
+    extract_valid_diff_lines,
+    snap_lines_to_diff,
+    split_diff_by_file,
+)
 from common.github_client import GitHubClient
 
 logger = logging.getLogger(__name__)
 
-_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+_MAX_COMMENT_RANGE = 15
 
 
-def _coerce_json(raw: str) -> Any:
-    """Parse JSON, tolerating ```json ... ``` fences the LLM sometimes adds."""
-    text = (raw or "").strip()
-    if text.startswith("```"):
-        text = _FENCE_RE.sub("", text).strip()
-    return json.loads(text)
-
-
-def _normalize_issues(file_issues_json: list | dict) -> list[dict]:
-    """Accept either a flat list of issues or wrapped FileBasedIssues dicts.
-
-    The orchestrator sometimes flattens subagent output into a bare array of
-    issues; the original pipeline spec wraps them as [{file: ..., issues: [...]}].
-    Either way we return a flat list of issue dicts.
-    """
-    if isinstance(file_issues_json, dict):
-        file_issues_json = [file_issues_json]
-
-    flat: list[dict] = []
-    for entry in file_issues_json:
-        if not isinstance(entry, dict):
-            continue
-        if "issues" in entry and isinstance(entry["issues"], list):
-            for issue in entry["issues"]:
-                if isinstance(issue, dict):
-                    flat.append(issue)
-        elif "file" in entry and ("line_start" in entry or "title" in entry):
-            flat.append(entry)
-    return flat
-
-
-def _clamp_confidence(value: Any) -> int:
-    """Issue.confidence is constrained to [0, 10]; clamp anything the LLM emits."""
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return 8
-    return max(0, min(10, n))
-
-
-def build_posting_tools(
+async def post_review(
     *,
     owner: str,
     repo: str,
     pr_number: int,
     head_sha: str,
-    diff_text: str,
-    pr_files: dict[str, str],
     gh: GitHubClient,
-    model_label: str = "deepagent",
-) -> list[Any]:
-    """Return the host-side tools the orchestrator can call.
+    pr_files: dict[str, str],
+    diff_text: str,
+    issues: list[dict],
+    positives: list[str],
+    walkthrough: list[dict],
+    summary: str,
+    raw_agent_outputs: dict[str, str] | None = None,
+    judgment_counts: dict[str, int] | None = None,
+) -> dict:
+    """Post the review to GitHub — inline comments + PR review body.
 
-    `submit_review` is the single tool the agent uses to finalize; it formats
-    the review with the existing comment formatter and posts via the GitHub client.
-    Lint runs inside `submit_review` to stay in sync with the legacy pipeline.
+    Line numbers from the agent are snapped to the nearest valid diff range
+    so every comment lands on a line GitHub will accept.  ``post_inline_comment``
+    adds a 3-attempt retry that collapses multi-line ranges to a single line
+    if GitHub rejects the first attempt.  Ported from kodus-ai.
     """
-    posted_lock = {"done": False}
+    issue_models = _build_issue_models(issues)
 
-    @tool
-    async def submit_review(
-        summary: str,
-        file_issues_json: str,
-        positives_json: str = "[]",
-        walkthrough_json: str = "[]",
-    ) -> str:
-        """Finalize and post the PR review. CALL THIS EXACTLY ONCE.
+    try:
+        lint_results = await run_lint(pr_files)
+        lint_issues = [i for i in lint_results if i.file in pr_files]
+    except Exception as exc:
+        logger.warning("Lint failed during review post: %s", exc)
+        lint_issues = []
 
-        Args:
-            summary: 1-3 paragraph overall review summary (Markdown).
-            file_issues_json: JSON array of issues. Either format works:
-                A) Flat list — [{"file": "...", "line_start": 10, "title": "...",
-                                  "severity": "high", "category": "bug",
-                                  "description": "...", "suggestion": "...",
-                                  "code_snippet": "...", "confidence": 9, ...}, ...]
-                B) Wrapped — [{"file": "...", "issues": [{...}, {...}]}, ...]
-                Each issue needs: file, line_start, severity, category, title.
-                Optional: line_end, description, suggestion, impact, code_snippet, confidence.
-            positives_json: JSON array of {"file_path": str, "positive_finding": [str, ...]}.
-            walkthrough_json: JSON array of {"file": str, "summary": str}.
+    walkthrough_lines = [
+        f"{w.get('file', '?')} — {w.get('summary', '')}" for w in walkthrough
+    ]
 
-        Returns:
-            Human-readable status of what was posted.
-        """
-        if posted_lock["done"]:
-            return "Error: submit_review was already called — refusing to double-post."
+    from common.schemas import ReconciledReview
 
-        try:
-            file_issues = _coerce_json(file_issues_json)
-            positives = _coerce_json(positives_json)
-            walkthrough = _coerce_json(walkthrough_json)
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
-            return f"Error: invalid JSON payload — {exc}"
+    summary_issue_models = [issue for issue in issue_models if issue.confidence >= 7]
+    reconciled = ReconciledReview(
+        issues=summary_issue_models,
+        positive_findings=positives,
+        summary=summary,
+    )
 
-        all_issues_raw = _normalize_issues(file_issues)
+    body = format_review_summary(
+        reconciled,
+        None,
+        pr_number,
+        lint_issues=lint_issues,
+        walk_through=walkthrough_lines,
+        inline_posted=0,
+        inline_skipped=0,
+        raw_agent_outputs=raw_agent_outputs or {},
+        debug_info={"deepagent": True, "head_sha": head_sha},
+        judgment_counts=judgment_counts,
+    )
 
-        all_issues: list = []
-        for issue in all_issues_raw:
-            issue["status"] = issue.get("status", "new")
-            if issue["status"] not in ("new", "still_open", "fixed"):
-                issue["status"] = "new"
-            issue["confidence"] = _clamp_confidence(issue.get("confidence", 8))
-            if not isinstance(issue.get("line_start"), int) or issue["line_start"] < 1:
-                continue
-            issue.setdefault("file", "")
-            issue.setdefault("title", "Untitled issue")
-            issue.setdefault("category", "bug")
-            issue.setdefault("severity", "medium")
-            issue.setdefault("issue_type", "Potential issue")
-            issue.setdefault("description", "")
-            issue.setdefault("suggestion", "")
-            issue.setdefault("impact", "")
-            issue.setdefault("code_snippet", "")
-            issue.setdefault("line_end", None)
-            all_issues.append(issue)
+    has_blocking = any(
+        i.category in ("bug", "security") and i.confidence >= 7
+        for i in issue_models
+    )
+    event = "REQUEST_CHANGES" if has_blocking else "COMMENT"
 
-        from code_review_agent.models.agent_schemas import Issue, ReconciledReview
+    patches_by_file = split_diff_by_file(diff_text)
 
-        try:
-            issue_models = [Issue(**i) for i in all_issues]
-        except Exception as exc:
-            return f"Error: failed to construct Issue models — {exc}"
+    inline_posted = inline_skipped = 0
+    github_comment_ids: list[dict] = []
+    for issue in issue_models:
+        if issue.status not in ("new", "still_open"):
+            continue
 
-        reconciled = ReconciledReview(
-            issues=issue_models,
-            positive_findings=[
-                pf for finding in positives for pf in finding.get("positive_finding", [])
-            ],
-            summary=summary,
+        if issue.classification == "outside-diff":
+            inline_skipped += 1
+            continue
+
+        valid_ranges = extract_valid_diff_lines(patches_by_file.get(issue.file))
+        snapped = snap_lines_to_diff(
+            issue.line_start,
+            issue.line_end,
+            valid_ranges,
         )
-
-        try:
-            lint_results = await run_lint(pr_files)
-            lint_issues = [i for i in lint_results if i.file in pr_files]
-        except Exception as exc:
-            logger.warning("Lint failed during deepagent review: %s", exc)
-            lint_issues = []
-
-        walkthrough_lines = [f"{w.get('file', '?')} — {w.get('summary', '')}" for w in walkthrough]
-
-        from code_review_agent.config import config as legacy_config
-
-        original_model = legacy_config.synthesis_model
-        legacy_config.synthesis_model = model_label
-        try:
-            body = format_review_summary(
-                reconciled,
-                None,
-                pr_number,
-                lint_issues=lint_issues,
-                walk_through=walkthrough_lines,
-                inline_posted=0,
-                inline_skipped=0,
-                raw_agent_outputs={},
-                debug_info={"deepagent": True, "head_sha": head_sha},
-            )
-        finally:
-            legacy_config.synthesis_model = original_model
-
-        has_blocking = any(i.category in ("bug", "security") for i in issue_models)
-        event = "REQUEST_CHANGES" if has_blocking else "COMMENT"
-
-        from common.diff_line_mapper import get_hunk_ranges, is_line_in_hunk
-
-        hunk_ranges = get_hunk_ranges(diff_text)
-
-        inline_posted = inline_skipped = 0
-        for issue in issue_models:
-            if issue.confidence < 7 or issue.status not in ("new", "still_open"):
-                continue
-            file_hunks = hunk_ranges.get(issue.file, [])
-            if not is_line_in_hunk(issue.line_start, file_hunks):
-                continue
-            ok = await gh.post_inline_comment(
-                owner,
-                repo,
-                pr_number,
-                head_sha,
+        if snapped is None:
+            logger.warning(
+                "post_review: %s has no valid diff ranges — skipping inline",
                 issue.file,
-                issue.line_start,
-                format_inline_comment(issue),
             )
-            if ok:
-                inline_posted += 1
-            else:
-                inline_skipped += 1
+            inline_skipped += 1
+            continue
 
-        await gh.post_pr_review(owner, repo, pr_number, head_sha, body, event)
-        posted_lock["done"] = True
+        line_start, line_end = snapped
+        line = calculate_comment_line(line_start, line_end, _MAX_COMMENT_RANGE)
+        start_line = line_start if line != line_start else None
 
-        return (
-            f"Posted review ({event}): {len(issue_models)} issues, "
-            f"{inline_posted} inline comments posted, {inline_skipped} skipped, "
-            f"{len(lint_issues)} lint findings included."
+        if (
+            issue.line_start != line_start
+            or (issue.line_end or issue.line_start) != line_end
+        ):
+            logger.info(
+                "post_review: snapped %s:%d-%d → %d-%d (comment at line=%s, start=%s)",
+                issue.file, issue.line_start, issue.line_end or issue.line_start,
+                line_start, line_end, line, start_line,
+            )
+
+        result = await gh.post_inline_comment(
+            owner, repo, pr_number, head_sha, issue.file, line,
+            format_inline_comment(issue),
+            start_line=start_line,
         )
+        if result.get("success"):
+            inline_posted += 1
+            cid = result.get("comment_id")
+            tid = result.get("thread_id")
+            if cid is not None:
+                github_comment_ids.append({
+                    "comment_id": cid,
+                    "thread_id": tid,
+                    "file": issue.file,
+                    "line": line,
+                    "title": issue.title,
+                })
+        else:
+            inline_skipped += 1
 
-    return [submit_review]
+    await gh.post_pr_review(owner, repo, pr_number, head_sha, body, event)
+
+    return {
+        "posted": inline_posted,
+        "skipped": inline_skipped,
+        "event": event,
+        "issues_count": len(issue_models),
+        "lint_count": len(lint_issues),
+        "github_comment_ids": github_comment_ids,
+    }
+
+
+def _build_issue_models(raw_issues: list[dict]) -> list:
+    from common.schemas import Issue
+
+    models = []
+    for issue in raw_issues:
+        issue["status"] = issue.get("status", "new")
+        if issue["status"] not in ("new", "still_open", "fixed"):
+            issue["status"] = "new"
+        confidence = _clamp(issue.get("confidence", 8))
+        if not isinstance(issue.get("line_start"), int) or issue["line_start"] < 1:
+            continue
+        classification = issue.get("classification")
+        if classification not in ("valid", "nitpick", "outside-diff", "false"):
+            classification = None
+        if classification == "false":
+            continue  # ponytail: judge said drop; never reaches the PR
+        try:
+            models.append(Issue(
+                file=issue.get("file", ""),
+                line_start=issue["line_start"],
+                line_end=issue.get("line_end"),
+                title=issue.get("title", "Untitled issue"),
+                category=issue.get("category", "bug"),
+                severity=issue.get("severity", "medium"),
+                issue_type=issue.get("issue_type", "Potential issue"),
+                description=issue.get("description", ""),
+                suggestion=issue.get("suggestion", ""),
+                impact=issue.get("impact", ""),
+                code_snippet=issue.get("code_snippet", ""),
+                confidence=confidence,
+                classification=classification,
+                drop_reason=issue.get("drop_reason"),
+                status=issue["status"],
+            ))
+        except Exception as exc:
+            logger.warning("Skipping malformed issue: %s", exc)
+    return models
+
+
+def _clamp(value: Any) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 8
+    return max(0, min(10, n))

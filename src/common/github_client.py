@@ -80,10 +80,6 @@ class GitHubClient:
         self._token_cache: Dict[str, tuple[str, float]] = {}
         self._token_locks: Dict[str, asyncio.Lock] = {}
 
-        # PR payload cache: (owner, repo, pr_number) → payload dict
-        self._pr_cache: Dict[tuple[str, str, int], dict] = {}
-        self._pr_locks: Dict[tuple[str, str, int], asyncio.Lock] = {}
-
         # Repo-scoped GitHub clients (installation token auth). We recreate
         # the client when the token rotates.
         self._repo_clients: Dict[str, tuple[str, GitHub]] = {}
@@ -95,16 +91,6 @@ class GitHubClient:
         # githubkit doesn't expose a public close API; it manages httpx clients
         # internally. Keeping the singleton alive is the intended usage.
         return None
-
-    def clear_pr_cache(self, owner: str, repo: str, pr_number: int) -> None:
-        """Clear cached PR payload for a single PR.
-
-        BugViper caches the PR payload to keep base/head SHA consistent across
-        calls during one review run. If the PR is updated with new commits,
-        callers should clear this cache before starting a new run.
-        """
-
-        self._pr_cache.pop((owner, repo, pr_number), None)
 
     # ------------------------------------------------------------------
     # Auth helpers
@@ -268,28 +254,24 @@ class GitHubClient:
     # ------------------------------------------------------------------
 
     async def _get_pr(self, owner: str, repo: str, pr_number: int) -> dict:
-        cache_key = (owner, repo, pr_number)
-        if cache_key not in self._pr_locks:
-            self._pr_locks[cache_key] = asyncio.Lock()
-
-        async with self._pr_locks[cache_key]:
-            if cache_key not in self._pr_cache:
-                gh = await self._get_repo_gh(owner, repo)
-                r = await gh.rest.pulls.async_get(owner, repo, pr_number)
-                pr_obj = r.parsed_data
-                dump = getattr(pr_obj, "model_dump", None)
-                if callable(dump):
-                    self._pr_cache[cache_key] = dump()
-                elif isinstance(pr_obj, dict):
-                    self._pr_cache[cache_key] = pr_obj
-                else:
-                    # Last-resort fallback; should be rare.
-                    self._pr_cache[cache_key] = dict(pr_obj)
-        return self._pr_cache[cache_key]
+        gh = await self._get_repo_gh(owner, repo)
+        r = await gh.rest.pulls.async_get(owner, repo, pr_number)
+        pr_obj = r.parsed_data
+        dump = getattr(pr_obj, "model_dump", None)
+        if callable(dump):
+            return dump()
+        elif isinstance(pr_obj, dict):
+            return pr_obj
+        else:
+            return dict(pr_obj)
 
     async def get_pr_info(self, owner: str, repo: str, pr_number: int) -> Dict[str, str]:
         d = await self._get_pr(owner, repo, pr_number)
         return {"title": d.get("title") or "", "body": d.get("body") or ""}
+
+    async def get_pr_base_sha(self, owner: str, repo: str, pr_number: int) -> str:
+        d = await self._get_pr(owner, repo, pr_number)
+        return str(d["base"]["sha"])
 
     async def get_pr_head_ref(self, owner: str, repo: str, pr_number: int) -> str:
         d = await self._get_pr(owner, repo, pr_number)
@@ -300,6 +282,18 @@ class GitHubClient:
         base_sha = str(d["base"]["sha"])
         head_sha = str(d["head"]["sha"])
 
+        gh = await self._get_repo_gh(owner, repo)
+        r = await gh.arequest(
+            "GET",
+            f"/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}",
+            headers={"Accept": "application/vnd.github.diff"},
+        )
+        return r.text
+
+    async def compare_two_shas(
+        self, owner: str, repo: str, base_sha: str, head_sha: str,
+    ) -> str:
+        """Return the diff between two commits (base...head)."""
         gh = await self._get_repo_gh(owner, repo)
         r = await gh.arequest(
             "GET",
@@ -451,27 +445,89 @@ class GitHubClient:
         path: str,
         line: int,
         body: str,
-    ) -> bool:
+        start_line: int | None = None,
+    ) -> dict:
+        """Post a single inline PR review comment with a 3-attempt retry.
+
+        Returns {"success": True, "comment_id": int, "thread_id": int}
+        or {"success": False, "comment_id": None, "thread_id": None}.
+
+        Ported from kodus-ai's ``createReviewCommentWithRetry``.  GitHub
+        sometimes rejects a multi-line range even when both endpoints are
+        valid, so we progressively collapse to a single line:
+
+        1. Original ``start_line`` and ``line`` (multi-line if different).
+        2. ``start_line = line`` — single line at the end position.
+        3. ``line = start_line`` — single line at the start position.
+        """
         gh = await self._get_repo_gh(owner, repo)
-        try:
-            await gh.rest.pulls.async_create_review_comment(
-                owner,
-                repo,
-                pr_number,
-                data={
-                    "body": body,
-                    "commit_id": commit_sha,
-                    "path": path,
-                    "line": line,
-                    "side": "RIGHT",
-                },
+
+        attempts: list[dict] = []
+        if start_line is not None and start_line != line:
+            attempts.append({"line": line, "start_line": start_line})
+        attempts.append({"line": line, "start_line": line})
+        if start_line is not None and start_line != line:
+            attempts.append({"line": start_line})
+
+        last_error: Exception | None = None
+        for attempt in attempts:
+            data: dict = {
+                "body": body,
+                "commit_id": commit_sha,
+                "path": path,
+                "line": attempt["line"],
+                "side": "RIGHT",
+            }
+            if "start_line" in attempt:
+                data["start_line"] = attempt["start_line"]
+
+            try:
+                resp = await gh.rest.pulls.async_create_review_comment(
+                    owner,
+                    repo,
+                    pr_number,
+                    data=data,
+                )
+                comment_id = resp.parsed_data.id if resp.parsed_data else None
+                in_reply_to = (
+                    getattr(resp.parsed_data, "in_reply_to_id", None)
+                    if resp.parsed_data else None
+                )
+                thread_id = in_reply_to or comment_id
+                return {"success": True, "comment_id": comment_id, "thread_id": thread_id}
+            except Exception as exc:
+                if self._is_line_mismatch_error(exc) and attempt is not attempts[-1]:
+                    logger.debug(
+                        "Line mismatch on %s:%s (attempt line=%s start_line=%s) — retrying",
+                        path, commit_sha[:7], attempt["line"], attempt.get("start_line"),
+                    )
+                    last_error = exc
+                    continue
+                if self._is_line_mismatch_error(exc):
+                    logger.debug(
+                        "Inline comment skipped for %s:%s — line not in diff "
+                        "(line=%s, start_line=%s)",
+                        path, line, attempt["line"], attempt.get("start_line"),
+                    )
+                    return {"success": False, "comment_id": None, "thread_id": None}
+                raise
+
+        if last_error is not None:
+            logger.debug(
+                "Inline comment skipped for %s:%s — all retries exhausted: %s",
+                path, line, last_error,
             )
-            return True
-        except GitHubException as exc:
-            if getattr(exc, "status_code", None) == 422:
-                logger.debug("Inline comment skipped for %s:%s — line not in diff", path, line)
-                return False
-            raise
+        return False
+
+    @staticmethod
+    def _is_line_mismatch_error(exc: Exception) -> bool:
+        """A 422 from GitHub is treated as a line mismatch (caller can retry)."""
+        status = getattr(exc, "status_code", None)
+        if status is None and hasattr(exc, "response"):
+            status = getattr(exc.response, "status_code", None)
+        if status is None:
+            return False
+        return 400 <= int(status) < 500
 
     async def update_pr_body(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         gh = await self._get_repo_gh(owner, repo)
@@ -514,6 +570,185 @@ class GitHubClient:
         except GitHubException as exc:
             logger.warning("Failed to add reaction: %s", exc)
             return False
+
+    async def resolve_pr_review_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        comment_id: int,
+        thread_id: int | str | None = None,
+    ) -> bool:
+        """Resolve a PR review comment thread via GitHub GraphQL API.
+
+        The REST API has no resolve endpoint — only GraphQL.
+        Mutation: resolveReviewThread(input: {threadId: "PRRT_..."})
+        """
+        try:
+            gh = await self._get_repo_gh(owner, repo)
+            node_id = self._coerce_graphql_thread_id(thread_id)
+            if not node_id:
+                node_id = await self._find_review_thread_node_id(
+                    gh, owner, repo, pr_number, comment_id
+                )
+
+            if not node_id:
+                logger.warning("Could not find thread ID for comment %s", comment_id)
+                return False
+
+            mutation = """
+            mutation($threadId: ID!) {
+              resolveReviewThread(input: {threadId: $threadId}) {
+                thread { isResolved }
+              }
+            }
+            """
+            result = await self._graphql_query(gh, mutation, {"threadId": node_id}, owner, repo)
+            if not result:
+                logger.warning("Empty GraphQL response for comment %s", comment_id)
+                return False
+            if result.get("errors"):
+                logger.warning(
+                    "GraphQL errors resolving comment %s: %s",
+                    comment_id,
+                    result["errors"],
+                )
+                return False
+            resolved = (
+                result.get("data", {})
+                .get("resolveReviewThread", {})
+                .get("thread", {})
+                .get("isResolved")
+            )
+            logger.info("Resolve result for comment %s: isResolved=%s", comment_id, resolved)
+            return bool(resolved)
+        except Exception as exc:
+            logger.warning("Failed to resolve comment %s: %s", comment_id, exc)
+            return False
+
+    @staticmethod
+    def _coerce_graphql_thread_id(thread_id: int | str | None) -> str | None:
+        if thread_id is None:
+            return None
+        raw = str(thread_id).strip()
+        if not raw or raw.isdigit():
+            return None
+        return raw
+
+    async def _find_review_thread_node_id(
+        self,
+        gh: GitHub,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        comment_id: int,
+    ) -> str | None:
+        query = """
+        query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $pr) {
+              reviewThreads(first: 100, after: $cursor) {
+                nodes {
+                  id
+                  isResolved
+                  comments(first: 100) {
+                    nodes {
+                      databaseId
+                      fullDatabaseId
+                    }
+                  }
+                }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+              }
+            }
+          }
+        }
+        """
+        cursor: str | None = None
+        while True:
+            response = await self._graphql_query(
+                gh,
+                query,
+                {"owner": owner, "repo": repo, "pr": pr_number, "cursor": cursor},
+                owner,
+                repo,
+            )
+            if response.get("errors"):
+                logger.warning(
+                    "GraphQL errors fetching review threads for %s/%s#%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    response["errors"],
+                )
+                return None
+
+            pr_data = response.get("data", {}).get("repository", {}).get("pullRequest")
+            if not pr_data:
+                logger.warning("PR %s not found via GraphQL", pr_number)
+                return None
+
+            review_threads = pr_data.get("reviewThreads", {})
+            for thread in review_threads.get("nodes", []):
+                for comment in thread.get("comments", {}).get("nodes", []):
+                    database_ids = {
+                        comment.get("databaseId"),
+                        comment.get("fullDatabaseId"),
+                    }
+                    if comment_id in database_ids or str(comment_id) in {
+                        str(value) for value in database_ids if value is not None
+                    }:
+                        node_id = thread.get("id")
+                        logger.info(
+                            "Found thread for comment %s: node_id=%s, pr=%s",
+                            comment_id,
+                            node_id,
+                            pr_number,
+                        )
+                        return node_id
+
+            page_info = review_threads.get("pageInfo", {})
+            if not page_info.get("hasNextPage"):
+                return None
+            cursor = page_info.get("endCursor")
+
+    async def _graphql_query(
+        self,
+        gh: GitHub,
+        query: str,
+        variables: dict[str, Any],
+        owner: str,
+        repo: str,
+    ) -> dict:
+        """Execute a GraphQL query/mutation using httpx with installation token auth."""
+        import json as _json
+
+        import httpx
+
+        token = await self._get_installation_token(owner, repo)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                "https://api.github.com/graphql",
+                headers=headers,
+                json={"query": query, "variables": variables},
+                timeout=30.0,
+            )
+        if r.status_code >= 400:
+            logger.warning("GraphQL status=%s body=%s", r.status_code, r.text[:500])
+            r.raise_for_status()
+        logger.debug(
+            "GraphQL status=%s body=%s",
+            r.status_code,
+            (r.text[:300] if r.text else ""),
+        )
+        return _json.loads(r.text) if r.text else {}
 
 
 # ---------------------------------------------------------------------------

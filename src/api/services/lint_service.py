@@ -15,7 +15,7 @@ import os
 
 import httpx
 
-from code_review_agent.models.agent_schemas import Issue
+from common.schemas import Issue
 
 logger = logging.getLogger(__name__)
 

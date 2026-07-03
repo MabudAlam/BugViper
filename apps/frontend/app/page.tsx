@@ -104,7 +104,7 @@ export default function LandingPage() {
           <span className="font-semibold text-base tracking-tight">BugViper</span>
         </div>
         <Button size="sm" asChild>
-          <Link href={user ? "/repositories" : "/login"}>
+          <Link href={user ? "/dashboard" : "/login"}>
             {user ? (
               <>
                 <LayoutDashboard className="mr-1.5 w-3.5 h-3.5" />
@@ -144,7 +144,7 @@ export default function LandingPage() {
 
         <div className="flex items-center justify-center gap-3 flex-wrap">
           <Button size="lg" asChild>
-            <Link href={user ? "/repositories" : "/login"}>
+            <Link href={user ? "/dashboard" : "/login"}>
               {user ? "Go to Dashboard" : "Start Reviewing Free"}
               <ArrowRight className="ml-2 w-4 h-4" />
             </Link>
@@ -321,7 +321,7 @@ export default function LandingPage() {
               seconds. No credit card required.
             </p>
             <Button size="lg" asChild>
-              <Link href={user ? "/repositories" : "/login"}>
+              <Link href={user ? "/dashboard" : "/login"}>
                 {user ? "Go to Dashboard" : "Get Started Free"}
                 <ArrowRight className="ml-2 w-4 h-4" />
               </Link>

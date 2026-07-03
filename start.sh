@@ -17,7 +17,6 @@ cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT/src"
 
 API_PORT="${API_PORT:-8000}"
-INGESTION_PORT="${INGESTION_PORT:-8080}"
 REVIEW_PORT="${REVIEW_PORT:-8100}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 LINT_HOST_PORT="${LINT_HOST_PORT:-8090}"
@@ -69,7 +68,6 @@ cleanup() {
 
     # Kill any remaining processes
     pkill -f "uvicorn api.app:app" 2>/dev/null
-    pkill -f "uvicorn ingestion_service.app:app" 2>/dev/null
     pkill -f "uvicorn code_review_agent.app:app" 2>/dev/null
     pkill -f "uvicorn lint_service.app:app" 2>/dev/null
     docker stop bugviper-lint 2>/dev/null
@@ -121,34 +119,24 @@ fi
 echo -e "${BLUE}[1/6] Starting API server...${NC}"
 cd "$PROJECT_ROOT"
 
-source .venv/bin/activate && uvicorn api.app:app --host 0.0.0.0 --port "$API_PORT" --reload > "$PROJECT_ROOT/logs/api.log" 2>&1 &
+source .venv/bin/activate && uvicorn api.app:app --host 0.0.0.0 --port "$API_PORT" --reload --reload-dir "$PROJECT_ROOT/src/api" --reload-dir "$PROJECT_ROOT/src/common" > "$PROJECT_ROOT/logs/api.log" 2>&1 &
 API_PID=$!
 echo $API_PID >> "$PID_FILE"
 echo -e "${GREEN}✓ API started (PID: $API_PID)${NC}"
 echo -e "  Log file: logs/api.log"
 
-# Start Ingestion Service
-echo -e "\n${BLUE}[2/6] Starting Ingestion Service...${NC}"
-cd "$PROJECT_ROOT"
-
-source .venv/bin/activate && uvicorn ingestion_service.app:app --host 0.0.0.0 --port "$INGESTION_PORT" --reload > "$PROJECT_ROOT/logs/ingestion.log" 2>&1 &
-INGESTION_PID=$!
-echo $INGESTION_PID >> "$PID_FILE"
-echo -e "${GREEN}✓ Ingestion Service started (PID: $INGESTION_PID)${NC}"
-echo -e "  Log file: logs/ingestion.log"
-
 # Start Review Service
-echo -e "\n${BLUE}[3/6] Starting Review Service...${NC}"
+echo -e "\n${BLUE}[2/6] Starting Review Service...${NC}"
 cd "$PROJECT_ROOT"
 
-source .venv/bin/activate && uvicorn code_review_agent.app:app --host 0.0.0.0 --port "$REVIEW_PORT" --reload > "$PROJECT_ROOT/logs/review.log" 2>&1 &
+source .venv/bin/activate && uvicorn code_review_agent.app:app --host 0.0.0.0 --port "$REVIEW_PORT" --reload --reload-dir "$PROJECT_ROOT/src/ncodereview" --reload-dir "$PROJECT_ROOT/src/common" > "$PROJECT_ROOT/logs/review.log" 2>&1 &
 REVIEW_PID=$!
 echo $REVIEW_PID >> "$PID_FILE"
 echo -e "${GREEN}✓ Review Service started (PID: $REVIEW_PID)${NC}"
 echo -e "  Log file: logs/review.log"
 
 # Start Lint Service (Docker)
-echo -e "\n${BLUE}[4/6] Starting Lint Service (Docker)...${NC}"
+echo -e "\n${BLUE}[3/6] Starting Lint Service (Docker)...${NC}"
 if command -v docker &> /dev/null && docker info &> /dev/null 2>&1; then
     # Stop any existing container
     docker stop bugviper-lint 2>/dev/null
@@ -179,7 +167,7 @@ else
 fi
 
 # Start Frontend
-echo -e "\n${BLUE}[5/6] Starting Frontend...${NC}"
+echo -e "\n${BLUE}[4/6] Starting Frontend...${NC}"
 if [ "$FRONTEND_AVAILABLE" = true ]; then
     cd "$PROJECT_ROOT/apps/frontend"
 
@@ -229,7 +217,7 @@ done
 
 # Start ngrok if available
 if [ "$NGROK_AVAILABLE" = true ]; then
-    echo -e "\n${BLUE}[6/6] Starting ngrok tunnel...${NC}"
+    echo -e "\n${BLUE}[5/6] Starting ngrok tunnel...${NC}"
     if [ -n "$NGROK_DOMAIN" ]; then
         ngrok http "$API_PORT" --domain="$NGROK_DOMAIN" > "$PROJECT_ROOT/logs/ngrok.log" 2>&1 &
     else
@@ -255,7 +243,7 @@ if [ "$NGROK_AVAILABLE" = true ]; then
         echo -e "\r  ${YELLOW}Could not retrieve ngrok URL${NC}"
     fi
 else
-    echo -e "\n${YELLOW}[6/6] Skipping ngrok (not installed)${NC}"
+    echo -e "\n${YELLOW}[5/6] Skipping ngrok (not installed)${NC}"
 fi
 
 # Display summary
@@ -267,8 +255,6 @@ echo -e "${BLUE}URLs:${NC}"
 echo -e "  Frontend:    ${YELLOW}http://localhost:${FRONTEND_PORT}${NC}"
 echo -e "  API:         ${YELLOW}http://localhost:${API_PORT}${NC}"
 echo -e "  API Docs:    ${YELLOW}http://localhost:${API_PORT}/docs${NC}"
-echo -e "  Ingestion:   ${YELLOW}http://localhost:${INGESTION_PORT}${NC}"
-echo -e "  Ingest Docs: ${YELLOW}http://localhost:${INGESTION_PORT}/docs${NC}"
 echo -e "  Review:      ${YELLOW}http://localhost:${REVIEW_PORT}${NC}"
 echo -e "  Review Docs: ${YELLOW}http://localhost:${REVIEW_PORT}/docs${NC}"
 echo -e "  Lint:        ${YELLOW}http://localhost:${LINT_HOST_PORT}${NC}"
@@ -283,7 +269,6 @@ fi
 
 echo -e "\n${BLUE}View Logs:${NC}"
 echo -e "  API:         ${YELLOW}tail -f logs/api.log${NC}"
-echo -e "  Ingestion:   ${YELLOW}tail -f logs/ingestion.log${NC}"
 echo -e "  Frontend:    ${YELLOW}tail -f logs/frontend.log${NC}"
 if [ "$NGROK_STARTED" = true ]; then
     echo -e "  Ngrok:       ${YELLOW}tail -f logs/ngrok.log${NC}"
@@ -292,7 +277,6 @@ echo -e "  All:         ${YELLOW}tail -f logs/*.log${NC}"
 
 echo -e "\n${BLUE}Process IDs:${NC}"
 echo -e "  API:         ${YELLOW}$API_PID${NC}"
-echo -e "  Ingestion:   ${YELLOW}$INGESTION_PID${NC}"
 echo -e "  Review:      ${YELLOW}$REVIEW_PID${NC}"
 if [ "${FRONTEND_PID:-}" != "" ]; then
     echo -e "  Frontend:    ${YELLOW}$FRONTEND_PID${NC}"
@@ -309,7 +293,7 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 while true; do
     sleep 2
 
-    for pid in "$API_PID" "$INGESTION_PID" "$REVIEW_PID"; do
+    for pid in "$API_PID" "$REVIEW_PID"; do
         if ! kill -0 "$pid" 2>/dev/null; then
             echo -e "\n${RED}✗ A service process exited (PID: $pid). Stopping all services...${NC}"
             cleanup

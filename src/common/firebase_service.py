@@ -7,7 +7,13 @@ from typing import Any, Optional
 from pydantic import BaseModel
 
 from common.firebase_init import _initialize_firebase
-from common.firebase_models import FirebaseUserData, FirebaseUserProfile, PRMetadata
+from common.firebase_models import (
+    FirebaseUserData,
+    FirebaseUserProfile,
+    PRMetadata,
+    PrReviewStatus,
+    ReviewRunData,
+)
 
 
 def _to_dict(data: BaseModel | dict[str, Any]) -> dict[str, Any]:
@@ -21,20 +27,12 @@ logger = logging.getLogger(__name__)
 
 
 class BugViperFirebaseService:
-    """Singleton service for Firestore user operations."""
+    """Service for Firestore user operations."""
 
-    _instance: Optional["BugViperFirebaseService"] = None
-    _initialized: bool = False
+    __slots__ = ("_db",)
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def __init__(self):
-        if not BugViperFirebaseService._initialized:
-            self._db = _initialize_firebase()
-            BugViperFirebaseService._initialized = True
+    def __init__(self, db):
+        self._db = db
 
     @property
     def db(self):
@@ -316,6 +314,125 @@ class BugViperFirebaseService:
         )
         return doc.to_dict() if doc.exists else None
 
+    def mark_review_running(
+        self,
+        uid: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        review_type: str,
+    ) -> None:
+        """
+        Mark a PR as currently being reviewed.
+
+        Creates the PR doc if it doesn't exist. Overwrites RUNNING status
+        even if a previous review crashed — safe for recovery.
+        """
+        repo_key = f"{owner}_{repo}"
+        now = datetime.now(timezone.utc).isoformat()
+
+        existing = self.get_pr_metadata(uid, owner, repo, pr_number)
+        repo_id = existing.get("repoId", "") if existing else ""
+
+        pr_ref = (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("prs")
+            .document(str(pr_number))
+        )
+        doc = pr_ref.get()
+
+        payload = {
+            "owner": owner,
+            "repo": repo,
+            "prNumber": pr_number,
+            "repoId": repo_id,
+            "reviewStatus": PrReviewStatus.RUNNING.value,
+            "lastReviewType": review_type,
+            "updatedAt": now,
+            "failedReasons": [],
+        }
+        if not doc.exists:
+            payload["createdAt"] = now
+            pr_ref.set(payload)
+        else:
+            pr_ref.update(payload)
+
+        logger.info(
+            "Marked review running: %s/%s#%s (uid=%s)",
+            owner, repo, pr_number, uid,
+        )
+
+    def mark_review_completed(
+        self,
+        uid: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        review_type: str,
+        issues_count: int,
+        positives_count: int,
+        walkthrough_count: int,
+        open_issue_count: int,
+        run_data: ReviewRunData | dict[str, Any],
+        head_sha: str = "",
+        base_sha: str = "",
+    ) -> str:
+        """
+        Save the completed review run and update PR-level tallies.
+
+        Returns the run document ID (e.g. "run_2").
+        """
+        repo_key = f"{owner}_{repo}"
+        now = datetime.now(timezone.utc).isoformat()
+
+        pr_ref = (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("prs")
+            .document(str(pr_number))
+        )
+
+        existing_runs = list(pr_ref.collection("reviews").stream())
+        run_number = len(existing_runs) + 1
+        run_id = f"run_{run_number}"
+
+        run_dict = _to_dict(run_data)
+        run_ref = pr_ref.collection("reviews").document(run_id)
+        run_ref.set({**run_dict, "runNumber": run_number, "createdAt": now})
+
+        pr_ref.update({
+            "reviewStatus": PrReviewStatus.COMPLETED.value,
+            "reviewCount": run_number,
+            "openIssueCount": open_issue_count,
+            "totalIssuesRaised": (
+                (existing_runs[0].to_dict().get("issuesCount", 0) * (run_number - 1) + issues_count)
+                if run_number > 1
+                else issues_count
+            ),
+            "totalPositives": (
+                (existing_runs[0].to_dict().get("positivesCount", 0)
+                * (run_number - 1) + positives_count)
+                if run_number > 1
+                else positives_count
+            ),
+            "lastReviewType": review_type,
+            "lastReviewedSha": base_sha if review_type == "full_review" else head_sha,
+            "lastReviewBaseSha": base_sha,
+            "lastReviewedAt": now,
+            "updatedAt": now,
+        })
+
+        logger.info(
+            "Marked review completed: %s/%s#%s run=%s issues=%d",
+            owner, repo, pr_number, run_id, issues_count,
+        )
+        return run_id
+
     # ── Review runs ────────────────────────────────────────────────────────
 
     def save_review_run(
@@ -374,6 +491,135 @@ class BugViperFirebaseService:
 
         logger.info(f"Saved review run {run_id} for {owner}/{repo}#{pr_number}")
         return run_id
+
+    def get_all_review_runs(
+        self,
+        uid: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> list[dict]:
+        """Fetch all review runs for a PR, newest first."""
+        repo_key = f"{owner}_{repo}"
+        runs_ref = (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("prs")
+            .document(str(pr_number))
+            .collection("reviews")
+        )
+        docs = list(runs_ref.stream())
+        docs.sort(key=lambda d: d.to_dict().get("runNumber", 0), reverse=True)
+        return [d.to_dict() for d in docs if d.exists]
+
+    def mark_review_comments_resolved(
+        self,
+        uid: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        resolved_entries: list[dict[str, Any]],
+    ) -> int:
+        """Mark resolved GitHub comment entries and matching issues in review runs."""
+        if not resolved_entries:
+            return 0
+
+        resolved_by_comment_id = {
+            str(entry.get("comment_id")): entry
+            for entry in resolved_entries
+            if entry.get("comment_id") is not None
+        }
+        if not resolved_by_comment_id:
+            return 0
+
+        repo_key = f"{owner}_{repo}"
+        now = datetime.now(timezone.utc).isoformat()
+        pr_ref = (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("prs")
+            .document(str(pr_number))
+        )
+        review_docs = list(pr_ref.collection("reviews").stream())
+
+        updated_comments = 0
+        newest_run: dict[str, Any] | None = None
+        newest_run_number = -1
+
+        for review_doc in review_docs:
+            if not review_doc.exists:
+                continue
+
+            run = review_doc.to_dict()
+            run_number = int(run.get("runNumber", 0) or 0)
+            comment_entries = run.get("githubCommentIds", [])
+            issues = run.get("issues", [])
+            changed = False
+
+            resolved_issue_keys: set[tuple[str, str]] = set()
+            for comment_entry in comment_entries:
+                comment_id = comment_entry.get("comment_id")
+                resolved_entry = resolved_by_comment_id.get(str(comment_id))
+                if not resolved_entry:
+                    continue
+
+                if comment_entry.get("status") != "resolved":
+                    updated_comments += 1
+                comment_entry["status"] = "resolved"
+                comment_entry["resolvedAt"] = now
+                comment_entry["githubResolved"] = True
+                changed = True
+
+                file_name = comment_entry.get("file") or resolved_entry.get("file")
+                title = comment_entry.get("title") or resolved_entry.get("title")
+                if file_name and title:
+                    resolved_issue_keys.add((str(file_name), str(title)))
+
+            if resolved_issue_keys:
+                for issue in issues:
+                    issue_key = (str(issue.get("file", "")), str(issue.get("title", "")))
+                    if issue_key in resolved_issue_keys and issue.get("status") != "fixed":
+                        issue["status"] = "resolved"
+                        issue["resolvedAt"] = now
+                        changed = True
+
+            if changed:
+                review_doc.reference.update(
+                    {
+                        "githubCommentIds": comment_entries,
+                        "issues": issues,
+                        "updatedAt": now,
+                    }
+                )
+                run["githubCommentIds"] = comment_entries
+                run["issues"] = issues
+
+            if run_number > newest_run_number:
+                newest_run_number = run_number
+                newest_run = run
+
+        if newest_run is not None:
+            open_issue_count = len(
+                [
+                    issue
+                    for issue in newest_run.get("issues", [])
+                    if issue.get("status") not in ("fixed", "resolved")
+                ]
+            )
+            pr_ref.update({"openIssueCount": open_issue_count, "updatedAt": now})
+
+        logger.info(
+            "Marked %d review comments resolved for %s/%s#%s",
+            updated_comments,
+            owner,
+            repo,
+            pr_number,
+        )
+        return updated_comments
 
     def get_last_review_run(
         self,
@@ -558,5 +804,5 @@ class BugViperFirebaseService:
         return run
 
 
-# Module-level convenience instance (triggers Firebase init on import)
-firebase_service = BugViperFirebaseService()
+_firebase_db = _initialize_firebase()
+firebase_service = BugViperFirebaseService(_firebase_db)

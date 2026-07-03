@@ -85,3 +85,11 @@ class PRReviewPayload(BaseModel):
     pr_number: int
     review_type: str = "incremental_review"
     comment_id: int | None = None  # For reactions on the triggering comment
+
+
+class GraphUploadPayload(BaseModel):
+    """Payload for building and uploading repo graph to Firebase Storage."""
+
+    owner: str
+    repo: str
+    sha: str

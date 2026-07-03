@@ -1,11 +1,4 @@
-"""E2B sandbox lifecycle: create, clone repo, expose backend, kill.
-
-The sandbox runs as an isolated Linux VM. We inject a scoped GitHub installation
-token as an env var so the agent can git clone inside the sandbox — that gives
-it full repo + git history (log, blame, diff) without uploading thousands of
-files. The token is single-repo, ~1h, and the agent is ours (not untrusted),
-which is the "best result" trade-off documented by LangChain.
-"""
+"""E2B sandbox lifecycle: create, clone repo, expose backend, kill."""
 
 from __future__ import annotations
 
@@ -15,6 +8,8 @@ import shlex
 from e2b import Sandbox
 
 logger = logging.getLogger(__name__)
+
+_UV_INSTALL_SCRIPT = "https://astral.sh/uv/install.sh"
 
 
 async def create_sandbox_with_repo(
@@ -26,12 +21,7 @@ async def create_sandbox_with_repo(
     github_token: str,
     timeout: int,
 ) -> Sandbox:
-    """Create an e2b sandbox with the repo cloned at the PR head.
-
-    The token is passed via env var so the agent can use `git` inside the sandbox.
-    Cleanup is the caller's responsibility — pair with `kill_sandbox()` in a
-    try/finally or context manager.
-    """
+    """Create an e2b sandbox with the repo cloned at the PR head."""
     sbx = Sandbox.create(
         envs={
             "GITHUB_TOKEN": github_token,
@@ -45,10 +35,9 @@ async def create_sandbox_with_repo(
 
     clone_url = _authenticated_clone_url(github_token, owner, repo)
     repo_dir = "/home/user/workspace/repo"
-    diff_dir = "/home/user/review"
     cmds = [
         "set -e",
-        f"mkdir -p {shlex.quote(repo_dir)} {shlex.quote(diff_dir)}",
+        f"mkdir -p {shlex.quote(repo_dir)}",
         f"git clone --depth 200 {shlex.quote(clone_url)} {shlex.quote(repo_dir)}",
         f"cd {shlex.quote(repo_dir)} && git fetch --depth 200 origin {shlex.quote(head_sha)}",
         f"cd {shlex.quote(repo_dir)} && git checkout {shlex.quote(head_sha)}",
@@ -60,6 +49,8 @@ async def create_sandbox_with_repo(
         sbx.kill()
         raise RuntimeError(f"Repo clone failed inside sandbox (exit {result.exit_code}): {stderr}")
 
+    _ensure_uv(sbx)
+
     logger.info(
         "Sandbox %s ready: %s/%s @ %s",
         sbx.sandbox_id,
@@ -68,6 +59,25 @@ async def create_sandbox_with_repo(
         head_sha[:7],
     )
     return sbx
+
+
+def _ensure_uv(sbx: Sandbox) -> None:
+    """Ensure uv is available in the sandbox for running Python tools."""
+    check = sbx.commands.run("which uv || echo MISSING")
+    if check.exit_code == 0 and "MISSING" not in (check.stdout or ""):
+        logger.info("uv already available in sandbox")
+        return
+
+    logger.info("Installing uv in sandbox...")
+    install_cmd = f"curl -LsSf {_UV_INSTALL_SCRIPT} | sh && export PATH=$HOME/.local/bin:$PATH"
+    result = sbx.commands.run(install_cmd, timeout=60)
+    if result.exit_code != 0:
+        logger.warning("uv installation failed: %s", result.stderr or "")
+        return
+
+    verify = sbx.commands.run("export PATH=$HOME/.local/bin:$PATH && uv --version")
+    if verify.exit_code == 0:
+        logger.info("uv installed: %s", verify.stdout or "")
 
 
 def kill_sandbox(sbx: Sandbox | None) -> None:
@@ -79,6 +89,14 @@ def kill_sandbox(sbx: Sandbox | None) -> None:
         logger.info("Killed sandbox %s", sbx.sandbox_id)
     except Exception as exc:
         logger.warning("Failed to kill sandbox %s: %s", getattr(sbx, "sandbox_id", "?"), exc)
+
+
+def inject_diff(sbx: Sandbox, diff_text: str) -> None:
+    """Write the unified diff to the sandbox for subagents to read."""
+    review_dir = "/home/user/review"
+    sbx.commands.run(f"mkdir -p {review_dir}")
+    sbx.files.write(f"{review_dir}/diff.patch", diff_text)
+    logger.info("Injected diff.patch into sandbox (%d chars)", len(diff_text))
 
 
 def _authenticated_clone_url(token: str, owner: str, repo: str) -> str:
