@@ -15,8 +15,8 @@ from ncodereview.prompts import (
 from ncodereview.schemas import JudgeVerdict, SubagentReviewPayload
 
 RUN_LIMIT = 20
-SUMMARIZATION_TRIGGER_TOKENS = 15000
-SUMMARIZATION_KEEP_TOKENS = 3000
+SUMMARIZATION_TRIGGER_TOKENS = 7000
+SUMMARIZATION_KEEP_TOKENS = 2000
 
 
 def _build_review_agent(
