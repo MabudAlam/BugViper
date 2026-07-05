@@ -93,6 +93,12 @@ async def post_review(
             inline_skipped += 1
             continue
 
+        # False positives: no inline comment, but count toward skipped so the
+        # judgment totals in the summary are complete.
+        if issue.classification == "false":
+            inline_skipped += 1
+            continue
+
         valid_ranges = extract_valid_diff_lines(patches_by_file.get(issue.file))
         snapped = snap_lines_to_diff(
             issue.line_start,
@@ -167,8 +173,10 @@ def _build_issue_models(raw_issues: list[dict]) -> list:
         classification = issue.get("classification")
         if classification not in ("valid", "nitpick", "outside-diff", "false"):
             classification = None
+        # Keep false positives (skipped at posting time but tracked so the
+        # judgment_counts in the summary reflect them correctly).
         if classification == "false":
-            continue
+            pass
         try:
             models.append(Issue(
                 file=issue.get("file", ""),
