@@ -424,21 +424,16 @@ def _render_debug_section(raw_agent_outputs: dict[str, str], debug_info: dict) -
         lines.append("")
 
     # Raw agent JSON outputs per file
-    _MAX_JSON = 25_000
     if raw_agent_outputs:
         lines.append("**Raw Agent Output (JSON):**")
         lines.append("")
         for file_path, raw_json in raw_agent_outputs.items():
             lines.append(f"### `{file_path}`")
             lines.append("")
-            display = raw_json[:_MAX_JSON]
-            truncated = len(raw_json) > _MAX_JSON
             # Escape embedded code blocks to prevent markdown breakage
-            display = display.replace("```", "\\`\\`\\`")
+            display = raw_json.replace("```", "\\`\\`\\`")
             lines.append("```json")
             lines.append(display)
-            if truncated:
-                lines.append("# ... truncated")
             lines.append("```")
             lines.append("")
 
@@ -680,6 +675,47 @@ def format_review_summary(
         parts.append("</details>")
         parts.append("")
 
+    # ── False positives (reviewer marked as false) ─────────────────────────────
+    false_positives = [
+        i for i in open_issues + new_issues
+        if getattr(i, "classification", None) == "false"
+    ]
+    if false_positives:
+        parts.append("<details>")
+        parts.append(
+            f"<summary>✂️ False Positives ({len(false_positives)})</summary>"
+        )
+        parts.append("")
+        parts.append(
+            "*These findings were investigated by the judge and determined to be "
+            "incorrect or not real issues.*"
+        )
+        parts.append("")
+        parts.append("| File | Line | Type | Severity | Title | Confidence |")
+        parts.append("|------|------|------|----------|-------|------------|")
+        for i in false_positives:
+            line_ref = (
+                f"{i.line_start}"
+                if not i.line_end or i.line_end == i.line_start
+                else f"{i.line_start}–{i.line_end}"
+            )
+            issue_type = getattr(i, "issue_type", None) or "Potential issue"
+            severity = getattr(i, "severity", "medium") or "medium"
+            severity_icon = {
+                "critical": "🔴",
+                "high": "🟠",
+                "medium": "🟡",
+            }.get(severity, "⚪")
+            drop_reason = getattr(i, "drop_reason", None)
+            reason_str = f" — {drop_reason}" if drop_reason else ""
+            parts.append(
+                f"| `{i.file}` | {line_ref} | {issue_type} "
+                f"| {severity_icon} {severity.capitalize()} | {i.title}{reason_str} | {i.confidence}/10 |"
+            )
+        parts.append("")
+        parts.append("</details>")
+        parts.append("")
+
     # ── Positive findings ─────────────────────────────────────────────────────
     if review.positive_findings:
         parts.append("<details>")
@@ -839,6 +875,27 @@ def format_github_comment(
         )
         parts.append("")
         for line in _render_issues_by_file(all_nitpicks):
+            parts.append(line)
+        parts.append("</details>")
+        parts.append("")
+
+    # ── False positives (judge marked as false) ────────────────────────────────
+    false_positives = [
+        i for i in open_issues + new_issues
+        if getattr(i, "classification", None) == "false"
+    ]
+    if false_positives:
+        parts.append("<details>")
+        parts.append(
+            f"<summary>✂️ False Positives ({len(false_positives)})</summary>"
+        )
+        parts.append("")
+        parts.append(
+            "*These findings were investigated by the judge and determined to be "
+            "incorrect or not real issues.*"
+        )
+        parts.append("")
+        for line in _render_issues_by_file(false_positives):
             parts.append(line)
         parts.append("</details>")
         parts.append("")
