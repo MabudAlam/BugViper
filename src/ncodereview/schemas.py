@@ -61,6 +61,12 @@ class FinalReviewOutput(BaseModel):
         "MUST be obtained by calling task(subagent_type='judge-reviewer') "
         "with the raw issues JSON as description. Required — cannot be null.",
     )
+    raw_agent_outputs: dict[str, str] = Field(
+        default_factory=dict,
+        description="Raw JSON output from each subagent (correctness-reviewer, "
+        "security-auditor, perf-reviewer) before judge classification. "
+        "Keys are subagent names, values are the raw JSON strings.",
+    )
 
 
 class JudgeVerdictEntry(BaseModel):
