@@ -25,8 +25,10 @@ def normalize_and_validate_review_data(
         if classification:
             seen_judge = True
             judgment_counts[classification] = judgment_counts.get(classification, 0) + 1
-            if classification == "false":
-                continue
+            # Keep false positives so they appear in the review summary as dropped issues;
+        # they are excluded from inline posting in comment.py but shown in the summary.
+        if classification == "false":
+            pass  # do not skip — show in summary under "false"
         file_path = normalized["file"]
         if file_path not in changed_set:
             continue
@@ -226,7 +228,53 @@ def extract_review_from_result(result: dict) -> dict | None:
             text = last_msg.content
         elif isinstance(last_msg, dict):
             text = last_msg.get("content", text)
-    return _parse_json_from_text(text)
+    review = _parse_json_from_text(text)
+    if review is not None:
+        # Also extract raw subagent outputs from the message history.
+        # Each subagent result appears as an AIMessage with content containing
+        # the raw JSON from that subagent (task result messages).
+        raw_outputs: dict[str, str] = {}
+        for msg in messages:
+            content = ""
+            if hasattr(msg, "content"):
+                content = msg.content
+            elif isinstance(msg, dict):
+                content = msg.get("content", "")
+            if not content or not isinstance(content, str):
+                continue
+            # Try to parse as JSON — if it has "issues" and/or "positives"
+            # at top level it looks like a subagent raw output
+            try:
+                import json
+                parsed = json.loads(content)
+                if isinstance(parsed, dict) and ("issues" in parsed or "positives" in parsed):
+                    # Determine which subagent from name annotation or first key
+                    name = None
+                    if hasattr(msg, "name") and msg.name:
+                        name = msg.name
+                    elif isinstance(msg, dict) and msg.get("name"):
+                        name = msg.get("name")
+                    key = name if name else _infer_subagent_key(parsed)
+                    if key:
+                        raw_outputs[key] = content
+            except (json.JSONDecodeError, Exception):
+                pass
+        if raw_outputs and "raw_agent_outputs" not in review:
+            review["raw_agent_outputs"] = raw_outputs
+    return review
+
+
+def _infer_subagent_key(parsed: dict) -> str | None:
+    """Infer subagent name from the structure of a raw subagent JSON."""
+    issues = parsed.get("issues", [])
+    positives = parsed.get("positives", [])
+    if not issues and not positives:
+        return None
+    # All subagents return the same shape; use a heuristic based on content
+    # The orchestrator prompt tells it to key by subagent name, so if the
+    # orchestrator followed instructions, raw_outputs will already be populated.
+    # This is a fallback for when the orchestrator didn't include it.
+    return "subagent"
 
 
 def _parse_json_from_text(text: str) -> dict | None:
