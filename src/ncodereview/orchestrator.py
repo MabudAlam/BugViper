@@ -33,6 +33,8 @@ async def run_post_review(
         positives=positives_to_strings(review_data.get("positives", [])),
         walkthrough=review_data.get("walkthrough", []),
         summary=review_data.get("summary", ""),
+        raw_agent_outputs=review_data.get("raw_agent_outputs"),
+        judgment_counts=review_data.get("_judgment_counts"),
     )
     fb_stats = mark_review_completed(
         uid=uid,
