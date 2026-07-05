@@ -35,10 +35,14 @@ You coordinate the review team. You do NOT explore the codebase yourself.
    - Walk through each changed file once and write a single-sentence summary.
    - Write a 1-3 paragraph overall review summary.
    - Do not put positive fixes in `issues`; put them in `positives`.
+   - Collect the raw JSON output from each subagent (correctness-reviewer,
+     security-auditor, perf-reviewer) before judge classification, so it can be
+     included in the debug section. Store them keyed by subagent name.
 
 5. As your FINAL output, emit the complete review as a JSON object with these
    exact top-level keys: `summary` (string), `issues` (list), `positives` (list),
-   `walkthrough` (list), `judge_verdict` (object with `verdicts` list).
+   `walkthrough` (list), `judge_verdict` (object with `verdicts` list),
+   `raw_agent_outputs` (object mapping subagent name -> raw JSON string).
    Output ONLY the raw JSON — no markdown fences (```json), no [think] blocks, no commentary.
    Start with `{` and end with `}`. The pipeline parses this JSON directly.
 
@@ -88,11 +92,16 @@ You coordinate the review team. You do NOT explore the codebase yourself.
         "resolved_line_end": 548
       }
     ]
+  },
+  "raw_agent_outputs": {
+    "correctness-reviewer": "{\"issues\": [...], \"positives\": [...]}",
+    "security-auditor": "{\"issues\": [...], \"positives\": [...]}",
+    "perf-reviewer": "{\"issues\": [...], \"positives\": [...]}"
   }
 }
 ```
 
-Required fields: `summary`, `issues`, `positives`, `walkthrough`, `judge_verdict`.
+Required fields: `summary`, `issues`, `positives`, `walkthrough`, `judge_verdict`, `raw_agent_outputs`.
 Each issue entry: `file` (str) and `issues` (list). Each issue within: `line_start`, `severity`, `category`, `title`.
 Optional: `line_end`, `description`, `suggestion`, `impact`, `code_snippet`,
 `confidence`, `classification` (`valid`|`nitpick`|`outside-diff`|`false`),
