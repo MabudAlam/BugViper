@@ -1,10 +1,3 @@
-"""Unified-diff utilities — per-file patches, valid line ranges, snapping.
-
-Ported from kodus-ai's approach (libs/code-review/pipeline/stages/agent-review.stage.ts).
-Operates on a SINGLE file's patch at a time, not the full multi-file diff — this
-is simpler and matches how the agent/review flow naturally splits work by file.
-"""
-
 from __future__ import annotations
 
 import re
@@ -22,7 +15,7 @@ def split_diff_by_file(diff_text: str) -> Dict[str, str]:
     and all hunks for that file) — ready to pass to ``extract_valid_diff_lines``
     without further preprocessing.
     """
-    files: Dict[str, List[str]] = {}
+    files: Dict[str, str] = {}
     current_file: str | None = None
     current_lines: List[str] = []
 
