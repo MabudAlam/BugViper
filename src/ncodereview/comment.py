@@ -55,7 +55,10 @@ async def post_review(
         f"{w.get('file', '?')} — {w.get('summary', '')}" for w in walkthrough
     ]
 
-    summary_issue_models = [issue for issue in issue_models if issue.confidence >= 7]
+    summary_issue_models = [
+        issue for issue in issue_models
+        if issue.confidence >= 7 or issue.classification == "outside-diff"
+    ]
     reconciled = ReconciledReview(
         issues=summary_issue_models,
         positive_findings=positives,
