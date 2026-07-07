@@ -98,3 +98,66 @@ def update_graph_status(owner: str, repo: str, status: str) -> None:
         meta_ref.set({"status": status, "updated_at": datetime.now(timezone.utc)}, merge=True)
     except Exception as exc:
         logger.warning("Failed to update graph status for %s/%s: %s", owner, repo, exc)
+
+
+def _pr_storage_path(owner: str, repo: str, pr_number: int, sha: str, filename: str) -> str:
+    return f"prs/{owner}/{repo}/{pr_number}/{sha}/{filename}"
+
+
+def upload_pr_call_graph(
+    owner: str,
+    repo: str,
+    pr_number: int,
+    sha: str,
+    call_graph_json: str,
+    blast_radius_md: str,
+    diff_text: str,
+) -> dict[str, str]:
+    """Upload call_graph.json, blast_radius.md, and diff.patch to Firebase Storage.
+
+    Returns dict of filename -> storage_path for each uploaded file.
+    """
+    try:
+        from common.firebase_service import firebase_service
+
+        bucket = get_storage_client()
+        uploaded: dict[str, str] = {}
+        base_path = _pr_storage_path(owner, repo, pr_number, sha, "")
+
+        files = {
+            "call_graph.json": (call_graph_json, "application/json"),
+            "blast_radius.md": (blast_radius_md, "text/markdown"),
+            "diff.patch": (diff_text, "text/plain"),
+        }
+
+        for filename, (content, content_type) in files.items():
+            blob_name = f"{base_path}{filename}"
+            blob = bucket.blob(blob_name)
+            blob.upload_from_string(content, content_type=content_type)
+            uploaded[filename] = f"gs://{get_storage_bucket()}/{blob_name}"
+            logger.info("Uploaded %s for %s/%s PR#%s", filename, owner, repo, pr_number)
+
+        meta_ref = firebase_service._db.document(_doc_path(owner, repo))
+        meta_ref.set(
+            {
+                "pr_call_graph": {
+                    str(pr_number): {
+                        "sha": sha,
+                        "storage_paths": uploaded,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                }
+            },
+            merge=True,
+        )
+
+        return uploaded
+    except Exception as exc:
+        logger.error(
+            "Failed to upload PR call graph for %s/%s PR#%s: %s",
+            owner,
+            repo,
+            pr_number,
+            exc,
+        )
+        return {}
