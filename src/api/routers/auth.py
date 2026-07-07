@@ -26,6 +26,9 @@ class UserProfile(BaseModel):
     githubUsername: Optional[str] = None
     photoURL: Optional[str] = None
     createdAt: Optional[str] = None
+    githubInstallationId: Optional[int] = None
+    accountType: Optional[str] = None
+    repositorySelection: Optional[str] = None
 
 
 class GitHubRepo(BaseModel):
@@ -100,3 +103,46 @@ def get_github_repos(user: dict = Depends(get_current_user)):
     except Exception as exc:
         logger.exception("Failed to fetch GitHub repos for uid=%s", uid)
         raise HTTPException(status_code=500, detail="Failed to fetch repositories") from exc
+
+
+class InstallationStatus(BaseModel):
+    installationId: Optional[int] = None
+    githubUsername: Optional[str] = None
+    linked: bool = False
+    settingsUrl: Optional[str] = None
+
+
+@router.get("/installation", response_model=InstallationStatus)
+def get_installation_status(user: dict = Depends(get_current_user)):
+    """Return GitHub App installation status for the current user."""
+    uid = user["uid"]
+    installation_id = firebase_service.get_user_installation(uid)
+    github_username = firebase_service.get_user_github_username(uid)
+
+    if installation_id:
+        return InstallationStatus(
+            installationId=installation_id,
+            githubUsername=github_username,
+            linked=True,
+            settingsUrl=f"https://github.com/settings/installations/{installation_id}",
+        )
+
+    # Fallback: retry linking from pending installation
+    if github_username:
+        try:
+            firebase_service._link_pending_installation(uid, github_username)
+            installation_id = firebase_service.get_user_installation(uid)
+            if installation_id:
+                return InstallationStatus(
+                    installationId=installation_id,
+                    githubUsername=github_username,
+                    linked=True,
+                    settingsUrl=f"https://github.com/settings/installations/{installation_id}",
+                )
+        except Exception as exc:
+            logger.exception("Failed to retry linking pending installation for uid=%s", uid)
+
+    return InstallationStatus(
+        githubUsername=github_username,
+        linked=False,
+    )
