@@ -10,12 +10,14 @@ import {
   listPRReviews,
   getPRReviewRun,
   listRepositories,
+  getInstallationStatus,
   type DashboardStats,
   type PRReviewSummary,
   type ReviewRunSummary,
   type ReviewRunDetail,
   type ReviewIssue,
   type RepoSummary,
+  type InstallationStatus,
 } from "@/lib/api";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
@@ -628,16 +630,19 @@ export default function DashboardPage() {
   const [repos, setRepos] = useState<RepoSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [sheetRepo, setSheetRepo] = useState<RepoSummary | null>(null);
+  const [installation, setInstallation] = useState<InstallationStatus | null>(null);
 
   useEffect(() => {
-    Promise.all([getDashboardStats(), listRepositories()])
-      .then(([s, r]) => {
+    Promise.all([getDashboardStats(), listRepositories(), getInstallationStatus()])
+      .then(([s, r, inst]) => {
         setStats(s);
         setRepos(r);
+        setInstallation(inst);
       })
       .catch(() => {
         setStats(null);
         setRepos([]);
+        setInstallation(null);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -668,14 +673,29 @@ export default function DashboardPage() {
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-foreground">Repositories</h2>
-            <Button variant="default" size="sm" asChild>
-              <Link href="/repositories">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Add Repo
-              </Link>
-            </Button>
+            {installation?.linked && installation.settingsUrl ? (
+              <Button variant="default" size="sm" asChild>
+                <a href={installation.settingsUrl} target="_blank" rel="noopener noreferrer">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Repo
+                </a>
+              </Button>
+            ) : (
+              <Button variant="default" size="sm" asChild>
+                <a
+                  href={process.env.NEXT_PUBLIC_GITHUB_APP_INSTALL_URL || "#"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Install App
+                </a>
+              </Button>
+            )}
           </div>
 
           {loading ? (
@@ -699,14 +719,29 @@ export default function DashboardPage() {
                     Add a repository to start tracking code reviews
                   </p>
                 </div>
-                <Button variant="default" size="sm" asChild>
-                  <Link href="/repositories">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                    </svg>
-                    Add Repository
-                  </Link>
-                </Button>
+                {installation?.linked && installation.settingsUrl ? (
+                  <Button variant="default" size="sm" asChild>
+                    <a href={installation.settingsUrl} target="_blank" rel="noopener noreferrer">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add Repository
+                    </a>
+                  </Button>
+                ) : (
+                  <Button variant="default" size="sm" asChild>
+                    <a
+                      href={process.env.NEXT_PUBLIC_GITHUB_APP_INSTALL_URL || "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                      Install App
+                    </a>
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ) : (
