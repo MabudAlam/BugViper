@@ -3,8 +3,10 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+import asyncio
 import logging
 import os
+import signal
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -16,6 +18,19 @@ from api.routers import auth, repository, support, webhook
 from common.firebase_service import firebase_service  # noqa: F401 — init on import
 
 logger = logging.getLogger(__name__)
+
+_active_sandboxes: list = []
+
+
+def register_sandbox(sbx):
+    """Register a sandbox for shutdown tracking."""
+    _active_sandboxes.append(sbx)
+
+
+def unregister_sandbox(sbx):
+    """Unregister a sandbox (when done)."""
+    if sbx in _active_sandboxes:
+        _active_sandboxes.remove(sbx)
 
 
 def _load_allowed_origins() -> list[str]:
@@ -33,8 +48,28 @@ def _load_allowed_origins() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    loop = asyncio.get_event_loop()
+    shutdown_requested = asyncio.Event()
+
+    def signal_handler():
+        logger.warning("Shutdown signal received - setting shutdown flag")
+        shutdown_requested.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, signal_handler)
+
+    app.state.shutdown_requested = shutdown_requested
+    app.state.active_sandboxes = _active_sandboxes
+
     yield
-    logger.info("Shutting down application...")
+
+    logger.info("Shutting down application - killing %d active sandboxes", len(_active_sandboxes))
+    for sbx in list(_active_sandboxes):
+        try:
+            sbx.kill()
+            logger.info("Killed sandbox %s", getattr(sbx, "sandbox_id", "unknown"))
+        except Exception as e:
+            logger.warning("Failed to kill sandbox: %s", e)
 
 
 app = FastAPI(
