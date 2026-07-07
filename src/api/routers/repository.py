@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from api.dependencies import get_current_uid
@@ -24,7 +24,6 @@ class RepoSummary(BaseModel):
     private: bool
     defaultBranch: str
     topics: list[str]
-    ingestionStatus: str
     filesProcessed: int | None
     filesSkipped: int | None
     classesFound: int | None
@@ -66,6 +65,25 @@ class ReviewRunSummary(BaseModel):
     durationSeconds: float | None
 
 
+class ReviewRunDetail(BaseModel):
+    runNumber: int
+    issues: list[dict]
+    positiveFindings: list[str]
+    summary: str
+    filesChanged: list[str]
+    reviewType: str
+    issuesCount: int
+    positivesCount: int
+    walkthroughCount: int
+    headSha: str | None = None
+    baseSha: str | None = None
+    startedAt: str | None = None
+    endedAt: str | None = None
+    durationSeconds: float | None = None
+    createdAt: str | None = None
+    githubCommentIds: list[dict] = []
+
+
 def _repo_doc_to_summary(doc_id: str, data: dict[str, Any]) -> RepoSummary:
     parts = doc_id.split("_", 1)
     owner = parts[0] if len(parts) > 0 else doc_id
@@ -81,7 +99,6 @@ def _repo_doc_to_summary(doc_id: str, data: dict[str, Any]) -> RepoSummary:
         private=data.get("private", False),
         defaultBranch=data.get("defaultBranch", "main"),
         topics=data.get("topics", []),
-        ingestionStatus=data.get("ingestionStatus", "unknown"),
         filesProcessed=data.get("filesProcessed"),
         filesSkipped=data.get("filesSkipped"),
         classesFound=data.get("classesFound"),
@@ -116,15 +133,36 @@ def _pr_doc_to_summary(data: dict[str, Any]) -> PRReviewSummary:
 def _review_doc_to_summary(data: dict[str, Any], run_number: str) -> ReviewRunSummary:
     return ReviewRunSummary(
         runNumber=int(run_number.rsplit("_", 1)[-1]) if "_" in run_number else int(run_number),
-        issuesCount=data.get("issuesCount", 0),
-        positivesCount=data.get("positivesCount", 0),
-        walkthroughCount=data.get("walkthroughCount", 0),
+        issuesCount=data.get("issuesCount") or data.get("issues_count", 0),
+        positivesCount=data.get("positivesCount") or data.get("positives_count", 0),
+        walkthroughCount=data.get("walkthroughCount") or data.get("walkthrough_count", 0),
         summary=data.get("summary", ""),
-        filesChanged=data.get("filesChanged", []),
-        reviewType=data.get("reviewType", "incremental_review"),
-        startedAt=data.get("startedAt"),
-        endedAt=data.get("endedAt"),
-        durationSeconds=data.get("durationSeconds"),
+        filesChanged=data.get("filesChanged") or data.get("files_changed", []),
+        reviewType=data.get("reviewType") or data.get("review_type", "incremental_review"),
+        startedAt=data.get("startedAt") or data.get("started_at"),
+        endedAt=data.get("endedAt") or data.get("ended_at"),
+        durationSeconds=data.get("durationSeconds") or data.get("duration_seconds"),
+    )
+
+
+def _review_doc_to_detail(data: dict[str, Any], run_id: str) -> ReviewRunDetail:
+    return ReviewRunDetail(
+        runNumber=int(run_id.rsplit("_", 1)[-1]) if "_" in run_id else int(run_id),
+        issues=data.get("issues", []),
+        positiveFindings=data.get("positiveFindings") or data.get("positive_findings") or [],
+        summary=data.get("summary", ""),
+        filesChanged=data.get("filesChanged") or data.get("files_changed", []),
+        reviewType=data.get("reviewType") or data.get("review_type", "incremental_review"),
+        issuesCount=data.get("issuesCount") or data.get("issues_count", 0),
+        positivesCount=data.get("positivesCount") or data.get("positives_count", 0),
+        walkthroughCount=data.get("walkthroughCount") or data.get("walkthrough_count", 0),
+        headSha=data.get("headSha") or data.get("head_sha"),
+        baseSha=data.get("baseSha") or data.get("base_sha"),
+        startedAt=data.get("startedAt") or data.get("started_at"),
+        endedAt=data.get("endedAt") or data.get("ended_at"),
+        durationSeconds=data.get("durationSeconds") or data.get("duration_seconds"),
+        createdAt=data.get("createdAt") or data.get("created_at"),
+        githubCommentIds=data.get("githubCommentIds") or data.get("github_comment_ids", []),
     )
 
 
@@ -168,9 +206,11 @@ async def list_prs(
 
 @router.get("/{owner}/{repo}/prs/{pr_number}/reviews", response_model=list[ReviewRunSummary])
 async def list_pr_reviews(
-    owner: str, repo: str, pr_number: int, uid: str = Depends(get_current_uid)
+    owner: str, repo: str, pr_number: int,
+    limit: int = Query(20, ge=1, le=50),
+    uid: str = Depends(get_current_uid)
 ) -> list[ReviewRunSummary]:
-    """List all review runs for a specific PR."""
+    """List recent review runs for a specific PR."""
     db = firebase_service.db
     repo_key = f"{owner}_{repo}"
     try:
@@ -183,12 +223,26 @@ async def list_pr_reviews(
             .document(str(pr_number))
             .collection("reviews")
             .order_by("runNumber", direction="DESCENDING")
+            .limit(limit)
             .stream()
         )
         return [_review_doc_to_summary(d.to_dict(), d.id) for d in docs]
     except Exception as exc:
         logger.exception("Failed to list reviews for %s/%s#%s: %s", owner, repo, pr_number, exc)
         raise HTTPException(status_code=500, detail="Failed to fetch reviews")
+
+
+@router.get("/{owner}/{repo}/prs/{pr_number}/reviews/{run_number}", response_model=ReviewRunDetail)
+async def get_pr_review_run(
+    owner: str, repo: str, pr_number: int, run_number: int,
+    uid: str = Depends(get_current_uid)
+) -> ReviewRunDetail:
+    """Fetch a specific review run with full details."""
+    run_data = firebase_service.get_review_run(uid, owner, repo, pr_number, run_number)
+    if not run_data:
+        raise HTTPException(status_code=404, detail="Review run not found")
+    run_id = f"run_{run_number}"
+    return _review_doc_to_detail(run_data, run_id)
 
 
 class DashboardStats(BaseModel):
