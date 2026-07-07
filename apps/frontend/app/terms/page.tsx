@@ -25,7 +25,7 @@ export default function TermsOfServicePage() {
             Sign in
           </Link>
           <Link href="/login">
-            <Button size="sm" variant="outline">
+            <Button size="sm" variant="neutral">
               Get Started
             </Button>
           </Link>
