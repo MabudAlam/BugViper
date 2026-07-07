@@ -514,7 +514,7 @@ def format_review_summary(
 
     if judgment_counts:
         parts.append(
-            f"**Actionable:** {judgment_counts.get('valid', len(high_conf_actionable))}  "
+            f"**Actionable:** {len(high_conf_actionable)}  "
             f"| 🟡 **Nitpicks:** {judgment_counts.get('nitpick', len(nitpicks))}  "
             f"| ⚪ **Outside diff:** {judgment_counts.get('outside-diff', len(outside_diff))}  "
             f"| ✂️ **Dropped (false):** {judgment_counts.get('false', 0)}"
@@ -556,7 +556,10 @@ def format_review_summary(
     # Impact analysis intentionally removed — low signal for most PRs
 
     # ── All Issues table (collapsed) ──────────────────────────────────────────
-    all_actionable = [i for i in review.issues if i.status in ("new", "still_open")]
+    all_actionable = [
+        i for i in review.issues if i.status in ("new", "still_open")
+        and getattr(i, "classification", None) != "outside-diff"
+    ]
     if all_actionable:
         sorted_issues = sorted(all_actionable, key=lambda i: i.confidence, reverse=True)
         parts.append("<details>")
