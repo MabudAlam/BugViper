@@ -18,12 +18,16 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-REPO_URL = "https://github.com/MabudAlam/QC_BugViper_test"
-PR_NUMBER = 5
+REPO_URL = "https://github.com/MabudAlam/bigset/"
+PR_NUMBER = 2
 OUTPUT_DIR = "./output"
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from knowledge_parser.call_graph import (
+    analyze_pr_call_graph as _analyze_pr_call_graph,
+)
+from knowledge_parser.call_graph import render_callgraph_markdown
 from knowledge_parser.parser import TreeSitterParser
 from knowledge_parser.registry import EXT_TO_LANG
 
@@ -757,173 +761,10 @@ def analyze_pr_call_graph(ast_data: dict, pr_files: list[str]) -> dict:
     """
     Analyze call relationships for PR files.
 
-    For each PR file, identifies:
-    - internal_calls: calls within PR files
-    - outgoing_calls: calls from PR to external (not in PR)
-    - incoming_calls: calls from external to PR
-
-    Args:
-        ast_data: Full AST with all repo files
-        pr_files: List of file paths changed in the PR
-
-    Returns:
-        Dict with per-file analysis and summary statistics
+    Re-export from knowledge_parser.call_graph for backward compatibility.
+    See call_graph.py for the full algorithm.
     """
-    pr_files_set = {f for f in pr_files}
-
-    # Build lookup: entity_name -> file_path (for functions and classes)
-    # Multiple files may define same name - we track all
-    func_definitions: dict[str, list[str]] = {}
-    class_definitions: dict[str, list[str]] = {}
-
-    for file_info in ast_data["files"]:
-        file_path = file_info["path"]
-
-        for func in file_info["functions"]:
-            func_name = func["name"]
-            if func_name not in func_definitions:
-                func_definitions[func_name] = []
-            func_definitions[func_name].append(file_path)
-
-        for cls in file_info["classes"]:
-            class_name = cls["name"]
-            if class_name not in class_definitions:
-                class_definitions[class_name] = []
-            class_definitions[class_name].append(file_path)
-
-    # Build lookup: file_path -> set of function/class names defined in it
-    file_entities: dict[str, set[str]] = {}
-    for file_info in ast_data["files"]:
-        file_path = file_info["path"]
-        entities = set()
-        for func in file_info["functions"]:
-            entities.add(func["name"])
-        for cls in file_info["classes"]:
-            entities.add(cls["name"])
-        file_entities[file_path] = entities
-
-    # Initialize result structure per PR file
-    pr_analysis: dict[str, dict] = {}
-    for pr_file in pr_files_set:
-        pr_analysis[pr_file] = {
-            "internal_calls": [],
-            # "outgoing_calls": [],  # disabled - not needed for blast radius
-            "incoming_calls": [],
-        }
-
-    # Also track calls between PR files for summary
-    all_internal: list[dict] = []
-    all_incoming: list[dict] = []
-
-    # Deduplication: track unique (caller_file, caller_function, callee) pairs
-    seen_internal: set[tuple[str, str, str]] = set()
-    seen_incoming: set[tuple[str, str, str]] = set()
-
-    # Process all calls across all files
-    for file_info in ast_data["files"]:
-        caller_file = file_info["path"]
-        caller_in_pr = caller_file in pr_files_set
-
-        for call in file_info["function_calls"]:
-            if not call or not call.get("name"):
-                continue
-
-            call_name = call["name"]
-            call_line = call.get("line_number", 0)
-
-            # Get caller function name from context
-            context = call.get("context")
-            if isinstance(context, (list, tuple)):
-                caller_func = context[0]
-            elif isinstance(context, str):
-                caller_func = context
-            else:
-                caller_func = call.get("context_name")
-
-            # Determine where callee is defined
-            callee_file = None
-            callee_in_pr = False
-
-            if call_name in func_definitions:
-                # Find which file defines this function
-                defining_files = func_definitions[call_name]
-                if len(defining_files) == 1:
-                    callee_file = defining_files[0]
-                else:
-                    # Multiple definitions - check if any is in PR
-                    for df in defining_files:
-                        if df in pr_files_set:
-                            callee_file = df
-                            break
-                    if not callee_file:
-                        callee_file = defining_files[0]
-
-            if call_name in class_definitions:
-                defining_files = class_definitions[call_name]
-                if len(defining_files) == 1:
-                    if not callee_file:
-                        callee_file = defining_files[0]
-                elif not callee_file:
-                    for df in defining_files:
-                        if df in pr_files_set:
-                            callee_file = df
-                            break
-                    if not callee_file:
-                        callee_file = defining_files[0]
-
-            callee_in_pr = callee_file in pr_files_set if callee_file else False
-
-            full_name = call.get("full_name", call_name)
-
-            if _is_noise_call(full_name, callee_file):
-                continue
-
-            call_entry = {
-                "caller_file": caller_file,
-                "caller_function": caller_func or "<anonymous>",
-                "callee": call_name,
-                "callee_line": call_line,
-                "callee_file": callee_file,
-                "full_name": full_name,
-            }
-
-            if caller_in_pr and callee_in_pr:
-                # Call within PR files
-                if caller_file != callee_file:
-                    # Internal PR call (cross-file) - deduplicate
-                    key = (caller_file, caller_func or "<anonymous>", call_name)
-                    if key not in seen_internal:
-                        seen_internal.add(key)
-                        pr_analysis[caller_file]["internal_calls"].append(call_entry)
-                        all_internal.append(call_entry)
-            elif caller_in_pr and not callee_in_pr:
-                # Call from PR to external - skip (not needed for blast radius)
-                pass
-            elif not caller_in_pr and callee_in_pr:
-                # Call from external to PR - deduplicate
-                if callee_file:
-                    key = (caller_file, caller_func or "<anonymous>", call_name)
-                    if key not in seen_incoming:
-                        seen_incoming.add(key)
-                        pr_analysis[callee_file]["incoming_calls"].append(call_entry)
-                        all_incoming.append(call_entry)
-            else:
-                # Both external - skip (neither in PR)
-                pass
-
-    # Build summary
-    total_internal = sum(len(v["internal_calls"]) for v in pr_analysis.values())
-    total_incoming = sum(len(v["incoming_calls"]) for v in pr_analysis.values())
-
-    return {
-        "pr_files": list(pr_files_set),
-        "total_pr_files": len(pr_files_set),
-        "per_file": pr_analysis,
-        "summary": {
-            "internal_calls": total_internal,
-            "incoming_calls": total_incoming,
-        },
-    }
+    return _analyze_pr_call_graph(ast_data, pr_files)
 
 
 def _compact_function(fn: dict, definition: dict | None = None) -> dict:
@@ -1150,10 +991,15 @@ async def main():
     (output_dir / "call_graph.json").write_text(json.dumps(call_graph, indent=2))
     print("Wrote call_graph.json")
 
+    callgraph_md = render_callgraph_markdown(call_graph)
+    (output_dir / "callgraph.md").write_text(callgraph_md)
+    print("Wrote callgraph.md")
+
     print(f"\nOutputs written to {output_dir}:")
     print("  diff.patch - PR diff")
     print("  ast.json - Raw AST")
     print("  call_graph.json - PR call relationships")
+    print("  callgraph.md - compact call graph for the review agent")
 
     print("\nAST Summary:")
     print(f"  Files parsed: {ast_data['statistics']['files_parsed']}")
