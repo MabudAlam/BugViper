@@ -1,7 +1,7 @@
 import json
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, Depends, Request
 
 from api.middleware.webhook_auth import (
     verify_github_webhook_signature,
@@ -23,7 +23,7 @@ router = APIRouter()
 
 
 @router.post("/onComment", dependencies=[Depends(verify_github_webhook_signature)])
-async def on_comment(request: Request, background_tasks: BackgroundTasks):
+async def on_comment(request: Request):
     """
     Single GitHub webhook endpoint. Routes all events by X-GitHub-Event header:
 
@@ -34,7 +34,7 @@ async def on_comment(request: Request, background_tasks: BackgroundTasks):
     event_type = request.headers.get("X-GitHub-Event", "")
 
     if event_type == "issue_comment":
-        return await _handle_comment_review(payload, background_tasks)
+        return await _handle_comment_review(payload)
 
     if event_type in ("push", "pull_request"):
         return {"status": "ignored", "reason": "ingestion disabled"}
@@ -120,7 +120,7 @@ async def _handle_resolve(
     }
 
 
-async def _handle_comment_review(payload: dict, background_tasks: BackgroundTasks) -> dict:
+async def _handle_comment_review(payload: dict) -> dict:
     """Trigger an AI review when @bugviper is mentioned in a PR comment."""
     if payload.get("action") != "created":
         return {"status": "ignored", "reason": "not a new comment"}
@@ -208,8 +208,7 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
 
     from ncodereview import run_review_pipeline
 
-    background_tasks.add_task(
-        run_review_pipeline,
+    await run_review_pipeline(
         owner,
         repo_name,
         pr_number,
@@ -218,7 +217,7 @@ async def _handle_comment_review(payload: dict, background_tasks: BackgroundTask
         uid=uid,
     )
 
-    return {"status": "processing", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
+    return {"status": "completed", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
 
 
 # ---------------------------------------------------------------------------
