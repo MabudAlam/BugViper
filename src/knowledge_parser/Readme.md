@@ -104,49 +104,110 @@ PR-focused call relationship analysis.
 
 ```json
 {
-  "pr_files": ["src/a.py", "src/b.py", "src/c.py"],
-  "total_pr_files": 3,
+  "pr_files": ["src/a.ts", "src/b.ts"],
+  "total_pr_files": 2,
   "per_file": {
-    "src/a.py": {
-      "internal_calls": [
+    "src/a.ts": {
+      "imports": [
         {
-          "caller_file": "src/a.py",
-          "caller_function": "func_a",
-          "callee": "func_b",
-          "callee_line": 15,
-          "callee_file": "src/b.py",
-          "full_name": "func_b"
+          "local_name": "store",
+          "original_name": "store",
+          "source": "./store",
+          "resolved_file": "src/store.ts",
+          "resolved": true,
+          "line_number": 3
         }
       ],
-      "outgoing_calls": [
+      "internal_calls": [
         {
-          "caller_file": "src/a.py",
-          "caller_function": "func_a",
-          "callee": "external_func",
-          "callee_line": 20,
-          "callee_file": "lib/utils.py",
-          "full_name": "utils.external_func"
+          "caller_file": "src/a.ts",
+          "caller_function": "handleClick",
+          "caller_scope": "Button.handleClick",
+          "caller_line": 12,
+          "callee": "submit",
+          "callee_qualified": "submit",
+          "callee_file": "src/b.ts",
+          "callee_line": 25,
+          "resolution": "imported",
+          "receiver": null,
+          "is_method": false,
+          "call_sites": [
+            {"line": 18, "call": "submit(data)", "args": ["data"]}
+          ],
+          "frequency": 1
         }
       ],
       "incoming_calls": [
         {
-          "caller_file": "src/d.py",
-          "caller_function": "caller_func",
-          "callee": "func_a",
-          "callee_line": 10,
-          "callee_file": "src/a.py",
-          "full_name": "func_a"
+          "caller_file": "src/legacy.ts",
+          "caller_function": "onSave",
+          "caller_scope": "onSave",
+          "caller_line": 40,
+          "callee": "render",
+          "callee_qualified": "Button.render",
+          "callee_file": "src/a.ts",
+          "callee_line": 5,
+          "resolution": "this_method",
+          "receiver": "this",
+          "is_method": true,
+          "call_sites": [
+            {"line": 47, "call": "this.render()", "args": []}
+          ],
+          "frequency": 1
         }
       ]
     }
   },
   "summary": {
     "internal_calls": 11,
-    "outgoing_calls": 287,
-    "incoming_calls": 207
+    "incoming_calls": 7,
+    "total_call_sites_in_repo": 412,
+    "total_files_in_repo": 87,
+    "resolution_breakdown": {
+      "local": 6,
+      "imported": 3,
+      "imported_method": 2,
+      "this_method": 1,
+      "builtin": 412
+    }
   }
 }
 ```
+
+#### Field Reference
+
+| Field | Meaning |
+|-------|---------|
+| `caller_file` | File containing the call site |
+| `caller_function` | Function/method name where the call originates (AST context) |
+| `caller_scope` | Qualified caller name (e.g. `ClassName.methodName`) |
+| `caller_line` | Line where the caller is defined |
+| `callee` | Method/function name as called |
+| `callee_qualified` | Fully-qualified callee name |
+| `callee_file` | Resolved file containing the callee definition |
+| `callee_line` | Line where the callee is defined |
+| `resolution` | How the callee was resolved (see below) |
+| `receiver` | Object on which the method was called (e.g. `store.update` -> `store`) |
+| `is_method` | True for `obj.method()` calls |
+| `call_sites` | Up to 5 sample call sites with line, full expression, args |
+| `frequency` | Total number of times this caller invokes this callee |
+
+#### Resolution Types
+
+The algorithm only emits edges when the callee can be proven to point at a
+top-level definition in our own source files. Library calls, runtime
+builtins, and bare-name collisions across files are dropped.
+
+| Resolution | When |
+|------------|------|
+| `local` | Callee is defined in the same file as the caller |
+| `imported` | Callee is reached through a named import |
+| `imported_method` | Method call on an imported object's class method |
+| `this_method` | `this.method()` resolved to current class method |
+| `local_method` | Method call on a locally constructed class |
+| `local_constructor` | Receiver matches a class declared in the same file |
+| `builtin` | `console.log`, `window.x`, `crypto.createHash().update`, etc. |
+| `external_or_builtin` | Could not resolve - likely an external dependency |
 
 ## Call Types Explained
 
