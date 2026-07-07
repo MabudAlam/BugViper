@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 def ensure_env() -> None:
     if not os.getenv("OPENROUTER_API_KEY") and not os.getenv("MINIMAX_API_KEY"):
         from dotenv import load_dotenv
+
         load_dotenv(override=True)
 
 
@@ -48,6 +49,30 @@ class DeepAgentConfig(BaseSettings):
             "Review depth: 'fast' (generalist, ~4 steps/lens), "
             "'normal' (generalist, ~20 steps/lens), "
             "'deep' (3 specialized agents in parallel, ~100 steps each)."
+        ),
+    )
+
+    e2b_sandbox_template_small: str = Field(
+        default="",
+        description=(
+            "E2B sandbox template name for small batches (<=5 files). "
+            "Use 2 vCPU template for lightweight reviews."
+        ),
+    )
+
+    e2b_sandbox_template_large: str = Field(
+        default="",
+        description=(
+            "E2B sandbox template name for large batches (>5 files). "
+            "Use 4 vCPU template for resource-heavy reviews."
+        ),
+    )
+
+    max_concurrent_sandboxes: int = Field(
+        default=4,
+        description=(
+            "Maximum number of concurrent E2B sandboxes. "
+            "Prevents hitting E2B rate/resource limits. Default: 4"
         ),
     )
 
