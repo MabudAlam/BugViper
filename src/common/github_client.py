@@ -19,7 +19,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from githubkit import GitHub
 from githubkit.auth import AppAuthStrategy, TokenAuthStrategy
@@ -238,7 +238,7 @@ class GitHubClient:
         )
 
         if result.returncode != 0:
-            stderr = result.stderr.replace(token, "***")
+            stderr = str(result.stderr or "").replace(token, "***")
             if "Repository not found" in stderr:
                 raise GitHubAppAccessError(
                     f"Repository '{owner}/{repo}' not found via git clone. "
@@ -291,7 +291,11 @@ class GitHubClient:
         return r.text
 
     async def compare_two_shas(
-        self, owner: str, repo: str, base_sha: str, head_sha: str,
+        self,
+        owner: str,
+        repo: str,
+        base_sha: str,
+        head_sha: str,
     ) -> str:
         """Return the diff between two commits (base...head)."""
         gh = await self._get_repo_gh(owner, repo)
@@ -413,7 +417,7 @@ class GitHubClient:
 
     async def post_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         gh = await self._get_repo_gh(owner, repo)
-        await gh.rest.issues.async_create_comment(owner, repo, pr_number, data={"body": body})
+        await gh.rest.issues.async_create_comment(owner, repo, pr_number, body=body)
 
     async def post_pr_review(
         self,
@@ -422,18 +426,16 @@ class GitHubClient:
         pr_number: int,
         commit_sha: str,
         body: str,
-        event: str = "COMMENT",
+        event: Literal["APPROVE", "REQUEST_CHANGES", "COMMENT"] = "COMMENT",
     ) -> None:
         gh = await self._get_repo_gh(owner, repo)
         await gh.rest.pulls.async_create_review(
             owner,
             repo,
             pr_number,
-            data={
-                "commit_id": commit_sha,
-                "body": body,
-                "event": event,
-            },
+            commit_id=commit_sha,
+            body=body,
+            event=event,
         )
 
     async def post_inline_comment(
@@ -452,9 +454,6 @@ class GitHubClient:
         Returns {"success": True, "comment_id": int, "thread_id": int}
         or {"success": False, "comment_id": None, "thread_id": None}.
 
-        Ported from kodus-ai's ``createReviewCommentWithRetry``.  GitHub
-        sometimes rejects a multi-line range even when both endpoints are
-        valid, so we progressively collapse to a single line:
 
         1. Original ``start_line`` and ``line`` (multi-line if different).
         2. ``start_line = line`` — single line at the end position.
@@ -462,7 +461,7 @@ class GitHubClient:
         """
         gh = await self._get_repo_gh(owner, repo)
 
-        attempts: list[dict] = []
+        attempts: list[dict[str, int]] = []
         if start_line is not None and start_line != line:
             attempts.append({"line": line, "start_line": start_line})
         attempts.append({"line": line, "start_line": line})
@@ -471,27 +470,24 @@ class GitHubClient:
 
         last_error: Exception | None = None
         for attempt in attempts:
-            data: dict = {
-                "body": body,
-                "commit_id": commit_sha,
-                "path": path,
-                "line": attempt["line"],
-                "side": "RIGHT",
-            }
-            if "start_line" in attempt:
-                data["start_line"] = attempt["start_line"]
-
+            a_line = attempt["line"]
             try:
-                resp = await gh.rest.pulls.async_create_review_comment(
-                    owner,
-                    repo,
-                    pr_number,
-                    data=data,
-                )
+                if "start_line" in attempt:
+                    resp = await gh.rest.pulls.async_create_review_comment(
+                        owner, repo, pr_number,
+                        body=body, commit_id=commit_sha, path=path,
+                        line=a_line, start_line=attempt["start_line"],
+                        side="RIGHT",
+                    )
+                else:
+                    resp = await gh.rest.pulls.async_create_review_comment(
+                        owner, repo, pr_number,
+                        body=body, commit_id=commit_sha, path=path,
+                        line=a_line, side="RIGHT",
+                    )
                 comment_id = resp.parsed_data.id if resp.parsed_data else None
                 in_reply_to = (
-                    getattr(resp.parsed_data, "in_reply_to_id", None)
-                    if resp.parsed_data else None
+                    getattr(resp.parsed_data, "in_reply_to_id", None) if resp.parsed_data else None
                 )
                 thread_id = in_reply_to or comment_id
                 return {"success": True, "comment_id": comment_id, "thread_id": thread_id}
@@ -499,7 +495,10 @@ class GitHubClient:
                 if self._is_line_mismatch_error(exc) and attempt is not attempts[-1]:
                     logger.debug(
                         "Line mismatch on %s:%s (attempt line=%s start_line=%s) — retrying",
-                        path, commit_sha[:7], attempt["line"], attempt.get("start_line"),
+                        path,
+                        commit_sha[:7],
+                        attempt["line"],
+                        attempt.get("start_line"),
                     )
                     last_error = exc
                     continue
@@ -507,7 +506,10 @@ class GitHubClient:
                     logger.debug(
                         "Inline comment skipped for %s:%s — line not in diff "
                         "(line=%s, start_line=%s)",
-                        path, line, attempt["line"], attempt.get("start_line"),
+                        path,
+                        line,
+                        attempt["line"],
+                        attempt.get("start_line"),
                     )
                     return {"success": False, "comment_id": None, "thread_id": None}
                 raise
@@ -515,9 +517,11 @@ class GitHubClient:
         if last_error is not None:
             logger.debug(
                 "Inline comment skipped for %s:%s — all retries exhausted: %s",
-                path, line, last_error,
+                path,
+                line,
+                last_error,
             )
-        return False
+        return {"success": False, "comment_id": None, "thread_id": None}
 
     @staticmethod
     def _is_line_mismatch_error(exc: Exception) -> bool:
@@ -543,7 +547,7 @@ class GitHubClient:
             owner,
             repo,
             pr_number,
-            data={"body": new_body},
+            body=new_body,
         )
 
     async def create_comment_reaction(
@@ -551,7 +555,7 @@ class GitHubClient:
         owner: str,
         repo: str,
         comment_id: int,
-        reaction: str,
+        reaction: Literal["+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"],
     ) -> bool:
         valid_reactions = {"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"}
         if reaction not in valid_reactions:
@@ -564,7 +568,7 @@ class GitHubClient:
                 owner,
                 repo,
                 comment_id,
-                data={"content": reaction},
+                content=reaction,  # type: ignore[arg-type]
             )
             return True
         except GitHubException as exc:
