@@ -1,7 +1,4 @@
-from fastapi import Request
-
-from db import Neo4jClient
-from db import get_neo4j_client as _build_neo4j_client
+from fastapi import HTTPException, Request
 
 
 def get_current_user(request: Request) -> dict:
@@ -9,6 +6,10 @@ def get_current_user(request: Request) -> dict:
     return request.state.user
 
 
-def get_neo4j_client() -> Neo4jClient:
-    """Get Neo4j database client from environment variables."""
-    return _build_neo4j_client()
+def get_current_uid(request: Request) -> str:
+    """Extract the Firebase UID from the authenticated user."""
+    user = request.state.user
+    uid = user.get("uid")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return uid

@@ -95,13 +95,13 @@ export default function SupportPage() {
                 </svg>
               </div>
               <p className="text-sm font-medium">{success}</p>
-              <Button variant="outline" size="sm" onClick={() => setSuccess(null)}>
+              <Button variant="neutral" size="sm" onClick={() => setSuccess(null)}>
                 Submit another request
               </Button>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium" htmlFor="name">
                     Full name <span className="text-destructive">*</span>
@@ -150,7 +150,7 @@ export default function SupportPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium" htmlFor="category">
                     Category <span className="text-destructive">*</span>

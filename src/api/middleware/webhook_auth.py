@@ -10,7 +10,10 @@ logger = logging.getLogger(__name__)
 
 def _verify_signature(raw_body: bytes, secret: str, signature_header: str) -> None:
     if not signature_header or not signature_header.startswith("sha256="):
-        raise HTTPException(status_code=403, detail="Missing or malformed X-Hub-Signature-256 header")
+        raise HTTPException(
+            status_code=403,
+            detail="Missing or malformed X-Hub-Signature-256 header",
+        )
     local_hash = hmac.new(
         key=secret.encode("utf-8"),
         msg=raw_body,

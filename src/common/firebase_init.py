@@ -10,6 +10,7 @@ from firebase_admin import credentials, firestore
 logger = logging.getLogger(__name__)
 
 isLocal = True
+_storage_bucket: str | None = None
 
 
 def _get_firebase_credentials():
@@ -36,3 +37,18 @@ def _initialize_firebase():
         logger.info("Firebase initialized with default credentials (Cloud Run)")
 
     return firestore.client()
+
+
+def get_storage_bucket() -> str:
+    """Return the GCS bucket name for graph storage."""
+    global _storage_bucket
+    if _storage_bucket:
+        return _storage_bucket
+    _storage_bucket = os.environ.get("FIREBASE_STORAGE_BUCKET", "bugviper-graphs.appspot.com")
+    return _storage_bucket
+
+
+def get_storage_client():
+    """Return a Firebase Storage bucket reference."""
+    bucket_name = get_storage_bucket()
+    return firebase_admin.storage().bucket(bucket_name)

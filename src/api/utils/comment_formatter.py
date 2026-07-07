@@ -1,11 +1,16 @@
 from collections import defaultdict
 
-from code_review_agent.config import config
-from code_review_agent.models.agent_schemas import ContextData, FileSummary, Issue, ReconciledReview
+from common.schemas import ContextData, FileSummary, Issue, ReconciledReview
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _SECURITY_TOOLS = {"bandit", "semgrep", "gitleaks"}
+
+
+def _model_label(debug_info: dict | None) -> str:
+    if debug_info and debug_info.get("deepagent"):
+        return "deepagent"
+    return "BugViper AI"
 
 
 def _extract_tool(issue: Issue) -> str:
@@ -68,68 +73,6 @@ def _render_static_section(lint_issues: list[Issue]) -> list[str]:
         lines.append("")
 
     return lines
-
-
-_LANG_MAP = {
-    "py": "python",
-    "ts": "typescript",
-    "tsx": "typescript",
-    "js": "javascript",
-    "jsx": "javascript",
-    "rb": "ruby",
-    "go": "go",
-    "rs": "rust",
-    "java": "java",
-    "cs": "csharp",
-    "cpp": "cpp",
-    "c": "c",
-}
-
-
-def _file_lang(path: str) -> str:
-    ext = path.rsplit(".", 1)[-1] if "." in path else ""
-    return _LANG_MAP.get(ext, ext)
-
-
-def _ai_fix_to_code_block(ai_fix: str, file_ext: str) -> str | None:
-    """Convert a unified-diff ai_fix into a human-readable code block.
-
-    Extracts only the '+' lines (new code) and formats them as a clean code snippet.
-    Returns None for complex or malformed diffs.
-    """
-    raw = ai_fix.strip()
-    lines = raw.splitlines()
-
-    # Reject malformed diffs
-    for line in lines:
-        if line.startswith("-+") or line.startswith("+-"):
-            return None
-
-    # Extract only the new lines (lines starting with '+')
-    plus_lines = [line[1:] for line in lines if line.startswith("+") and not line.startswith("+++")]
-    if not plus_lines:
-        return None
-
-    # Detect language from file extension
-    lang_map = {
-        "py": "python",
-        "ts": "typescript",
-        "tsx": "typescript",
-        "js": "javascript",
-        "jsx": "javascript",
-        "rb": "ruby",
-        "go": "go",
-        "rs": "rust",
-        "java": "java",
-        "cs": "csharp",
-        "cpp": "cpp",
-        "c": "c",
-    }
-    lang = lang_map.get(file_ext, file_ext)
-
-    # Join with proper indentation
-    code = "\n".join(plus_lines)
-    return f"```{lang}\n{code}\n```"
 
 
 def _ai_fix_to_suggestion(ai_fix: str) -> str | None:
@@ -269,10 +212,146 @@ def _render_issues_by_file(issues: list[Issue]) -> list[str]:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+_LANG_MAP = {
+    "py": "python",
+    "ts": "typescript",
+    "tsx": "typescript",
+    "js": "javascript",
+    "jsx": "javascript",
+    "rb": "ruby",
+    "go": "go",
+    "rs": "rust",
+    "java": "java",
+    "cs": "csharp",
+    "cpp": "cpp",
+    "c": "c",
+}
 
+
+def _file_lang(path: str) -> str:
+    ext = path.rsplit(".", 1)[-1] if "." in path else ""
+    return _LANG_MAP.get(ext, ext)
+
+
+_STANDARD_INSTRUCTION = (
+    "Verify each finding against current code. Fix only still-valid issues, "
+    "skip the rest with a brief reason, keep changes minimal, and validate."
+)
+
+
+def _line_ref(issue: Issue) -> str:
+    if not issue.line_end or issue.line_end == issue.line_start:
+        return f"line {issue.line_start}"
+    return f"lines {issue.line_start}-{issue.line_end}"
+
+
+def build_ai_prompt_for_issue(issue: Issue) -> str:
+    """Build the standard AI-agent fix prompt for a single issue.
+
+    Combines the standard verify-and-fix instruction with the issue's full
+    context (file path with @-prefix, line range, code snippet, and
+    description/impact/suggestion).  Suitable for pasting into Claude,
+    Cursor, Copilot, etc.
+    """
+    parts: list[str] = [_STANDARD_INSTRUCTION]
+    parts.append(
+        f"In `@{issue.file}` at {_line_ref(issue)}, {issue.description}"
+    )
+    if issue.impact:
+        parts.append("")
+        parts.append(f"**Impact:** {issue.impact}")
+    if issue.suggestion:
+        parts.append("")
+        parts.append(f"**Suggestion:** {issue.suggestion}")
+    if issue.code_snippet:
+        parts.append("")
+        parts.append("Current code:")
+        parts.append("```")
+        parts.append(issue.code_snippet.rstrip())
+        parts.append("```")
+    if issue.ai_fix:
+        parts.append("")
+        parts.append("Proposed fix:")
+        parts.append("```")
+        parts.append(issue.ai_fix.rstrip())
+        parts.append("```")
+    if issue.ai_agent_prompt:
+        parts.append("")
+        parts.append("Additional guidance:")
+        parts.append(issue.ai_agent_prompt.rstrip())
+    return "\n".join(parts)
+
+
+def build_ai_prompt_for_review(review: ReconciledReview) -> str:
+    """Build the standard AI-agent fix prompt for an entire review.
+
+    Lists every actionable issue with file + line + one-line summary,
+    followed by the standard verify-and-fix instruction.
+    """
+    actionable = [
+        i for i in review.issues if i.status in ("new", "still_open")
+    ]
+    if not actionable:
+        return ""
+
+    parts: list[str] = [_STANDARD_INSTRUCTION, ""]
+    parts.append(
+        f"Apply the {len(actionable)} fix(es) below. For each, read the "
+        "current code at the cited line, confirm the issue still exists, "
+        "make the minimal change that addresses it, and run the test suite."
+    )
+    parts.append("")
+    for idx, issue in enumerate(actionable, 1):
+        parts.append(f"### {idx}. `{issue.file}` {_line_ref(issue)} — {issue.title}")
+        parts.append("")
+        parts.append(issue.description.strip())
+        if issue.impact:
+            parts.append("")
+            parts.append(f"**Impact:** {issue.impact}")
+        if issue.suggestion:
+            parts.append("")
+            parts.append(f"**Suggestion:** {issue.suggestion}")
+        if issue.code_snippet:
+            parts.append("")
+            parts.append("Current code:")
+            parts.append("```")
+            parts.append(issue.code_snippet.rstrip())
+            parts.append("```")
+        if issue.ai_fix:
+            parts.append("")
+            parts.append("Proposed fix:")
+            parts.append("```")
+            parts.append(issue.ai_fix.rstrip())
+            parts.append("```")
+        parts.append("")
+    return "\n".join(parts).rstrip()
+
+
+def _render_ai_prompt_toggle(
+    label: str, prompt_text: str, *, open_by_default: bool = False
+) -> list[str]:
+    """Render a collapsible <details> block with the AI-agent prompt.
+
+    The prompt is wrapped in a plain fenced code block so the entire block is
+    easy to select and copy with one click. Use tildes because the prompt may
+    include markdown code fences for the current code.
+    """
+    if not prompt_text.strip():
+        return []
+    open_attr = " open" if open_by_default else ""
+    return [
+        f"<details{open_attr}>",
+        f"<summary>🤖 {label} — click to expand &amp; copy</summary>",
+        "",
+        "~~~",
+        prompt_text,
+        "~~~",
+        "",
+        "</details>",
+        "",
+    ]
 def format_inline_comment(issue: Issue) -> str:
     """Format one issue as an inline PR review comment body."""
-    lang = _file_lang(issue.file)
     issue_type = getattr(issue, "issue_type", None) or "Potential issue"
     severity = getattr(issue, "severity", "medium") or "medium"
     severity_icon = {
@@ -281,62 +360,34 @@ def format_inline_comment(issue: Issue) -> str:
         "medium": "🟡",
     }.get(severity, "⚪")
 
+    header = f"{severity_icon} {issue_type}"
+    if getattr(issue, "classification", None) == "nitpick":
+        header = f"🟡 Nitpick · {issue_type}"
+
     lines: list[str] = [
-        f"{severity_icon} {issue_type}",
+        header,
         "",
         f"**{issue.title}**",
         "",
         issue.description,
     ]
 
+
     if issue.impact:
         lines += ["", f"**Impact:** {issue.impact}"]
+
 
     if issue.suggestion:
         lines += ["", f"**Suggestion:** {issue.suggestion}"]
 
-    if issue.ai_fix:
-        # ai_fix is now the corrected code, not a diff
-        fix_text = issue.ai_fix.strip()
-        # Remove any surrounding code blocks if present
-        if fix_text.startswith("```"):
-            first_newline = fix_text.find("\n")
-            if first_newline != -1:
-                fix_text = fix_text[first_newline + 1 :]
-        if fix_text.endswith("```"):
-            fix_text = fix_text[:-3].rstrip()
-
-        lines += [
-            "",
-            "**Suggested fix:**",
-            "",
-            f"```{lang}",
-            fix_text,
-            "```",
-        ]
-
-    if issue.code_snippet and not issue.ai_fix:
-        lines += ["", f"```{lang}", issue.code_snippet.strip(), "```"]
-
-    ai_agent_prompt = getattr(issue, "ai_agent_prompt", None)
-    if ai_agent_prompt:
-        lines += [
-            "",
-            "---",
-            "",
-            "**🤖 Prompt for AI Agents**",
-            "",
-            "Copy this to give to an AI agent to fix the issue:",
-            "",
-            "```",
-            ai_agent_prompt,
-            "```",
-        ]
 
     lines += ["", f"*Category: `{issue.category}` · Confidence: {issue.confidence}/10*"]
+
+    prompt_text = build_ai_prompt_for_issue(issue)
+    lines += _render_ai_prompt_toggle("Prompt for AI Agent", prompt_text)
+
+
     return "\n".join(lines)
-
-
 def _render_debug_section(raw_agent_outputs: dict[str, str], debug_info: dict) -> list[str]:
     """Render a collapsible debug section with agent JSON + full lint dump."""
     lines: list[str] = []
@@ -373,21 +424,16 @@ def _render_debug_section(raw_agent_outputs: dict[str, str], debug_info: dict) -
         lines.append("")
 
     # Raw agent JSON outputs per file
-    _MAX_JSON = 25_000
     if raw_agent_outputs:
         lines.append("**Raw Agent Output (JSON):**")
         lines.append("")
         for file_path, raw_json in raw_agent_outputs.items():
             lines.append(f"### `{file_path}`")
             lines.append("")
-            display = raw_json[:_MAX_JSON]
-            truncated = len(raw_json) > _MAX_JSON
             # Escape embedded code blocks to prevent markdown breakage
-            display = display.replace("```", "\\`\\`\\`")
+            display = raw_json.replace("```", "\\`\\`\\`")
             lines.append("```json")
             lines.append(display)
-            if truncated:
-                lines.append("# ... truncated")
             lines.append("```")
             lines.append("")
 
@@ -405,6 +451,7 @@ def format_review_summary(
     walk_through: list[str] | None = None,
     inline_posted: int = 0,
     inline_skipped: int = 0,
+    judgment_counts: dict[str, int] | None = None,
     raw_agent_outputs: dict[str, str] | None = None,
     debug_info: dict | None = None,
 ) -> str:
@@ -429,11 +476,28 @@ def format_review_summary(
     if debug_info:
         head_sha = debug_info.get("head_sha")
     sha_part = f" | **Head SHA**: `{head_sha}`" if head_sha else ""
-    parts.append(f"**PR**: #{pr_number} | **Model**: `{config.synthesis_model}`{sha_part}")
+    parts.append(
+        f"**PR**: #{pr_number} | **Model**: `{_model_label(debug_info)}`{sha_part}"
+    )
     parts.append("")
 
-    high_conf_actionable = [i for i in open_issues + new_issues if i.confidence >= 7]
-    nitpicks = [i for i in open_issues + new_issues if i.confidence < 7]
+    high_conf_actionable = [
+        i for i in open_issues + new_issues
+        if i.confidence >= 7 and getattr(i, "classification", None) != "nitpick"
+    ]
+    nitpicks_judge = [
+        i for i in open_issues + new_issues
+        if getattr(i, "classification", None) == "nitpick"
+    ]
+    nitpicks_conf = [
+        i for i in open_issues + new_issues
+        if i.confidence < 7 and getattr(i, "classification", None) != "valid"
+    ]
+    nitpicks = nitpicks_judge or nitpicks_conf
+    outside_diff = [
+        i for i in open_issues + new_issues
+        if getattr(i, "classification", None) == "outside-diff"
+    ]
 
     badges = []
     if fixed_issues:
@@ -448,8 +512,16 @@ def format_review_summary(
         parts.append("  ".join(badges))
         parts.append("")
 
-    nitpick_note = f" + {len(nitpicks)} nitpicks below" if nitpicks else ""
-    parts.append(f"**Actionable: {len(high_conf_actionable)}**{nitpick_note}")
+    if judgment_counts:
+        parts.append(
+            f"**Actionable:** {len(high_conf_actionable)}  "
+            f"| 🟡 **Nitpicks:** {judgment_counts.get('nitpick', len(nitpicks))}  "
+            f"| ⚪ **Outside diff:** {judgment_counts.get('outside-diff', len(outside_diff))}  "
+            f"| ✂️ **Dropped (false):** {judgment_counts.get('false', 0)}"
+        )
+    else:
+        nitpick_note = f" + {len(nitpicks)} nitpicks below" if nitpicks else ""
+        parts.append(f"**Actionable: {len(high_conf_actionable)}**{nitpick_note}")
     if inline_posted:
         skipped_note = f" ({inline_skipped} outside diff)" if inline_skipped else ""
         parts.append(
@@ -484,7 +556,10 @@ def format_review_summary(
     # Impact analysis intentionally removed — low signal for most PRs
 
     # ── All Issues table (collapsed) ──────────────────────────────────────────
-    all_actionable = [i for i in review.issues if i.status in ("new", "still_open")]
+    all_actionable = [
+        i for i in review.issues if i.status in ("new", "still_open")
+        and getattr(i, "classification", None) != "outside-diff"
+    ]
     if all_actionable:
         sorted_issues = sorted(all_actionable, key=lambda i: i.confidence, reverse=True)
         parts.append("<details>")
@@ -568,6 +643,82 @@ def format_review_summary(
         parts.append("</details>")
         parts.append("")
 
+    # ── Outside diff section (review outside the diff) ────────────────────────
+    if outside_diff:
+        parts.append("<details>")
+        parts.append(
+            f"<summary>⚠️ Review outside the diff ({len(outside_diff)})</summary>"
+        )
+        parts.append("")
+        parts.append(
+            "*These findings cite code that isn't part of this PR's diff. "
+            "They can't be posted as inline comments.*"
+        )
+        parts.append("")
+        parts.append("| File | Line | Type | Severity | Title | Confidence |")
+        parts.append("|------|------|------|----------|-------|------------|")
+        for i in outside_diff:
+            line_ref = (
+                f"{i.line_start}"
+                if not i.line_end or i.line_end == i.line_start
+                else f"{i.line_start}–{i.line_end}"
+            )
+            issue_type = getattr(i, "issue_type", None) or "Potential issue"
+            severity = getattr(i, "severity", "medium") or "medium"
+            severity_icon = {
+                "critical": "🔴",
+                "high": "🟠",
+                "medium": "🟡",
+            }.get(severity, "⚪")
+            parts.append(
+                f"| `{i.file}` | {line_ref} | {issue_type} "
+                f"| {severity_icon} {severity.capitalize()} | {i.title} | {i.confidence}/10 |"
+            )
+        parts.append("")
+        parts.append("</details>")
+        parts.append("")
+
+    # ── False positives (reviewer marked as false) ─────────────────────────────
+    false_positives = [
+        i for i in open_issues + new_issues
+        if getattr(i, "classification", None) == "false"
+    ]
+    if false_positives:
+        parts.append("<details>")
+        parts.append(
+            f"<summary>✂️ False Positives ({len(false_positives)})</summary>"
+        )
+        parts.append("")
+        parts.append(
+            "*These findings were investigated by the judge and determined to be "
+            "incorrect or not real issues.*"
+        )
+        parts.append("")
+        parts.append("| File | Line | Type | Severity | Title | Confidence |")
+        parts.append("|------|------|------|----------|-------|------------|")
+        for i in false_positives:
+            line_ref = (
+                f"{i.line_start}"
+                if not i.line_end or i.line_end == i.line_start
+                else f"{i.line_start}–{i.line_end}"
+            )
+            issue_type = getattr(i, "issue_type", None) or "Potential issue"
+            severity = getattr(i, "severity", "medium") or "medium"
+            severity_icon = {
+                "critical": "🔴",
+                "high": "🟠",
+                "medium": "🟡",
+            }.get(severity, "⚪")
+            drop_reason = getattr(i, "drop_reason", None)
+            reason_str = f" — {drop_reason}" if drop_reason else ""
+            parts.append(
+                f"| `{i.file}` | {line_ref} | {issue_type} "
+                f"| {severity_icon} {severity.capitalize()} | {i.title}{reason_str} | {i.confidence}/10 |"
+            )
+        parts.append("")
+        parts.append("</details>")
+        parts.append("")
+
     # ── Positive findings ─────────────────────────────────────────────────────
     if review.positive_findings:
         parts.append("<details>")
@@ -587,6 +738,16 @@ def format_review_summary(
     for line in _render_static_section(lint_issues):
         parts.append(line)
 
+    # ── Prompt For AI Agent ────────────────────────────────────────────────────
+    combined_prompt = build_ai_prompt_for_review(review)
+    if combined_prompt:
+        parts.extend(
+            _render_ai_prompt_toggle(
+                "Prompt for AI Agent",
+                combined_prompt,
+            )
+        )
+
     # ── Debug section ─────────────────────────────────────────────────────────
     if raw_agent_outputs or debug_info:
         for line in _render_debug_section(raw_agent_outputs or {}, debug_info or {}):
@@ -597,7 +758,7 @@ def format_review_summary(
     parts.append("")
     parts.append(
         f"*🤖 Generated by [BugViper](https://github.com/Pavel401/BugViper)"
-        f" | Powered by `{config.synthesis_model}`*"
+        f" | Powered by `{_model_label(debug_info)}`*"
     )
 
     return "\n".join(parts)
@@ -626,7 +787,7 @@ def format_github_comment(
     # ── Header ────────────────────────────────────────────────────────────────
     parts.append("## 🐍 BugViper AI Code Review")
     parts.append("")
-    parts.append(f"**PR**: #{pr_number} | **Model**: {config.synthesis_model}")
+    parts.append(f"**PR**: #{pr_number} | **Model**: {_model_label(debug_info)}")
     parts.append("")
 
     run_summary_parts = []
@@ -721,6 +882,27 @@ def format_github_comment(
         parts.append("</details>")
         parts.append("")
 
+    # ── False positives (judge marked as false) ────────────────────────────────
+    false_positives = [
+        i for i in open_issues + new_issues
+        if getattr(i, "classification", None) == "false"
+    ]
+    if false_positives:
+        parts.append("<details>")
+        parts.append(
+            f"<summary>✂️ False Positives ({len(false_positives)})</summary>"
+        )
+        parts.append("")
+        parts.append(
+            "*These findings were investigated by the judge and determined to be "
+            "incorrect or not real issues.*"
+        )
+        parts.append("")
+        for line in _render_issues_by_file(false_positives):
+            parts.append(line)
+        parts.append("</details>")
+        parts.append("")
+
     if not fixed_issues and not open_issues and not new_issues:
         parts.append("✅ **BugViper found no issues.**")
         parts.append("")
@@ -756,77 +938,7 @@ def format_github_comment(
     parts.append("")
     parts.append(
         f"*🤖 Generated by [BugViper](https://github.com/Pavel401/BugViper)"
-        f" | Powered by {config.synthesis_model}*"
+        f" | Powered by `{_model_label(debug_info)}`*"
     )
-
-    return "\n".join(parts)
-
-
-def format_pr_description(
-    review: ReconciledReview,
-    walk_through: list[str] | None = None,
-) -> str:
-    """Format a CodeRabbit-style PR description summary.
-
-    This is designed to be appended to the PR body, providing a high-level
-    overview of changes grouped by category (New Features, Bug Fixes, etc.).
-    """
-    parts: list[str] = []
-
-    parts.append("<!-- This is an auto-generated comment: release notes by BugViper -->")
-    parts.append("## Summary by BugViper")
-    parts.append("")
-
-    open_issues = [i for i in review.issues if i.status in ("new", "still_open")]
-    positive_findings = review.positive_findings or []
-
-    categories: dict[str, list[str]] = {}
-
-    if open_issues:
-        bug_fixes = []
-        improvements = []
-        for issue in open_issues:
-            if issue.category in ("bug", "security", "logic_error"):
-                bug_fixes.append(f"{issue.title} in `{issue.file}`")
-            else:
-                improvements.append(f"{issue.title} in `{issue.file}`")
-
-        if bug_fixes:
-            categories["Bug Fixes"] = bug_fixes
-        if improvements:
-            categories["Improvements"] = improvements
-
-    if walk_through:
-        new_features = []
-        for entry in walk_through:
-            if " — " in entry:
-                _, summary = entry.split(" — ", 1)
-                summary = summary.strip()
-                if any(
-                    keyword in summary.lower()
-                    for keyword in ["add", "new", "introduce", "implement"]
-                ):
-                    new_features.append(summary)
-
-        if new_features:
-            categories["New Features"] = new_features
-
-    if positive_findings:
-        categories["Code Quality"] = [f for f in positive_findings[:5]]
-
-    if not categories:
-        categories["Changes"] = (
-            [f"Reviewed {len(walk_through)} file(s)"]
-            if walk_through
-            else ["Minor changes detected"]
-        )
-
-    for category, items in categories.items():
-        parts.append(f"* **{category}**")
-        for item in items:
-            parts.append(f"  * {item}")
-        parts.append("")
-
-    parts.append("<!-- end of auto-generated comment: release notes by BugViper -->")
 
     return "\n".join(parts)

@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { BugViperFullLogo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
+import Link from "next/link";
 
 export const metadata = {
   title: "Third-Party Services — BugViper",
@@ -101,7 +101,7 @@ export default function ThirdPartyServicesPage() {
             Sign in
           </Link>
           <Link href="/login">
-            <Button size="sm" variant="outline">
+            <Button size="sm" variant="neutral">
               Get Started
             </Button>
           </Link>

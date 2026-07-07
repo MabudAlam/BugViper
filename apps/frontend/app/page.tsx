@@ -104,7 +104,7 @@ export default function LandingPage() {
           <span className="font-semibold text-base tracking-tight">BugViper</span>
         </div>
         <Button size="sm" asChild>
-          <Link href={user ? "/repositories" : "/login"}>
+          <Link href={user ? "/dashboard" : "/login"}>
             {user ? (
               <>
                 <LayoutDashboard className="mr-1.5 w-3.5 h-3.5" />
@@ -123,10 +123,10 @@ export default function LandingPage() {
       {/* ── Hero ───────────────────────────────────────────────────────────── */}
       <section className="relative z-10 px-6 pt-20 pb-28 max-w-6xl mx-auto text-center">
         <Badge
-          variant="secondary"
-          className="mb-7 gap-2 border border-white/10 bg-white/5 backdrop-blur-sm text-[oklch(0.985_0_0)] px-3 py-1"
+          variant="neutral"
+          className="mb-7 gap-2 border border-white/10 bg-white/5 backdrop-blur-sm text-foreground px-3 py-1"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-[oklch(0.723_0.219_142.1)] shrink-0" />
+          <span className="w-1.5 h-1.5 rounded-full bg-main shrink-0" />
           AI-powered code review · graph intelligence
         </Badge>
 
@@ -144,14 +144,14 @@ export default function LandingPage() {
 
         <div className="flex items-center justify-center gap-3 flex-wrap">
           <Button size="lg" asChild>
-            <Link href={user ? "/repositories" : "/login"}>
+            <Link href={user ? "/dashboard" : "/login"}>
               {user ? "Go to Dashboard" : "Start Reviewing Free"}
               <ArrowRight className="ml-2 w-4 h-4" />
             </Link>
           </Button>
           <Button
             size="lg"
-            variant="outline"
+            variant="neutral"
             className="border-white/10 bg-white/4 backdrop-blur-sm hover:bg-white/8 hover:border-white/20"
             asChild
           >
@@ -219,8 +219,8 @@ export default function LandingPage() {
       <section className="relative z-10 px-6 py-24 max-w-6xl mx-auto">
         <div className="text-center mb-14">
           <Badge
-            variant="secondary"
-            className="mb-4 border border-white/10 bg-white/5 backdrop-blur-sm text-[oklch(0.985_0_0)]"
+            variant="neutral"
+            className="mb-4 border border-white/10 bg-white/5 backdrop-blur-sm text-foreground"
           >
             Capabilities
           </Badge>
@@ -261,8 +261,8 @@ export default function LandingPage() {
       >
         <div className="text-center mb-14">
           <Badge
-            variant="secondary"
-            className="mb-4 border border-white/10 bg-white/5 backdrop-blur-sm text-[oklch(0.985_0_0)]"
+            variant="neutral"
+            className="mb-4 border border-white/10 bg-white/5 backdrop-blur-sm text-foreground"
           >
             How It Works
           </Badge>
@@ -321,7 +321,7 @@ export default function LandingPage() {
               seconds. No credit card required.
             </p>
             <Button size="lg" asChild>
-              <Link href={user ? "/repositories" : "/login"}>
+              <Link href={user ? "/dashboard" : "/login"}>
                 {user ? "Go to Dashboard" : "Get Started Free"}
                 <ArrowRight className="ml-2 w-4 h-4" />
               </Link>
