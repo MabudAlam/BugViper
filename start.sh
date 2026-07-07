@@ -61,24 +61,36 @@ cleanup() {
         while read -r pid; do
             if kill -0 "$pid" 2>/dev/null; then
                 kill "$pid" 2>/dev/null
+                wait "$pid" 2>/dev/null
             fi
         done < "$PID_FILE"
         rm "$PID_FILE"
     fi
 
-    # Kill any remaining processes
-    pkill -f "uvicorn api.app:app" 2>/dev/null
-    pkill -f "uvicorn code_review_agent.app:app" 2>/dev/null
-    pkill -f "uvicorn lint_service.app:app" 2>/dev/null
-    docker stop bugviper-lint 2>/dev/null
-    pkill -f "next dev" 2>/dev/null
-    pkill -f "ngrok http" 2>/dev/null
+    # Kill any remaining processes on our ports
+    for port in "$API_PORT" "$REVIEW_PORT" "$LINT_HOST_PORT" "$FRONTEND_PORT"; do
+        lsof -ti :"$port" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    done
+
+    docker stop bugviper-lint 2>/dev/null || true
 
     echo -e "${GREEN}All services stopped.${NC}"
     exit 0
 }
 
 trap cleanup SIGINT SIGTERM
+
+# Kill existing processes on all ports before starting
+kill_port() {
+    local port=$1
+    local pids
+    pids=$(lsof -ti :"$port" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo -e "  Killing existing process on port $port (PID: $(echo $pids | tr '\n' ' '))"
+        echo "$pids" | xargs kill -9 2>/dev/null || true
+        sleep 0.5
+    fi
+}
 
 # Check if ngrok is installed
 if ! command -v ngrok &> /dev/null; then
@@ -117,9 +129,10 @@ fi
 
 # Start API
 echo -e "${BLUE}[1/6] Starting API server...${NC}"
+kill_port "$API_PORT"
 cd "$PROJECT_ROOT"
 
-source .venv/bin/activate && uvicorn api.app:app --host 0.0.0.0 --port "$API_PORT" --reload --reload-dir "$PROJECT_ROOT/src/api" --reload-dir "$PROJECT_ROOT/src/common" > "$PROJECT_ROOT/logs/api.log" 2>&1 &
+source .venv/bin/activate && uvicorn api.app:app --host 0.0.0.0 --port "$API_PORT" --reload --reload-dir "$PROJECT_ROOT/src/api" --reload-dir "$PROJECT_ROOT/src/common" --reload-dir "$PROJECT_ROOT/src/ncodereview" > "$PROJECT_ROOT/logs/api.log" 2>&1 &
 API_PID=$!
 echo $API_PID >> "$PID_FILE"
 echo -e "${GREEN}✓ API started (PID: $API_PID)${NC}"
@@ -127,6 +140,7 @@ echo -e "  Log file: logs/api.log"
 
 # Start Review Service
 echo -e "\n${BLUE}[2/6] Starting Review Service...${NC}"
+kill_port "$REVIEW_PORT"
 cd "$PROJECT_ROOT"
 
 source .venv/bin/activate && uvicorn code_review_agent.app:app --host 0.0.0.0 --port "$REVIEW_PORT" --reload --reload-dir "$PROJECT_ROOT/src/ncodereview" --reload-dir "$PROJECT_ROOT/src/common" > "$PROJECT_ROOT/logs/review.log" 2>&1 &
@@ -137,6 +151,7 @@ echo -e "  Log file: logs/review.log"
 
 # Start Lint Service (Docker)
 echo -e "\n${BLUE}[3/6] Starting Lint Service (Docker)...${NC}"
+kill_port "$LINT_HOST_PORT"
 if command -v docker &> /dev/null && docker info &> /dev/null 2>&1; then
     # Stop any existing container
     docker stop bugviper-lint 2>/dev/null
@@ -168,6 +183,7 @@ fi
 
 # Start Frontend
 echo -e "\n${BLUE}[4/6] Starting Frontend...${NC}"
+kill_port "$FRONTEND_PORT"
 if [ "$FRONTEND_AVAILABLE" = true ]; then
     cd "$PROJECT_ROOT/apps/frontend"
 
