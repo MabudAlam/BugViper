@@ -25,6 +25,10 @@ class FirebaseUserData(BaseModel):
     photo_url: Optional[str] = Field(None, serialization_alias="photoURL")
     last_login: Optional[str] = Field(None, serialization_alias="lastLogin")
     created_at: Optional[str] = Field(None, serialization_alias="createdAt")
+    github_installation_id: Optional[int] = Field(None, serialization_alias="githubInstallationId")
+    github_account_id: Optional[int] = Field(None, serialization_alias="githubAccountId")
+    account_type: Optional[str] = Field(None, serialization_alias="accountType")
+    repository_selection: Optional[str] = Field(None, serialization_alias="repositorySelection")
 
 
 class FirebaseUserProfile(BaseModel):
@@ -38,6 +42,9 @@ class FirebaseUserProfile(BaseModel):
     github_username: Optional[str] = Field(None, serialization_alias="githubUsername")
     photo_url: Optional[str] = Field(None, serialization_alias="photoURL")
     created_at: Optional[str] = Field(None, serialization_alias="createdAt")
+    github_installation_id: Optional[int] = Field(None, serialization_alias="githubInstallationId")
+    account_type: Optional[str] = Field(None, serialization_alias="accountType")
+    repository_selection: Optional[str] = Field(None, serialization_alias="repositorySelection")
 
 
 class RepoMetadata(BaseModel):
@@ -170,3 +177,21 @@ class ReviewRunData(BaseModel):
     started_at: Optional[str] = Field(None, serialization_alias="startedAt")
     ended_at: Optional[str] = Field(None, serialization_alias="endedAt")
     duration_seconds: Optional[float] = Field(None, serialization_alias="durationSeconds")
+
+
+class PendingInstallation(BaseModel):
+    """Pending GitHub App installation, stored until user signs up and it's linked.
+
+    Document path: pending_installations/{github_username}
+    Auto-expires via Firestore TTL on expiresAt field (30 days).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    github_username: str = Field(serialization_alias="githubUsername")
+    github_installation_id: int = Field(serialization_alias="githubInstallationId")
+    github_account_id: int = Field(serialization_alias="githubAccountId")
+    account_type: str = Field(serialization_alias="accountType")
+    repository_selection: Optional[str] = Field(None, serialization_alias="repositorySelection")
+    created_at: str = Field(serialization_alias="createdAt")
+    expires_at: str = Field(serialization_alias="expiresAt")
