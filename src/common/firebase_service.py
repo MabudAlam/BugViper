@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel
 
+from api.models.config import ModelConfig
 from common.firebase_init import _initialize_firebase
 from common.firebase_models import (
     FirebaseUserData,
@@ -362,7 +363,10 @@ class BugViperFirebaseService:
 
         logger.info(
             "Marked review running: %s/%s#%s (uid=%s)",
-            owner, repo, pr_number, uid,
+            owner,
+            repo,
+            pr_number,
+            uid,
         )
 
     def mark_review_completed(
@@ -405,31 +409,42 @@ class BugViperFirebaseService:
         run_ref = pr_ref.collection("reviews").document(run_id)
         run_ref.set({**run_dict, "runNumber": run_number, "createdAt": now})
 
-        pr_ref.update({
-            "reviewStatus": PrReviewStatus.COMPLETED.value,
-            "reviewCount": run_number,
-            "openIssueCount": open_issue_count,
-            "totalIssuesRaised": (
-                (existing_runs[0].to_dict().get("issuesCount", 0) * (run_number - 1) + issues_count)
-                if run_number > 1
-                else issues_count
-            ),
-            "totalPositives": (
-                (existing_runs[0].to_dict().get("positivesCount", 0)
-                * (run_number - 1) + positives_count)
-                if run_number > 1
-                else positives_count
-            ),
-            "lastReviewType": review_type,
-            "lastReviewedSha": base_sha if review_type == "full_review" else head_sha,
-            "lastReviewBaseSha": base_sha,
-            "lastReviewedAt": now,
-            "updatedAt": now,
-        })
+        pr_ref.update(
+            {
+                "reviewStatus": PrReviewStatus.COMPLETED.value,
+                "reviewCount": run_number,
+                "openIssueCount": open_issue_count,
+                "totalIssuesRaised": (
+                    (
+                        existing_runs[0].to_dict().get("issuesCount", 0) * (run_number - 1)
+                        + issues_count
+                    )
+                    if run_number > 1
+                    else issues_count
+                ),
+                "totalPositives": (
+                    (
+                        existing_runs[0].to_dict().get("positivesCount", 0) * (run_number - 1)
+                        + positives_count
+                    )
+                    if run_number > 1
+                    else positives_count
+                ),
+                "lastReviewType": review_type,
+                "lastReviewedSha": base_sha if review_type == "full_review" else head_sha,
+                "lastReviewBaseSha": base_sha,
+                "lastReviewedAt": now,
+                "updatedAt": now,
+            }
+        )
 
         logger.info(
             "Marked review completed: %s/%s#%s run=%s issues=%d",
-            owner, repo, pr_number, run_id, issues_count,
+            owner,
+            repo,
+            pr_number,
+            run_id,
+            issues_count,
         )
         return run_id
 
@@ -725,6 +740,33 @@ class BugViperFirebaseService:
             fixed_count = sum(1 for i in validated_issues if i.get("status") == "fixed")
             logger.info(f"Updated {fixed_count} fixed issues in previous run")
 
+    def get_review_run(
+        self,
+        uid: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        run_number: int,
+    ) -> Optional[dict]:
+        """Fetch a specific review run by run number.
+
+        Returns None if the run doesn't exist.
+        """
+        repo_key = f"{owner}_{repo}"
+        run_id = f"run_{run_number}"
+        doc = (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("prs")
+            .document(str(pr_number))
+            .collection("reviews")
+            .document(run_id)
+            .get()
+        )
+        return doc.to_dict() if doc.exists else None
+
     # ── Customer support ──────────────────────────────────────────────────
 
     def save_customer_query(
@@ -803,6 +845,22 @@ class BugViperFirebaseService:
 
         return run
 
+    def setModelConfig(self, uid: str, model_config: ModelConfig) -> None:
+        """
+        Save the user's model configuration to Firestore.
+        """
+
+        if not isinstance(model_config, ModelConfig):
+            raise ValueError("model_config must be an instance of ModelConfig")
+
+        repo_ref = self._db.collection("users").document(uid)
+
+        if not repo_ref.get().exists:
+            raise ValueError(f"User with uid {uid} does not exist in Firestore")
+        
+        else:
+            repo_ref.update({"modelConfig": _to_dict(model_config)})
+            logger.info(f"Saved model configuration for user {uid}")
 
 _firebase_db = _initialize_firebase()
 firebase_service = BugViperFirebaseService(_firebase_db)
