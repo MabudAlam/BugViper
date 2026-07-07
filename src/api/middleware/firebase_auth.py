@@ -30,9 +30,8 @@ class FirebaseAuthMiddleware:
     """
     Pure ASGI middleware that verifies Firebase ID tokens on every request.
 
-    Using a pure ASGI middleware (not BaseHTTPMiddleware) so that FastAPI's
-    BackgroundTasks are not swallowed — BaseHTTPMiddleware has a known
-    limitation where background tasks do not run.
+    Using a pure ASGI middleware (not BaseHTTPMiddleware) for reliable
+    request handling.
 
     Flow:
         1. Non-HTTP scope (lifespan, websocket) → pass through unchanged.
