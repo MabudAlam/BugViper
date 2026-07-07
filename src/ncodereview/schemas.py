@@ -37,6 +37,10 @@ class SubagentReviewPayload(BaseModel):
 
     issues: list[SubagentReviewIssue] = Field(default_factory=list)
     positives: list[AgentPositiveFinding] = Field(default_factory=list)
+    walkthrough: list[FileBasedWalkthrough] = Field(
+        default_factory=list,
+        description="One-sentence summary per changed file.",
+    )
 
 
 class FinalReviewOutput(BaseModel):
