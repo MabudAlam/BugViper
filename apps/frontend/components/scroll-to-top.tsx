@@ -34,12 +34,11 @@ export function ScrollToTop() {
   return (
     <Button
       type="button"
-      size="icon-lg"
+      size="icon"
       aria-label="Scroll to top"
       onClick={scrollToTop}
       className={cn(
-        "fixed bottom-4 right-4 z-50 rounded-full shadow-lg transition-all duration-200 ease-out sm:bottom-6 sm:right-6",
-        "focus-visible:ring-primary/40",
+        "fixed bottom-4 right-4 z-50 rounded-full transition-all duration-200 ease-out sm:bottom-6 sm:right-6",
         isVisible
           ? "translate-y-0 opacity-100"
           : "pointer-events-none translate-y-3 opacity-0"
