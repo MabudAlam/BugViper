@@ -1,382 +1,435 @@
-"""Tests for ncodereview.call_graph + common.diff_parser line-snapping."""
+"""Tests for the call graph builder."""
 
-from __future__ import annotations
+import sys
+from pathlib import Path
 
-import pytest
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from common.diff_parser import (
-    calculate_comment_line,
-    extract_valid_diff_lines,
-    snap_lines_to_diff,
-    split_diff_by_file,
-)
-from ncodereview.call_graph import (
-    CallGraph,
-    _find_caller,
-    build_call_graph,
-    format_call_graph,
-    parse_file,
-)
+from knowledge_parser.call_graph import analyze_pr_call_graph, render_callgraph_markdown
 
 
-class TestParseFileGo:
-    def test_go_functions_and_calls(self) -> None:
-        source = """\
-package main
-
-import "fmt"
-
-func main() {
-    result := processUser(42)
-    fmt.Println(result)
-}
-
-func processUser(id int) string {
-    name := fetchFromDB(id)
-    return formatResponse(name)
-}
-
-func fetchFromDB(id int) string {
-    return "user-" + strconv.Itoa(id)
-}
-
-func formatResponse(name string) string {
-    return fmt.Sprintf("Hello, %s", name)
-}
-"""
-        pf = parse_file("internal/api/handlers/user.go", source)
-        assert pf.error is None, pf.error
-        assert pf.language == "go"
-
-        func_names = [f.name for f in pf.functions]
-        assert "main" in func_names
-        assert "processUser" in func_names
-        assert "fetchFromDB" in func_names
-        assert "formatResponse" in func_names
-
-        call_names = [c.name for c in pf.call_sites]
-        assert "processUser" in call_names
-        assert "fetchFromDB" in call_names
-        assert "formatResponse" in call_names
-        has_println = "Println" in call_names
-        assert has_println
-
-    def test_go_line_numbers_correct(self) -> None:
-        source = """\
-package main
-
-func add(a, b int) int {
-    return a + b
-}
-
-func multiply(a, b int) int {
-    return a * b
-}
-
-func compute(x, y int) int {
-    return add(x, y) + multiply(x, y)
-}
-"""
-        pf = parse_file("calc.go", source)
-        assert pf.error is None
-
-        compute_func = next(f for f in pf.functions if f.name == "compute")
-        assert compute_func.line_number == 11
-        assert compute_func.end_line == 13
-
-        compute_calls = [
-            c for c in pf.call_sites
-            if _find_caller("calc.go", pf.functions, c) is not None
-        ]
-        assert len(compute_calls) == 2
-
-
-class TestBuildCallGraph:
-    def test_resolves_internal_calls(self) -> None:
-        handler = """\
-package handler
-
-func RateLimitMiddlewareGin(c *Context) {
-    if !Allow(c) {
-        return
+def _make_ast(files):
+    """Build a minimal ast_data dict from a list of file specs."""
+    return {
+        "files": files,
+        "statistics": {"files_parsed": len(files)},
     }
-    clientIP := getClientIPGin(c)
-    _ = clientIP
-}
 
-func Allow(c *Context) bool {
-    return true
-}
 
-func getClientIPGin(c *Context) string {
-    return c.Request.IP
-}
-"""
-        urlutils = """\
-package urlutils
-
-func ValidateURL(rawURL string) error {
-    if !ValidateSafeURL(rawURL) {
-        return ErrInvalidURL
+def _file(
+    path, language="typescript", functions=None, classes=None, imports_=None, function_calls=None
+):
+    return {
+        "path": path,
+        "language": language,
+        "functions": functions or [],
+        "classes": classes or [],
+        "imports": imports_ or [],
+        "function_calls": function_calls or [],
     }
-    return nil
-}
 
-func ValidateSafeURL(rawURL string) bool {
-    if isBlockedIP(rawURL) {
-        return false
+
+def _fn(name, line, end_line=None, class_context=None):
+    return {
+        "name": name,
+        "line_number": line,
+        "end_line": end_line,
+        "class_context": class_context,
+        "args": [],
+        "lang": "typescript",
     }
-    return true
-}
 
-func isBlockedIP(rawURL string) bool {
-    return false
-}
-"""
-        pr_files = {
-            "internal/api/middleware/ratelimit.go": handler,
-            "internal/utils/url.go": urlutils,
-        }
-        graph = build_call_graph(pr_files)
 
-        assert len(graph.nodes) >= 5
+def _cls(name, line):
+    return {
+        "name": name,
+        "line_number": line,
+        "bases": [],
+        "decorators": [],
+        "lang": "typescript",
+    }
 
-        allow_node = next(
-            (n for n in graph.nodes.values() if n.name == "Allow"), None
-        )
-        assert allow_node is not None
 
-        rate_limit_calls_allow = [
-            e for e in graph.calls
-            if e.caller == "RateLimitMiddlewareGin" and e.callee == "Allow"
+def _imp(name, source, alias=None):
+    return {
+        "name": name,
+        "source": source,
+        "alias": alias,
+        "line_number": 1,
+        "lang": "typescript",
+    }
+
+
+def _call(name, full_name, line, ctx=None, args=None):
+    return {
+        "name": name,
+        "full_name": full_name,
+        "line_number": line,
+        "args": args or [],
+        "inferred_obj_type": None,
+        "context": ctx or [None, None, None],
+        "class_context": [None, None],
+        "lang": "typescript",
+        "is_dependency": False,
+    }
+
+
+def test_local_function_call():
+    """Function calling another function in same file."""
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[
+                    _fn("foo", 1, end_line=10),
+                    _fn("bar", 5, end_line=8),
+                ],
+                function_calls=[
+                    _call("bar", "bar()", 3, ctx=["foo", "function_declaration", 1]),
+                ],
+            )
         ]
-        assert len(rate_limit_calls_allow) == 1
-        assert rate_limit_calls_allow[0].resolved is True
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts"])
+    assert len(g["per_file"]["a.ts"]["internal_calls"]) == 1
+    edge = g["per_file"]["a.ts"]["internal_calls"][0]
+    assert edge["callee"] == "bar"
+    assert edge["callee_file"] == "a.ts"
+    assert edge["resolution"] == "local"
+    print("PASS: test_local_function_call")
 
-        validate_calls_safe = [
-            e for e in graph.calls
-            if e.caller == "ValidateURL" and e.callee == "ValidateSafeURL"
+
+def test_imported_function_call():
+    """Function calling another from imported module."""
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[_fn("foo", 1, end_line=10)],
+                imports_=[_imp("fooFn", "./b")],
+                function_calls=[
+                    _call("fooFn", "fooFn()", 3, ctx=["foo", "function_declaration", 1]),
+                ],
+            ),
+            _file("b.ts", functions=[_fn("fooFn", 1, end_line=10)]),
         ]
-        assert len(validate_calls_safe) == 1
-        assert validate_calls_safe[0].resolved is True
-
-    def test_cross_file_calls(self) -> None:
-        handler = """\
-package handler
-
-import "internal/scrape"
-
-func Scrape(url string) string {
-    return scrape.Fetch(url)
-}
-"""
-        scrape_pkg = """\
-package scrape
-
-func Fetch(url string) string {
-    return "content"
-}
-"""
-        graph = build_call_graph({
-            "handler.go": handler,
-            "scrape/scrape.go": scrape_pkg,
-        })
-
-        scrape_fetch_calls = [e for e in graph.calls if e.callee == "Fetch"]
-        assert len(scrape_fetch_calls) == 1
-        assert scrape_fetch_calls[0].resolved is True
-
-    def test_no_false_positives_on_empty_files(self) -> None:
-        graph = build_call_graph({})
-        assert len(graph.nodes) == 0
-        assert len(graph.calls) == 0
-
-    def test_skips_external_unresolved_calls(self) -> None:
-        source = """\
-package main
-
-import "fmt"
-
-func main() {
-    fmt.Println("hello")
-    result := externalCall()
-    _ = result
-}
-"""
-        graph = build_call_graph({"main.go": source})
-
-        external = [e for e in graph.calls if e.callee == "externalCall"]
-        assert len(external) == 1
-        assert external[0].resolved is False
+    )
+    # Both files in PR so the cross-file call is internal
+    g = analyze_pr_call_graph(ast, ["a.ts", "b.ts"])
+    assert len(g["per_file"]["a.ts"]["internal_calls"]) == 1
+    edge = g["per_file"]["a.ts"]["internal_calls"][0]
+    # fooFn may resolve via import (imported) or via global (pr_global)
+    assert edge["callee_file"] == "b.ts"
+    assert edge["callee_line"] == 1
+    assert edge["resolution"] in ("imported", "pr_global")
+    print("PASS: test_imported_function_call")
 
 
-class TestFormatCallGraph:
-    def test_contains_function_list(self) -> None:
-        source = """\
-package main
-
-func alpha() {}
-func beta() {}
-"""
-        graph = build_call_graph({"main.go": source})
-        output = format_call_graph(graph)
-
-        assert "alpha" in output
-        assert "beta" in output
-        assert "main.go" in output
-
-    def test_contains_no_calls_placeholder(self) -> None:
-        source = """\
-package main
-
-func lone() {}
-"""
-        graph = build_call_graph({"main.go": source})
-        output = format_call_graph(graph)
-
-        assert "lone" in output
-        assert "no calls" in output.lower()
+def test_incoming_call():
+    """External file calling PR file's function via import."""
+    ast = _make_ast(
+        [
+            _file("a.ts", functions=[_fn("helper", 1, end_line=10)]),
+            _file(
+                "b.ts",
+                functions=[_fn("foo", 1, end_line=10)],
+                imports_=[_imp("helper", "./a")],
+                function_calls=[
+                    _call("helper", "helper()", 3, ctx=["foo", "function_declaration", 1]),
+                ],
+            ),
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts"])
+    # b.ts is NOT in PR, a.ts IS in PR, so helper call from b -> a is incoming
+    assert len(g["per_file"]["a.ts"]["incoming_calls"]) == 1
+    edge = g["per_file"]["a.ts"]["incoming_calls"][0]
+    assert edge["caller_file"] == "b.ts"
+    assert edge["callee_file"] == "a.ts"
+    assert edge["callee"] == "helper"
+    assert edge["resolution"] == "imported"
+    print("PASS: test_incoming_call")
 
 
-class TestFindCaller:
-    def test_finds_caller_by_line_range(self) -> None:
-        source = """\
-package main
-
-func outer() {
-    inner()
-    inner()
-}
-
-func inner() {}
-"""
-        pf = parse_file("main.go", source)
-        inner_calls = [c for c in pf.call_sites if c.name == "inner"]
-
-        assert len(inner_calls) == 2
-        for call in inner_calls:
-            caller = _find_caller("main.go", pf.functions, call)
-            assert caller is not None
-            assert "outer" in caller
-
-
-_DIFF = (
-    "diff --git a/internal/api/handlers/handler.go b/internal/api/handlers/handler.go\n"
-    "--- a/internal/api/handlers/handler.go\n"
-    "+++ b/internal/api/handlers/handler.go\n"
-    "@@ -519,5 +519,7 @@ func (h *Handler) Brand(c *gin.Context) {\n"
-    " if req.URL == \"\" {\n"
-    " \t\treturn\n"
-    " }\n"
-    "+\t// SSRF: validates nothing about the URL\n"
-    "+\t// before passing it to scraper.FetchBrand\n"
-    " ctx := c.Request.Context()\n"
-    " scraper := h.State.CoreScraper\n"
-    "diff --git a/internal/api/middleware/gin_middleware.go b/internal/api/middleware/gin_middleware.go\n"
-    "--- a/internal/api/middleware/gin_middleware.go\n"
-    "+++ b/internal/api/middleware/gin_middleware.go\n"
-    "@@ -90,3 +92,5 @@ func CORSMiddlewareGin() gin.HandlerFunc {\n"
-    " \t\tc.AbortWithStatus(http.StatusOK)\n"
-    "+\t\t// also reflect arbitrary Origin without allowlist\n"
-    "+\t\t// with credentials enabled\n"
-    " \t\treturn\n"
-    " }\n"
-)
-
-_PATCHES = split_diff_by_file(_DIFF)
-_HANDLER_PATCH = _PATCHES["internal/api/handlers/handler.go"]
-_MIDDLEWARE_PATCH = _PATCHES["internal/api/middleware/gin_middleware.go"]
+def test_method_call_resolution():
+    """Method call on imported object should resolve to import source."""
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[_fn("foo", 1, end_line=10)],
+                imports_=[_imp("store", "./store")],
+                function_calls=[
+                    _call("update", "store.update()", 3, ctx=["foo", "function_declaration", 1]),
+                ],
+            ),
+            _file(
+                "store.ts",
+                functions=[
+                    _fn("update", 1, end_line=10),
+                    _fn("set", 5, end_line=15),
+                ],
+            ),
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts", "store.ts"])
+    edge = g["per_file"]["a.ts"]["internal_calls"][0]
+    assert edge["callee_file"] == "store.ts"
+    assert edge["callee"] == "update"
+    print("PASS: test_method_call_resolution")
 
 
-class TestSplitDiffByFile:
-    def test_splits_into_two_files(self) -> None:
-        assert set(_PATCHES.keys()) == {
-            "internal/api/handlers/handler.go",
-            "internal/api/middleware/gin_middleware.go",
-        }
-
-    def test_each_patch_contains_its_hunks(self) -> None:
-        assert "@@ -519,5" in _HANDLER_PATCH
-        assert "@@ -90,3" in _MIDDLEWARE_PATCH
-        assert "@@ -519,5" not in _MIDDLEWARE_PATCH
-
-
-class TestExtractValidDiffLines:
-    def test_handler_single_hunk(self) -> None:
-        ranges = extract_valid_diff_lines(_HANDLER_PATCH)
-        assert ranges == [(519, 525)]
-
-    def test_middleware_single_hunk(self) -> None:
-        ranges = extract_valid_diff_lines(_MIDDLEWARE_PATCH)
-        assert ranges == [(92, 96)]
-
-    def test_empty_patch_returns_empty(self) -> None:
-        assert extract_valid_diff_lines("") == []
-        assert extract_valid_diff_lines(None) == []
-
-    def test_no_newline_marker_is_skipped(self) -> None:
-        patch = (
-            "diff --git a/x b/x\n"
-            "--- a/x\n+++ b/x\n"
-            "@@ -1,2 +1,3 @@\n"
-            " a\n"
-            "+b\n"
-            " c\n"
-            "\\ No newline at end of file\n"
-        )
-        ranges = extract_valid_diff_lines(patch)
-        assert ranges == [(1, 3)]
-
-    def test_two_hunks_yield_two_ranges(self) -> None:
-        patch = (
-            "diff --git a/x b/x\n"
-            "--- a/x\n+++ b/x\n"
-            "@@ -1,2 +1,3 @@\n"
-            " a\n+b\n c\n"
-            "@@ -10,2 +10,3 @@\n"
-            " d\n+e\n f\n"
-        )
-        ranges = extract_valid_diff_lines(patch)
-        assert ranges == [(1, 3), (10, 12)]
+def test_builtin_call_not_resolved():
+    """Built-in calls should not be resolved to PR files."""
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[_fn("foo", 1, end_line=10)],
+                function_calls=[
+                    _call("log", "console.log()", 3, ctx=["foo", "function_declaration", 1]),
+                    _call("parseInt", "parseInt('1')", 5, ctx=["foo", "function_declaration", 1]),
+                    _call(
+                        "getItem",
+                        "localStorage.getItem('x')",
+                        7,
+                        ctx=["foo", "function_declaration", 1],
+                    ),
+                ],
+            ),
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts"])
+    # None should be classified as internal (these are all builtins)
+    assert len(g["per_file"]["a.ts"]["internal_calls"]) == 0
+    print("PASS: test_builtin_call_not_resolved")
 
 
-class TestSnapLinesToDiff:
-    def test_in_range_passes_through(self) -> None:
-        ranges = [(519, 525), (90, 96)]
-        result = snap_lines_to_diff(521, 521, ranges)
-        assert result == (521, 521)
-
-    def test_overlap_clips_to_range(self) -> None:
-        ranges = [(519, 525)]
-        result = snap_lines_to_diff(518, 530, ranges)
-        assert result == (519, 525)
-
-    def test_no_overlap_snaps_to_nearest(self) -> None:
-        ranges = [(519, 525), (90, 96)]
-        result = snap_lines_to_diff(700, 705, ranges)
-        assert result is not None
-        snapped_start, _ = result
-        assert snapped_start in range(519, 526)
-
-    def test_no_ranges_returns_none(self) -> None:
-        assert snap_lines_to_diff(42, 42, []) is None
-
-    def test_none_start_falls_back_to_first_range(self) -> None:
-        ranges = [(10, 15), (50, 55)]
-        result = snap_lines_to_diff(None, None, ranges)
-        assert result == (10, 15)
+def test_frequency_aggregation():
+    """Multiple calls to same function should aggregate by frequency."""
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[
+                    _fn("foo", 1, end_line=20),
+                    _fn("helper", 10, end_line=15),
+                ],
+                function_calls=[
+                    _call("helper", "helper()", 3, ctx=["foo", "function_declaration", 1]),
+                    _call("helper", "helper()", 5, ctx=["foo", "function_declaration", 1]),
+                    _call("helper", "helper()", 7, ctx=["foo", "function_declaration", 1]),
+                ],
+            )
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts"])
+    edge = g["per_file"]["a.ts"]["internal_calls"][0]
+    assert edge["frequency"] == 3
+    assert len(edge["call_sites"]) <= 5
+    print("PASS: test_frequency_aggregation")
 
 
-class TestCalculateCommentLine:
-    def test_single_line_returns_start(self) -> None:
-        assert calculate_comment_line(42, 42) == 42
+def test_no_false_positive_for_chained_call():
+    """createHash().update() should not resolve to a PR-defined update()."""
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[_fn("foo", 1, end_line=20), _fn("update", 10, end_line=15)],
+                function_calls=[
+                    _call(
+                        "update",
+                        'createHash("sha256").update(key)',
+                        5,
+                        ctx=["foo", "function_declaration", 1],
+                    ),
+                ],
+            )
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts"])
+    # Should NOT map update to the local update function
+    assert len(g["per_file"]["a.ts"]["internal_calls"]) == 0
+    print("PASS: test_no_false_positive_for_chained_call")
 
-    def test_none_end_returns_start(self) -> None:
-        assert calculate_comment_line(42, None) == 42
 
-    def test_small_range_returns_end(self) -> None:
-        assert calculate_comment_line(42, 45) == 45
+def test_side_effect_import_does_not_resolve_bare_calls():
+    """Side-effect imports (`import 'x'`) don't bind any local symbol.
 
-    def test_oversized_range_collapses_to_start(self) -> None:
-        assert calculate_comment_line(42, 100) == 42
-        assert calculate_comment_line(42, 60) == 42
+    A bare call to a function that lives in the side-effect-imported
+    module cannot be linked without a real local binding - so it is
+    dropped from the call graph.
+    """
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[_fn("foo", 1, end_line=20)],
+                imports_=[_imp("@/lib/utils", "@/lib/utils")],
+                function_calls=[
+                    _call("addOne", "addOne(1)", 3, ctx=["foo", "function_declaration", 1]),
+                ],
+            ),
+            _file("lib/utils.ts", functions=[_fn("addOne", 1, end_line=10)]),
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts", "lib/utils.ts"])
+    assert len(g["per_file"]["a.ts"]["internal_calls"]) == 0
+    print("PASS: test_side_effect_import_does_not_resolve_bare_calls")
+
+
+def test_drops_unresolved_cross_file_bare_call():
+    """Bare cross-file call without an import is dropped.
+
+    The caller has no import for `helper` and no receiver on the call -
+    this is the kind of name-collision guess we can't trust.
+    """
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[_fn("main", 1, end_line=20)],
+                function_calls=[
+                    _call("helper", "helper()", 3, ctx=["main", "function_declaration", 1]),
+                ],
+            ),
+            _file("b.ts", functions=[_fn("helper", 1, end_line=10)]),
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts", "b.ts"])
+    # No import in a.ts for helper, no receiver, no proof of linkage -
+    # the bare-name fallback (pr_global) is filtered out.
+    assert len(g["per_file"]["a.ts"]["internal_calls"]) == 0
+    print("PASS: test_drops_unresolved_cross_file_bare_call")
+
+
+def test_no_pr_files_returns_empty():
+    """No PR files should produce empty per_file."""
+    ast = _make_ast(
+        [
+            _file("a.ts", functions=[_fn("foo", 1, end_line=10)]),
+        ]
+    )
+    g = analyze_pr_call_graph(ast, [])
+    assert g["total_pr_files"] == 0
+    assert g["per_file"] == {}
+    print("PASS: test_no_pr_files_returns_empty")
+
+
+def test_render_callgraph_markdown_basic():
+    """Each method lists its outgoing calls with frequency and file path."""
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[_fn("foo", 1, end_line=10), _fn("bar", 5, end_line=8)],
+                function_calls=[
+                    _call("bar", "bar(x)", 3, ctx=["foo", "function_declaration", 1], args=["x"]),
+                    _call("bar", "bar(x)", 4, ctx=["foo", "function_declaration", 1], args=["x"]),
+                ],
+            ),
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts"])
+    md = render_callgraph_markdown(g)
+    assert "## File: a.ts" in md
+    assert "File has 1 function/method" in md
+    assert "with 1 internal call edge" in md
+    assert "### `foo` at a.ts:1" in md
+    assert "`bar(x)`" in md
+    assert "at `a.ts:5`" in md
+    assert "(x2)" in md
+    print("PASS: test_render_callgraph_markdown_basic")
+
+
+def test_render_callgraph_markdown_incoming():
+    """Incoming edges appear under the callee with their callers listed."""
+    ast = _make_ast(
+        [
+            _file("a.ts", functions=[_fn("helper", 1, end_line=10)]),
+            _file(
+                "b.ts",
+                functions=[_fn("foo", 1, end_line=10)],
+                imports_=[_imp("helper", "./a")],
+                function_calls=[
+                    _call("helper", "helper()", 3, ctx=["foo", "function_declaration", 1]),
+                ],
+            ),
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts"])
+    md = render_callgraph_markdown(g)
+    assert "## File: a.ts" in md
+    assert "1 incoming call edge from outside the PR" in md
+    assert "### `helper` at a.ts:1" in md
+    assert "Called by:" in md
+    assert "`foo` at `b.ts:1`" in md
+    print("PASS: test_render_callgraph_markdown_incoming")
+
+
+def test_render_callgraph_markdown_module_label():
+    """<module> gets humanized to 'module top-level'."""
+    # Use a file with NO enclosing functions so the call stays at <module>.
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[],
+                imports_=[_imp("bar", "./b")],
+                function_calls=[
+                    _call("bar", "bar()", 1, ctx=[None, None, None]),
+                ],
+            ),
+            _file("b.ts", functions=[_fn("bar", 1, end_line=10)]),
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts", "b.ts"])
+    md = render_callgraph_markdown(g)
+    assert "module top-level" in md
+    assert "<module>" not in md
+    print("PASS: test_render_callgraph_markdown_module_label")
+
+
+def test_class_method_resolution_via_this():
+    """Method called on `this` should resolve to current class's method."""
+    ast = _make_ast(
+        [
+            _file(
+                "a.ts",
+                functions=[
+                    _fn("helper", 5, end_line=10, class_context="MyClass"),
+                    _fn("run", 12, end_line=20, class_context="MyClass"),
+                ],
+                classes=[_cls("MyClass", 1)],
+                function_calls=[
+                    _call("helper", "this.helper()", 15, ctx=["run", "method_definition", 12]),
+                ],
+            )
+        ]
+    )
+    g = analyze_pr_call_graph(ast, ["a.ts"])
+    edge = g["per_file"]["a.ts"]["internal_calls"][0]
+    assert edge["callee"] == "helper"
+    assert edge["callee_qualified"] == "MyClass.helper"
+    assert edge["callee_file"] == "a.ts"
+    assert edge["resolution"] in ("this_method", "local_method", "local")
+    print("PASS: test_class_method_resolution_via_this")
+
+
+if __name__ == "__main__":
+    test_local_function_call()
+    test_imported_function_call()
+    test_incoming_call()
+    test_method_call_resolution()
+    test_builtin_call_not_resolved()
+    test_frequency_aggregation()
+    test_no_false_positive_for_chained_call()
+    test_side_effect_import_does_not_resolve_bare_calls()
+    test_drops_unresolved_cross_file_bare_call()
+    test_no_pr_files_returns_empty()
+    test_class_method_resolution_via_this()
+    test_render_callgraph_markdown_basic()
+    test_render_callgraph_markdown_incoming()
+    test_render_callgraph_markdown_module_label()
+    print("\nAll tests passed!")
