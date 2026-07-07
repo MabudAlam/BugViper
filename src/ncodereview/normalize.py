@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from ncodereview.diff import get_changed_line_ranges, overlaps_added_lines, ranges_overlap
+import json
+
+from ncodereview.dedup import deduplicate_issues
+from ncodereview.diff import get_changed_line_ranges, overlaps_added_lines
 
 
 def normalize_and_validate_review_data(
@@ -21,23 +24,34 @@ def normalize_and_validate_review_data(
         normalized = normalize_issue(issue)
         if not normalized:
             continue
-        classification = normalized.get("classification")
-        if classification:
-            seen_judge = True
-            judgment_counts[classification] = judgment_counts.get(classification, 0) + 1
-            # Keep false positives so they appear in the review summary as dropped issues;
-        # they are excluded from inline posting in comment.py but shown in the summary.
-        if classification == "false":
-            pass  # do not skip — show in summary under "false"
+
         file_path = normalized["file"]
+
+        # File not in PR's changed files → outside-diff
         if file_path not in changed_set:
+            normalized["classification"] = "outside-diff"
+            normalized["status"] = "new"
+            filtered.append(normalized)
             continue
+
+        # Line range doesn't overlap with any diff addition → outside-diff
         if not overlaps_added_lines(
             normalized.get("line_start"),
             normalized.get("line_end"),
             added_ranges.get(file_path, []),
         ):
+            normalized["classification"] = "outside-diff"
+            normalized["status"] = "new"
+            filtered.append(normalized)
             continue
+
+        classification = normalized.get("classification")
+        if classification:
+            seen_judge = True
+            judgment_counts[classification] = judgment_counts.get(classification, 0) + 1
+        if classification == "false":
+            pass
+
         if int(normalized.get("confidence", 8)) < 7 and classification != "valid":
             normalized["issue_type"] = "Nitpick"
             normalized["severity"] = "low"
@@ -49,10 +63,17 @@ def normalize_and_validate_review_data(
             continue
         filtered.append(normalized)
 
-    filtered = dedupe_review_issues(filtered)
+    filtered = deduplicate_issues(filtered)
     positives = normalize_positives(review_data.get("positives", []))
     walkthrough = normalize_walkthrough(review_data.get("walkthrough", []), changed_files)
     summary = review_data.get("summary") if isinstance(review_data.get("summary"), str) else ""
+
+    raw_agent_outputs = review_data.get("raw_agent_outputs")
+    if not raw_agent_outputs:
+        raw_agent_outputs = {"orchestrator-output": json.dumps(
+            {k: v for k, v in review_data.items() if k != "raw_agent_outputs"},
+            indent=2, default=str,
+        )}
 
     return {
         "summary": summary,
@@ -62,6 +83,7 @@ def normalize_and_validate_review_data(
         "files_changed": changed_files,
         "_saw_judge_classifications": seen_judge,
         "_judgment_counts": judgment_counts if seen_judge else None,
+        "raw_agent_outputs": raw_agent_outputs,
     }
 
 
@@ -144,30 +166,6 @@ def add_positive_from_issue(review_data: dict, issue: dict) -> None:
     positives.append({"file_path": issue["file"], "positive_finding": [issue["title"]]})
 
 
-def dedupe_review_issues(issues: list[dict]) -> list[dict]:
-    kept: list[dict] = []
-    for issue in sorted(issues, key=lambda item: int(item.get("confidence", 0)), reverse=True):
-        duplicate = False
-        for existing in kept:
-            if int(issue.get("confidence", 8)) < 7 or int(existing.get("confidence", 8)) < 7:
-                continue
-            if (
-                issue["file"] == existing["file"]
-                and issue["category"] == existing["category"]
-                and ranges_overlap(
-                    issue["line_start"],
-                    issue.get("line_end") or issue["line_start"],
-                    existing["line_start"],
-                    existing.get("line_end") or existing["line_start"],
-                )
-            ):
-                duplicate = True
-                break
-        if not duplicate:
-            kept.append(issue)
-    return sorted(kept, key=lambda item: (item["file"], item["line_start"]))
-
-
 def normalize_positives(raw_positives) -> list:
     if not isinstance(raw_positives, list):
         return []
@@ -196,19 +194,17 @@ def positives_to_strings(positives: list) -> list[str]:
 
 def normalize_walkthrough(raw_walkthrough, changed_files: list[str]) -> list[dict]:
     if not isinstance(raw_walkthrough, list):
-        return [{"file": fp, "summary": ""} for fp in changed_files]
+        return []
     seen: set[str] = set()
     out: list[dict] = []
     for item in raw_walkthrough:
         if not isinstance(item, dict):
             continue
         file_path = item.get("file")
-        if isinstance(file_path, str) and file_path:
+        summary = str(item.get("summary") or "")
+        if isinstance(file_path, str) and file_path and summary:
             seen.add(file_path)
-            out.append({"file": file_path, "summary": str(item.get("summary") or "")})
-    for file_path in changed_files:
-        if file_path not in seen:
-            out.append({"file": file_path, "summary": ""})
+            out.append({"file": file_path, "summary": summary})
     return out
 
 
