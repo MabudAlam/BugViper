@@ -455,6 +455,16 @@ class JavascriptLangTreeSitterParser:
                 # Look for different import structures
                 import_clause = node.child_by_field_name("import")
                 if not import_clause:
+                    for child in node.children:
+                        if child.type in (
+                            "import_clause",
+                            "identifier",
+                            "namespace_import",
+                            "named_imports",
+                        ):
+                            import_clause = child
+                            break
+                if not import_clause:
                     imports.append(
                         {
                             "name": source,
@@ -511,6 +521,26 @@ class JavascriptLangTreeSitterParser:
                                     "lang": self.language_name,
                                 }
                             )
+
+                # import_clause wrapping named_imports (JS grammar variation)
+                elif import_clause.type == "import_clause":
+                    for child in import_clause.children:
+                        if child.type == "named_imports":
+                            for specifier in child.children:
+                                if specifier.type == "import_specifier":
+                                    name_node = specifier.child_by_field_name("name")
+                                    alias_node = specifier.child_by_field_name("alias")
+                                    original_name = self._get_node_text(name_node)
+                                    alias = self._get_node_text(alias_node) if alias_node else None
+                                    imports.append(
+                                        {
+                                            "name": original_name,
+                                            "source": source,
+                                            "alias": alias,
+                                            "line_number": line_number,
+                                            "lang": self.language_name,
+                                        }
+                                    )
 
             elif node.type == "call_expression":  # require('...')
                 args = node.child_by_field_name("arguments")
@@ -634,7 +664,7 @@ class JavascriptLangTreeSitterParser:
 
 
 def pre_scan_javascript(files: list[Path], parser_wrapper, repo_path: Path) -> dict:
-    """Scans JavaScript files to create a map of class/function names to their RELATIVE file paths."""
+    """Scans JavaScript files to map class/function names to their relative paths."""
     imports_map = {}
     query_str = """
         (class_declaration name: (identifier) @name)
