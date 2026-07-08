@@ -471,48 +471,63 @@ class GitHubClient:
         last_error: Exception | None = None
         for attempt in attempts:
             a_line = attempt["line"]
-            try:
-                if "start_line" in attempt:
-                    resp = await gh.rest.pulls.async_create_review_comment(
-                        owner, repo, pr_number,
-                        body=body, commit_id=commit_sha, path=path,
-                        line=a_line, start_line=attempt["start_line"],
-                        side="RIGHT",
+            for retry in range(3):
+                try:
+                    if "start_line" in attempt:
+                        resp = await gh.rest.pulls.async_create_review_comment(
+                            owner, repo, pr_number,
+                            body=body, commit_id=commit_sha, path=path,
+                            line=a_line, start_line=attempt["start_line"],
+                            side="RIGHT",
+                        )
+                    else:
+                        resp = await gh.rest.pulls.async_create_review_comment(
+                            owner, repo, pr_number,
+                            body=body, commit_id=commit_sha, path=path,
+                            line=a_line, side="RIGHT",
+                        )
+                    comment_id = resp.parsed_data.id if resp.parsed_data else None
+                    in_reply_to = (
+                        getattr(resp.parsed_data, "in_reply_to_id", None) if resp.parsed_data else None
                     )
-                else:
-                    resp = await gh.rest.pulls.async_create_review_comment(
-                        owner, repo, pr_number,
-                        body=body, commit_id=commit_sha, path=path,
-                        line=a_line, side="RIGHT",
-                    )
-                comment_id = resp.parsed_data.id if resp.parsed_data else None
-                in_reply_to = (
-                    getattr(resp.parsed_data, "in_reply_to_id", None) if resp.parsed_data else None
-                )
-                thread_id = in_reply_to or comment_id
-                return {"success": True, "comment_id": comment_id, "thread_id": thread_id}
-            except Exception as exc:
-                if self._is_line_mismatch_error(exc) and attempt is not attempts[-1]:
+                    thread_id = in_reply_to or comment_id
+                    return {"success": True, "comment_id": comment_id, "thread_id": thread_id}
+                except Exception as exc:
+                    if self._is_line_mismatch_error(exc) and attempt is not attempts[-1]:
+                        logger.debug(
+                            "Line mismatch on %s:%s (attempt line=%s start_line=%s) — retrying",
+                            path,
+                            commit_sha[:7],
+                            attempt["line"],
+                            attempt.get("start_line"),
+                        )
+                        last_error = exc
+                        break  # try next attempt variant
+                    if self._is_line_mismatch_error(exc):
+                        logger.debug(
+                            "Inline comment skipped for %s:%s — line not in diff "
+                            "(line=%s, start_line=%s)",
+                            path,
+                            line,
+                            attempt["line"],
+                            attempt.get("start_line"),
+                        )
+                        return {"success": False, "comment_id": None, "thread_id": None}
+                    # Connection/network errors — retry
                     logger.debug(
-                        "Line mismatch on %s:%s (attempt line=%s start_line=%s) — retrying",
-                        path,
-                        commit_sha[:7],
-                        attempt["line"],
-                        attempt.get("start_line"),
+                        "GitHub API error on %s:%s (attempt %d): %s",
+                        path, commit_sha[:7], retry + 1, exc,
                     )
                     last_error = exc
-                    continue
-                if self._is_line_mismatch_error(exc):
-                    logger.debug(
-                        "Inline comment skipped for %s:%s — line not in diff "
-                        "(line=%s, start_line=%s)",
-                        path,
-                        line,
-                        attempt["line"],
-                        attempt.get("start_line"),
-                    )
-                    return {"success": False, "comment_id": None, "thread_id": None}
-                raise
+                    if retry < 2:
+                        import asyncio
+                        await asyncio.sleep(1 * (retry + 1))
+                    else:
+                        logger.warning(
+                            "Inline comment failed after 3 retries for %s:%s: %s",
+                            path, line, exc,
+                        )
+                        return {"success": False, "comment_id": None, "thread_id": None}
 
         if last_error is not None:
             logger.debug(

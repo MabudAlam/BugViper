@@ -29,6 +29,7 @@ async def on_comment(request: Request):
 
     - issue_comment → run AI review when @bugviper is mentioned on a PR
     - push / pull_request → ingestion disabled (noop)
+    - installation → handle app install/uninstall
     """
     payload = await request.json()
     event_type = request.headers.get("X-GitHub-Event", "")
@@ -38,6 +39,9 @@ async def on_comment(request: Request):
 
     if event_type in ("push", "pull_request"):
         return {"status": "ignored", "reason": "ingestion disabled"}
+
+    if event_type == "installation":
+        return await _handle_installation_event(payload)
 
     return {"status": "ignored", "reason": f"unhandled event '{event_type}'"}
 
@@ -218,6 +222,76 @@ async def _handle_comment_review(payload: dict) -> dict:
     )
 
     return {"status": "completed", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
+
+
+# ── GitHub App Installation Events ────────────────────────────────────────
+
+
+async def _handle_installation_event(payload: dict) -> dict:
+    """Handle installation.created and installation.deleted webhooks.
+
+    - created: look up user by github_username, link or store as pending
+    - deleted: remove installation_id from user doc
+    """
+    action = payload.get("action")
+    installation = payload.get("installation", {})
+    account = installation.get("account", {})
+
+    installation_id = installation.get("id")
+    github_username = account.get("login", "")
+    account_id = account.get("id")
+    account_type = account.get("type", "User")
+    repo_selection = installation.get("repository_selection")
+
+    logger.info(
+        "Installation %s: id=%s account=%s type=%s",
+        action,
+        installation_id,
+        github_username,
+        account_type,
+    )
+
+    if action == "created":
+        uid = firebase_service.find_project_owner_id(github_username)
+        if uid:
+            firebase_service.link_installation_to_user(
+                uid=uid,
+                installation_id=installation_id,
+                account_id=account_id,
+                account_type=account_type,
+                repository_selection=repo_selection,
+            )
+            logger.info("Linked installation %s to existing user uid=%s", installation_id, uid)
+        else:
+            firebase_service.store_pending_installation(
+                github_username=github_username,
+                installation_id=installation_id,
+                account_id=account_id,
+                account_type=account_type,
+                repository_selection=repo_selection,
+            )
+            logger.info(
+                "Stored pending installation %s for github_username=%s",
+                installation_id,
+                github_username,
+            )
+        return {"status": "ok", "action": "created", "installation_id": installation_id}
+
+    if action == "deleted":
+        uid = firebase_service.find_project_owner_id(github_username)
+        if uid:
+            firebase_service.db.collection("users").document(uid).update(
+                {
+                    "githubInstallationId": None,
+                    "githubAccountId": None,
+                    "accountType": None,
+                    "repositorySelection": None,
+                }
+            )
+            logger.info("Removed installation %s from uid=%s", installation_id, uid)
+        return {"status": "ok", "action": "deleted"}
+
+    return {"status": "ignored", "reason": f"unhandled installation action '{action}'"}
 
 
 # ---------------------------------------------------------------------------

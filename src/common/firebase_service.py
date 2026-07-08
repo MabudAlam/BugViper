@@ -11,6 +11,7 @@ from common.firebase_init import _initialize_firebase
 from common.firebase_models import (
     FirebaseUserData,
     FirebaseUserProfile,
+    PendingInstallation,
     PRMetadata,
     PrReviewStatus,
     ReviewRunData,
@@ -87,6 +88,17 @@ class BugViperFirebaseService:
             doc_ref.set(full_doc)
             created_at = now
 
+        # Link any pending GitHub App installation
+        if github_username:
+            try:
+                self._link_pending_installation(uid, github_username)
+            except Exception as exc:
+                logger.error(
+                    "Failed to link pending installation for uid=%s github_username=%s: %s",
+                    uid, github_username, exc,
+                )
+
+        data = doc_ref.get().to_dict()
         return FirebaseUserProfile(
             uid=uid,
             email=email,
@@ -94,12 +106,33 @@ class BugViperFirebaseService:
             github_username=github_username,
             photo_url=photo_url,
             created_at=created_at,
+            github_installation_id=data.get("githubInstallationId"),
+            account_type=data.get("accountType"),
+            repository_selection=data.get("repositorySelection"),
         )
+
+    def _link_pending_installation(self, uid: str, github_username: str) -> bool:
+        """Link a pending installation to the user if one exists. Returns True if linked."""
+        pending = self.get_pending_installation(github_username)
+        if not pending:
+            return False
+        self.link_installation_to_user(
+            uid=uid,
+            installation_id=pending["githubInstallationId"],
+            account_id=pending["githubAccountId"],
+            account_type=pending["accountType"],
+            repository_selection=pending.get("repositorySelection"),
+        )
+        self.delete_pending_installation(github_username)
+        return True
 
     def ensure_user(self, uid: str, firebase_claims: dict) -> FirebaseUserProfile:
         """
         Ensure user doc exists for returning sessions (no GitHub token needed).
         Creates a minimal doc from Firebase token claims if missing.
+
+        Also checks for pending GitHub App installations and links them
+        automatically.
 
         Returns the public user profile.
         """
@@ -109,7 +142,13 @@ class BugViperFirebaseService:
 
         if doc.exists:
             doc_ref.update({"lastLogin": now})
-            data = doc.to_dict()
+
+            # Try to link pending installation for existing users
+            github_username = doc.to_dict().get("githubUsername")
+            if github_username:
+                self._link_pending_installation(uid, github_username)
+
+            data = doc_ref.get().to_dict()
             return FirebaseUserProfile(
                 uid=uid,
                 email=data.get("email"),
@@ -117,6 +156,9 @@ class BugViperFirebaseService:
                 github_username=data.get("githubUsername"),
                 photo_url=data.get("photoURL"),
                 created_at=data.get("createdAt"),
+                github_installation_id=data.get("githubInstallationId"),
+                account_type=data.get("accountType"),
+                repository_selection=data.get("repositorySelection"),
             )
 
         # First time — create from Firebase token claims
@@ -124,19 +166,40 @@ class BugViperFirebaseService:
             uid=uid,
             email=firebase_claims.get("email"),
             display_name=firebase_claims.get("name"),
+            github_username=firebase_claims.get("nickname"),
             photo_url=firebase_claims.get("picture"),
             created_at=now,
             last_login=now,
         )
         doc_ref.set(_to_dict(new_user))
 
-        return FirebaseUserProfile(
+        profile = FirebaseUserProfile(
             uid=uid,
             email=new_user.email,
             display_name=new_user.display_name,
+            github_username=new_user.github_username,
             photo_url=new_user.photo_url,
             created_at=now,
         )
+
+        # Check for pending GitHub App installation
+        github_username = new_user.github_username or firebase_claims.get("nickname")
+        if github_username:
+            if self._link_pending_installation(uid, github_username):
+                data = doc_ref.get().to_dict()
+                profile = FirebaseUserProfile(
+                    uid=uid,
+                    email=data.get("email"),
+                    display_name=data.get("displayName"),
+                    github_username=data.get("githubUsername"),
+                    photo_url=data.get("photoURL"),
+                    created_at=data.get("createdAt"),
+                    github_installation_id=data.get("githubInstallationId"),
+                    account_type=data.get("accountType"),
+                    repository_selection=data.get("repositorySelection"),
+                )
+
+        return profile
 
     def get_user(self, uid: str) -> Optional[FirebaseUserProfile]:
         """
@@ -166,6 +229,77 @@ class BugViperFirebaseService:
         if not doc.exists:
             return None
         return doc.to_dict().get("githubAccessToken")
+
+    # ── GitHub App Installation ──────────────────────────────────────────
+
+    def store_pending_installation(
+        self,
+        github_username: str,
+        installation_id: int,
+        account_id: int,
+        account_type: str,
+        repository_selection: Optional[str] = None,
+    ) -> None:
+        """Store a pending installation (user hasn't signed up yet)."""
+        import uuid
+        from datetime import datetime, timedelta, timezone
+
+        ts = datetime.now(timezone.utc)
+        data = PendingInstallation(
+            github_username=github_username,
+            github_installation_id=installation_id,
+            github_account_id=account_id,
+            account_type=account_type,
+            repository_selection=repository_selection,
+            created_at=ts.isoformat(),
+            expires_at=(ts + timedelta(days=30)).isoformat(),
+        )
+        self._db.collection("pending_installations").document(github_username).set(
+            _to_dict(data)
+        )
+        logger.info("Stored pending installation for github_username=%s", github_username)
+
+    def get_pending_installation(self, github_username: str) -> Optional[dict]:
+        """Get pending installation doc for a github username, or None."""
+        doc = self._db.collection("pending_installations").document(github_username).get()
+        return doc.to_dict() if doc.exists else None
+
+    def delete_pending_installation(self, github_username: str) -> None:
+        """Delete pending installation doc after linking."""
+        self._db.collection("pending_installations").document(github_username).delete()
+        logger.info("Deleted pending installation for github_username=%s", github_username)
+
+    def link_installation_to_user(
+        self,
+        uid: str,
+        installation_id: int,
+        account_id: int,
+        account_type: str,
+        repository_selection: Optional[str] = None,
+    ) -> None:
+        """Link a GitHub installation to an existing user document."""
+        update = {
+            "githubInstallationId": installation_id,
+            "githubAccountId": account_id,
+            "accountType": account_type,
+            "repositorySelection": repository_selection,
+        }
+        self._db.collection("users").document(uid).update(update)
+        logger.info("Linked installation %s to uid=%s", installation_id, uid)
+
+    def get_user_installation(self, uid: str) -> Optional[int]:
+        """Return installation_id for a user, or None."""
+        doc = self._db.collection("users").document(uid).get()
+        if not doc.exists:
+            return None
+        return doc.to_dict().get("githubInstallationId")
+
+    def get_user_github_username(self, uid: str) -> Optional[str]:
+        """Return github username for a user, or None."""
+        doc = self._db.collection("users").document(uid).get()
+        if not doc.exists:
+            return None
+        return doc.to_dict().get("githubUsername")
 
     def checkIfRepoIndexedOrNot(self, uid: str, owner: str, repo: str) -> bool:
         """

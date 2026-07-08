@@ -171,6 +171,16 @@ export interface SupportQueryResult {
   message: string;
 }
 
+export interface InstallationStatus {
+  installationId: number | null;
+  githubUsername: string | null;
+  linked: boolean;
+  settingsUrl: string | null;
+}
+
+export const getInstallationStatus = (): Promise<InstallationStatus> =>
+  apiFetch("/api/v1/auth/installation");
+
 export const submitSupportQuery = (data: SupportQueryPayload): Promise<SupportQueryResult> =>
   fetch(`${API_BASE}/api/v1/support/query`, {
     method: "POST",
