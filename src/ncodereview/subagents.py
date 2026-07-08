@@ -10,11 +10,10 @@ from langchain_core.language_models import BaseChatModel
 from ncodereview.prompts import (
     CORRECTNESS_REVIEWER_PROMPT,
     GENERALIST_PROMPT,
-    JUDGE_REVIEWER_PROMPT,
     PERF_REVIEWER_PROMPT,
     SECURITY_AUDITOR_PROMPT,
 )
-from ncodereview.schemas import JudgeVerdict, SubagentReviewPayload
+from ncodereview.schemas import SubagentReviewPayload
 
 RUN_LIMIT = 20
 SUMMARIZATION_TRIGGER_TOKENS = 15000
@@ -36,9 +35,9 @@ report whatever findings you have and note which files were not reviewed."""
 
 
 def calculate_batch_tool_limits(files_in_batch: int) -> int:
-    base = 40 if files_in_batch <= 3 else 60
-    extra = max(0, (files_in_batch - 8) * 4)
-    return min(base + extra, 120)
+    base = 60
+    extra = files_in_batch * 15
+    return min(base + extra, 300)
 
 
 def _build_review_agent(
@@ -77,47 +76,6 @@ def _build_review_agent(
     return {
         "name": name,
         "description": description,
-        "runnable": runnable,
-    }
-
-
-def _build_judge_agent(
-    model: BaseChatModel | str,
-    backend: BackendProtocol,
-    run_limit: int = 20,
-) -> dict:
-    from deepagents.middleware.summarization import (
-        SummarizationMiddleware,
-        SummarizationToolMiddleware,
-    )
-
-    summ = SummarizationMiddleware(
-        model=model,
-        backend=backend,
-        trigger=("tokens", SUMMARIZATION_TRIGGER_TOKENS),
-        keep=("tokens", SUMMARIZATION_KEEP_TOKENS),
-    )
-    runnable = create_agent(
-        model=model,
-        system_prompt=JUDGE_REVIEWER_PROMPT,
-        tools=[],
-        middleware=[
-            FilesystemMiddleware(backend=backend),
-            ToolCallLimitMiddleware(run_limit=run_limit),
-            TodoListMiddleware(system_prompt=CODE_REVIEW_TODO_PROMPT),
-            summ,
-            SummarizationToolMiddleware(summ),
-        ],
-        name="judge-reviewer",
-        response_format=JudgeVerdict,
-    )  # ty:ignore[no-matching-overload]
-    return {
-        "name": "judge-reviewer",
-        "description": (
-            "Validates raw findings from the review subagents against the "
-            "actual code in the sandbox. Returns per-finding classification: "
-            "valid | nitpick | outside-diff | false. Used after review subagents."
-        ),
         "runnable": runnable,
     }
 
@@ -168,11 +126,6 @@ def _build_full_subagents(
             backend,
             run_limit=run_limit,
         ),
-        _build_judge_agent(
-            model,
-            backend,
-            run_limit=run_limit,
-        ),
     ]
 
 
@@ -186,11 +139,6 @@ def _build_generalist_subagents(
             "generalist-reviewer",
             "Combined correctness, security, and performance review in a single pass.",
             GENERALIST_PROMPT,
-            model,
-            backend,
-            run_limit=run_limit,
-        ),
-        _build_judge_agent(
             model,
             backend,
             run_limit=run_limit,

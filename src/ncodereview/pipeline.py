@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from common.diff_parser import split_diff_by_file
+from common.github_client import GitHubClient, get_github_client
 from knowledge_parser.call_graph import analyze_pr_call_graph, render_blast_radius_markdown
 from knowledge_parser.knowledge_runner import (
     changed_files_from_diff,
@@ -25,7 +26,7 @@ from ncodereview.agent import build_user_message, create_deep_agent
 from ncodereview.batch import batch_pr_files, filter_blast_radius_for_files
 from ncodereview.config import config, ensure_env
 from ncodereview.diff import get_changed_line_ranges
-from ncodereview.github import ReviewGitHub
+from ncodereview.types import GithubPrDetails
 from ncodereview.llm import load_chat_model
 from ncodereview.normalize import (
     extract_review_from_result,
@@ -69,9 +70,7 @@ def _dump_debug_artifacts(
         logger.warning("Failed to write diff debug artifact: %s", exc)
 
     try:
-        (out / "raw_agent_output.json").write_text(
-            json.dumps(review_data, indent=2, default=str)
-        )
+        (out / "raw_agent_output.json").write_text(json.dumps(review_data, indent=2, default=str))
     except Exception as exc:
         logger.warning("Failed to write agent output debug artifact: %s", exc)
 
@@ -100,28 +99,6 @@ class ReviewError(Exception):
         super().__init__(reason)
 
 
-###############################################################################
-# Step 1: Data Fetching
-###############################################################################
-
-
-async def _fetch_pr_data(
-    github: ReviewGitHub,
-    owner: str,
-    repo: str,
-    pr_number: int,
-) -> tuple[str, dict, str, str, str, list[str]]:
-    """Fetch all PR data needed for review.
-
-    Returns:
-        Tuple of (diff_text, pr_info, head_sha, base_sha, head_branch, pr_files)
-    """
-    diff_text, pr_info, head_sha, base_sha, head_branch, pr_files = await github.fetch_pr_data(
-        owner, repo, pr_number
-    )
-    if not diff_text:
-        raise ReviewError("Empty diff — nothing to review")
-    return diff_text, pr_info, head_sha, base_sha, head_branch, pr_files
 
 
 ###############################################################################
@@ -130,7 +107,7 @@ async def _fetch_pr_data(
 
 
 async def _get_review_diff(
-    github: ReviewGitHub,
+    github: GitHubClient,
     review_mode: str,
     owner: str,
     repo: str,
@@ -319,12 +296,6 @@ async def _run_single_review(
     if not review_data:
         raise ReviewError("Agent did not return valid review JSON")
 
-    if not review_data.get("judge_verdict"):
-        raise ReviewError(
-            "judge_verdict missing — orchestrator must call judge-reviewer subagent "
-            "and include the result as judge_verdict in the final JSON"
-        )
-
     return review_data
 
 
@@ -407,13 +378,6 @@ async def _run_review_with_batches(
                 "file_based_issues": [],
                 "file_based_positive_findings": [],
                 "file_based_walkthrough": {},
-                "judge_verdict": {
-                    "total_issues": 0,
-                    "total_positives": 0,
-                    "verdict": "passed",
-                    "issues_by_severity": {},
-                    "issues_by_category": {},
-                },
             }
 
         sbx = None
@@ -559,26 +523,29 @@ async def run_review_pipeline(
     os.environ["E2B_API_KEY"] = config.e2b_api_key
 
     started_at = time.time()
-    github = ReviewGitHub()
+
+    github = get_github_client()
     sbx = None
 
     try:
         # Step 1: Fetch PR data
-        diff_text, pr_info, head_sha, base_sha, head_branch, pr_files = await _fetch_pr_data(
-            github, owner, repo, pr_number
-        )
+        pr_data = await github.fetch_pr_data(owner, repo, pr_number)
+        if not pr_data.difftext:
+            raise ReviewError("Empty diff — nothing to review")
 
-        pr_title = pr_info.get("title", "")
+        pr_title = pr_data.prMeta.prTitle
         review_mode = resolve_review_mode(review_type)
         last_review_sha = await get_last_review_sha(uid, owner, repo, pr_number)
 
         # Step 2: Determine review diff (full or incremental)
         review_diff_text = await _get_review_diff(
-            github, review_mode, owner, repo, last_review_sha, head_sha, diff_text
+            github, review_mode, owner, repo, last_review_sha, pr_data.head_sha, pr_data.difftext
         )
 
         # Track repo metadata (non-critical — best-effort, retry transient failures)
         if uid:
+
+            # In this step we would like to fetch the repository information and update the metadata in our system. We will attempt this up to 3 times in case of transient errors.
             for attempt in range(3):
                 try:
                     repo_info = await github.get_repository_info(owner, repo)
@@ -586,56 +553,57 @@ async def run_review_pipeline(
                     break
                 except Exception as exc:
                     if attempt < 2:
-                        await asyncio.sleep(2 ** attempt)
+                        await asyncio.sleep(2**attempt)
                         continue
                     logger.warning("Repo metadata unavailable after 3 attempts: %s", exc)
 
+        # Mark the review as running so we can track status and avoid duplicate reviews.
         mark_review_running(uid, owner, repo, pr_number, review_type)
 
         # Step 3: Generate call graph and blast radius
         github_token = await github.get_installation_token(owner, repo)
         call_graph, call_graph_json, blast_radius_md = _generate_call_graph(
-            diff_text, github_token, owner, repo, head_sha
+            pr_data.difftext, github_token, owner, repo, pr_data.head_sha
         )
 
         # Step 4: Batch files if needed
         batches, is_batched = _batch_pr_files_if_needed(
-            call_graph, list(pr_files), diff_text=diff_text
+            call_graph, [f.filename for f in pr_data.files], diff_text=pr_data.difftext
         )
 
         # Step 5-6: Create sandbox and run review
-        total_files = len(pr_files)
+        total_files = len(pr_data.files)
 
         if is_batched:
             _, call_graph_json, blast_radius_md = _generate_call_graph(
-                diff_text, github_token, owner, repo, head_sha
+                pr_data.difftext, github_token, owner, repo, pr_data.head_sha
             )
             sbx = None
 
             review_data = await _run_review_with_batches(
                 owner=owner,
                 repo=repo,
-                head_sha=head_sha,
-                head_branch=head_branch,
+                head_sha=pr_data.head_sha,
+                head_branch=pr_data.head_branch,
                 github_token=github_token,
                 pr_title=pr_title,
                 batches=batches,
                 blast_radius_md=blast_radius_md,
-                diff_text=diff_text,
+                diff_text=pr_data.difftext,
                 review_type=review_type,
-                total_files=len(pr_files),
+                total_files=len(pr_data.files),
             )
         else:
             sandbox_template = (
                 config.e2b_sandbox_template_large
-                if total_files > 1
+                if total_files > 3
                 else config.e2b_sandbox_template_small
             )
             sbx = await _create_sandbox(
                 owner=owner,
                 repo=repo,
-                head_sha=head_sha,
-                head_branch=head_branch,
+                head_sha=pr_data.head_sha,
+                head_branch=pr_data.head_branch,
                 github_token=github_token,
                 template=sandbox_template or None,
             )
@@ -644,10 +612,10 @@ async def run_review_pipeline(
             review_data = await _run_single_review(
                 sbx=sbx,
                 pr_title=pr_title,
-                batch_files=list(pr_files),
+                batch_files=[f.filename for f in pr_data.files],
                 blast_radius_md=blast_radius_md,
                 review_type=review_type,
-                use_generalist=len(pr_files) > 1,
+                use_generalist=len(pr_data.files) > 1,
             )
 
         # Step 7: Upload artifacts
@@ -655,10 +623,10 @@ async def run_review_pipeline(
             owner=owner,
             repo=repo,
             pr_number=pr_number,
-            head_sha=head_sha,
+            head_sha=pr_data.head_sha,
             call_graph_json=call_graph_json,
             blast_radius_md=blast_radius_md,
-            diff_text=diff_text,
+            diff_text=pr_data.difftext,
         )
 
         # Dump raw agent output before normalization (for debugging)
@@ -670,26 +638,49 @@ async def run_review_pipeline(
             review_diff_text=review_diff_text,
         )
 
+        # Host-side judge: classify each finding against actual code
+        from ncodereview.judge import judge_findings, summarize_judgment
+        from ncodereview.schemas import SubagentReviewIssue
+        from ncodereview.normalize import flatten_issues
+
+        raw_issues = review_data.get("issues", [])
+        if raw_issues:
+            pr_files_dict = {f.filename: f.fileContent for f in pr_data.files}
+            flat = flatten_issues(raw_issues)
+            judge_input = [
+                SubagentReviewIssue(**i) if isinstance(i, dict) else i
+                for i in flat
+            ]
+            verdicts = await judge_findings(judge_input, pr_files_dict)
+            verdict_map: dict[tuple[str, int, str], dict] = {}
+            for v in verdicts:
+                key = (v.get("file", ""), v.get("line_start", 0), v.get("category", ""))
+                verdict_map[key] = v
+            for issue in flat:
+                key = (issue.get("file", ""), issue.get("line_start", 0), issue.get("category", ""))
+                v = verdict_map.get(key)
+                if v:
+                    issue["classification"] = v.get("classification", "valid")
+                    issue["drop_reason"] = v.get("drop_reason")
+            review_data["issues"] = flat
+            review_data["_judgment_counts"] = summarize_judgment(verdicts)
+
         # Validate and normalize results
         review_data = normalize_and_validate_review_data(
             review_data=review_data,
             diff_text=review_diff_text,
-            changed_files=list(pr_files),
+            changed_files=[f.filename for f in pr_data.files],
         )
-
-        issues = review_data.get("issues", [])
-        if issues and not review_data.get("_saw_judge_classifications"):
-            raise ReviewError("Orchestrator did not classify findings via judge-reviewer subagent")
 
         # Post results to GitHub
         stats = await run_post_review(
-            gh=github.gh,
+            gh=github,
             owner=owner,
             repo=repo,
             pr_number=pr_number,
-            head_sha=head_sha,
-            base_sha=base_sha,
-            pr_files=pr_files,
+            head_sha=pr_data.head_sha,
+            base_sha=pr_data.base_sha,
+            pr_files={f.filename: f.fileContent for f in pr_data.files},
             diff_text=review_diff_text,
             review_data=review_data,
             uid=uid,

@@ -59,41 +59,11 @@ class FinalReviewOutput(BaseModel):
         default="",
         description="One-paragraph overall review summary for the PR.",
     )
-    judge_verdict: JudgeVerdict = Field(
-        description="Per-finding classification from judge-reviewer: "
-        "valid | nitpick | outside-diff | false. "
-        "MUST be obtained by calling task(subagent_type='judge-reviewer') "
-        "with the raw issues JSON as description. Required — cannot be null.",
-    )
     raw_agent_outputs: dict[str, str] = Field(
         default_factory=dict,
-        description="Raw JSON output from each subagent (correctness-reviewer, "
-        "security-auditor, perf-reviewer) before judge classification. "
+        description="Raw JSON output from each subagent. "
         "Keys are subagent names, values are the raw JSON strings.",
     )
-
-
-class JudgeVerdictEntry(BaseModel):
-    """One finding's classification returned by the judge-reviewer."""
-
-    file: str
-    line_start: int
-    line_end: int | None = None
-    category: str = Field(
-        description="Echo the finding's category for matching back to the raw issue."
-    )
-    classification: str = Field(
-        description="'valid' | 'nitpick' | 'outside-diff' | 'false'"
-    )
-    drop_reason: str | None = None
-    resolved_line_start: int | None = None
-    resolved_line_end: int | None = None
-
-
-class JudgeVerdict(BaseModel):
-    """What the judge-reviewer subagent returns: classification per finding."""
-
-    verdicts: list[JudgeVerdictEntry] = Field(default_factory=list)
 
 
 __all__ = [
@@ -101,8 +71,6 @@ __all__ = [
     "FileBasedIssues",
     "FileBasedWalkthrough",
     "FinalReviewOutput",
-    "JudgeVerdict",
-    "JudgeVerdictEntry",
     "SubagentReviewIssue",
     "SubagentReviewPayload",
 ]

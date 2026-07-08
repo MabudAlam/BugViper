@@ -107,9 +107,9 @@ def inject_call_graph(sbx: Sandbox, call_graph_json: str, callgraph_md: str) -> 
     review_dir = "/home/user/review"
     sbx.commands.run(f"mkdir -p {review_dir}")
     sbx.files.write(f"{review_dir}/call_graph.json", call_graph_json)
-    sbx.files.write(f"{review_dir}/call_graph.md", callgraph_md)
+    sbx.files.write(f"{review_dir}/blast_radius.md", callgraph_md)
     logger.info(
-        "Injected call_graph.json (%d chars) and call_graph.md (%d chars) into sandbox",
+        "Injected call_graph.json (%d chars) and blast_radius.md (%d chars) into sandbox",
         len(call_graph_json),
         len(callgraph_md),
     )

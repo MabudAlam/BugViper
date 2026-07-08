@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from api.dependencies import get_current_user
 from common.firebase_service import firebase_service
-from common.github_client import github_oauth_service
+from common.github_client import GitHubClient
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class GitHubRepo(BaseModel):
 def login(body: LoginRequest, user: dict = Depends(get_current_user)):
     """Sign-in: fetch GitHub profile, then create/update Firestore user doc."""
     try:
-        gh_profile = github_oauth_service.fetch_user_profile(body.github_access_token)
+        gh_profile = GitHubClient.fetch_user_profile(body.github_access_token)
         profile = firebase_service.create_or_update_user(
             uid=user["uid"],
             github_access_token=body.github_access_token,
@@ -96,7 +96,7 @@ def get_github_repos(user: dict = Depends(get_current_user)):
             detail="No GitHub token found. Please sign in with GitHub first.",
         )
     try:
-        repos = github_oauth_service.fetch_user_repos(token)
+        repos = GitHubClient.fetch_user_repos(token)
         return [GitHubRepo(**r) for r in repos]
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

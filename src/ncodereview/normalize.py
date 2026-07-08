@@ -17,8 +17,7 @@ def normalize_and_validate_review_data(
     added_ranges = get_changed_line_ranges(diff_text)
     issues = flatten_issues(review_data.get("issues", []))
     filtered: list[dict] = []
-    judgment_counts = {"valid": 0, "nitpick": 0, "outside-diff": 0, "false": 0}
-    seen_judge = False
+    judgment_counts: dict[str, int] = {"valid": 0, "nitpick": 0, "outside-diff": 0, "false": 0}
 
     for issue in issues:
         normalized = normalize_issue(issue)
@@ -47,10 +46,7 @@ def normalize_and_validate_review_data(
 
         classification = normalized.get("classification")
         if classification:
-            seen_judge = True
             judgment_counts[classification] = judgment_counts.get(classification, 0) + 1
-        if classification == "false":
-            pass
 
         if int(normalized.get("confidence", 8)) < 7 and classification != "valid":
             normalized["issue_type"] = "Nitpick"
@@ -81,8 +77,7 @@ def normalize_and_validate_review_data(
         "positives": positives,
         "walkthrough": walkthrough,
         "files_changed": changed_files,
-        "_saw_judge_classifications": seen_judge,
-        "_judgment_counts": judgment_counts if seen_judge else None,
+        "_judgment_counts": judgment_counts if any(judgment_counts.values()) else None,
         "raw_agent_outputs": raw_agent_outputs,
     }
 
