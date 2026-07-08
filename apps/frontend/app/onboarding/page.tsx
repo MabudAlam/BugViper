@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { getInstallationStatus } from "@/lib/api";
@@ -54,26 +54,32 @@ export default function OnboardingPage() {
   const [signingIn, setSigningIn] = useState(false);
   const [needsInstall, setNeedsInstall] = useState(false);
   const [linking, setLinking] = useState(false);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
     if (loading || !user) return;
     checkAndRedirect();
+    return () => { cancelledRef.current = true; };
   }, [user, loading]);
 
   async function checkAndRedirect() {
     setLinking(true);
     for (let i = 0; i < 10; i++) {
+      if (cancelledRef.current) return;
       try {
         const status = await getInstallationStatus();
         if (status.linked) {
-          router.replace("/dashboard");
+          if (!cancelledRef.current) router.replace("/dashboard");
           return;
         }
       } catch {}
+      if (cancelledRef.current) return;
       await new Promise((r) => setTimeout(r, 500));
     }
-    setNeedsInstall(true);
-    setLinking(false);
+    if (!cancelledRef.current) {
+      setNeedsInstall(true);
+      setLinking(false);
+    }
   }
 
   if (loading) {
