@@ -1,8 +1,26 @@
+"""File batching logic: context-aware approach with adaptive-fit profile.
+
+Adds:
+- Context window resolution + adaptive-fit profile selection
+- Prompt token estimation with overhead
+- Chunk budget computation (budget = window * ratio - overhead)
+- Low-signal filtering, call-graph scoring, priority tiering
+- Call-graph clustering + token-capped batch packing
+"""
+
 from __future__ import annotations
 
 import networkx as nx
 
 from common.diff_parser import split_diff_by_file
+
+# Constants for context-aware batching
+PROMPT_BUDGET_RATIO = 0.8  # use 80% of context window for prompts
+OVERHEAD_ESTIMATE_TOKENS = 4000  # static overhead: system prompt + tool schemas
+
+# Context window thresholds for adaptive-fit
+CONTEXT_WINDOW_FULL = 64000   # >=64K → full profile
+CONTEXT_WINDOW_COMPACT = 32000  # 32-64K → compact profile
 
 BATCH_THRESHOLD = 10
 MAX_BATCH_TOKENS = 60000
@@ -54,42 +72,104 @@ LOW_SIGNAL_SUBSTRINGS = (
 )
 
 
-def _is_low_signal(file_path: str) -> bool:
-    """Check if a file is low-signal (config, docs, tests) and should be deprioritized.
+def resolve_adaptive_profile(context_window: int) -> dict:
+    """Resolve adaptive-fit profile based on context window.
 
-    Low-signal files still get reviewed but are placed in the last batch.
+    Returns a dict with keys:
+      kind: 'full' | 'compact' | 'minimal'
+      dropCallGraph: bool — skip call graph when context is tight
+      skipHeavyPasses: bool — skip synthesis/recall passes
+      compactPrompt: bool — use compact prompt variants
+      allOptional: bool — render hunk-headers only (minimal)
+      maxDiffChars: int | None — cap per-file diff characters
+      lowSignalFilterUnconditional: bool — always filter low-signal files
     """
+    if context_window >= CONTEXT_WINDOW_FULL:
+        return {
+            'kind': 'full',
+            'dropCallGraph': False,
+            'skipHeavyPasses': False,
+            'compactPrompt': False,
+            'allOptional': False,
+            'maxDiffChars': None,
+            'lowSignalFilterUnconditional': False,
+        }
+
+    if context_window >= CONTEXT_WINDOW_COMPACT:
+        return {
+            'kind': 'compact',
+            'dropCallGraph': True,
+            'skipHeavyPasses': True,
+            'compactPrompt': True,
+            'allOptional': False,
+            'maxDiffChars': 8000,
+            'lowSignalFilterUnconditional': True,
+        }
+
+    # minimal profile (< 32K)
+    return {
+        'kind': 'minimal',
+        'dropCallGraph': True,
+        'skipHeavyPasses': True,
+        'compactPrompt': True,
+        'allOptional': True,
+        'maxDiffChars': 4000,
+        'lowSignalFilterUnconditional': True,
+    }
+
+
+def estimate_non_diff_overhead_tokens(files_count: int = 1) -> int:
+    """Estimate static prompt overhead (system prompt + tool schemas + non-diff parts)."""
+    return OVERHEAD_ESTIMATE_TOKENS + files_count * 50  # ~50 tokens per file listing
+
+
+def estimate_diff_tokens(diff_text: str) -> int:
+    """Rough token estimate: 4 chars ≈ 1 token."""
+    return len(diff_text) // 4
+
+
+def estimate_prompt_tokens(diff_text: str, files_count: int) -> int:
+    """Estimate total prompt tokens = diff tokens + overhead."""
+    return estimate_diff_tokens(diff_text) + estimate_non_diff_overhead_tokens(files_count)
+
+
+def compute_chunk_budget(context_window: int, overhead_tokens: int) -> int:
+    """Compute per-chunk diff budget.
+
+    budget = context_window * PROMPT_BUDGET_RATIO - overhead
+    floored at 30% of context window.
+    """
+    prompt_budget = int(context_window * PROMPT_BUDGET_RATIO)
+    chunk_budget = max(prompt_budget - overhead_tokens, int(context_window * 0.3))
+    return chunk_budget
+
+
+def _is_low_signal(file_path: str) -> bool:
+    """Check if a file is low-signal (config, docs, tests)."""
     path_lower = file_path.lower()
-    # Fast path — check substrings first
     for sub in LOW_SIGNAL_SUBSTRINGS:
         if sub in path_lower:
             return True
-    # Check full patterns with glob-like matching
     for pattern in LOW_SIGNAL_PATTERNS:
         if pattern in LOW_SIGNAL_SUBSTRINGS:
-            continue  # already checked above
+            continue
         pattern_lower = pattern.lower()
         if pattern_lower.endswith("/"):
-            # Directory prefix match
             if path_lower.startswith(pattern_lower) or f"/{pattern_lower}" in path_lower:
                 return True
         elif pattern_lower.startswith("*") and pattern_lower.endswith("*"):
-            # Contains substring (e.g. *.spec.*)
             core = pattern_lower.strip("*")
             if core in path_lower:
                 return True
         elif pattern_lower.startswith("*"):
-            # Suffix match (e.g. *.test.py)
             suffix = pattern_lower.lstrip("*")
             if path_lower.endswith(suffix):
                 return True
         elif pattern_lower.endswith("*"):
-            # Prefix match (e.g. test/)
             prefix = pattern_lower.rstrip("*")
             if path_lower.startswith(prefix):
                 return True
         else:
-            # Exact match or ends-with match
             if path_lower == pattern_lower:
                 return True
             if path_lower.endswith(pattern_lower):
@@ -102,15 +182,13 @@ def _is_low_signal(file_path: str) -> bool:
 def _score_file(file_path: str, call_graph: dict) -> float:
     """Score a file's review priority based on call graph connectivity.
 
-    Files with more incoming calls (callers) are higher priority since
-    changes to them have wider blast radius. Internal calls and outgoing
-    calls are weighted lower.
+    Weights: incoming calls = 3x, internal = 2x, outgoing = 1x, imports = 0.5x
     """
     per_file = call_graph.get("per_file", {})
     data = per_file.get(file_path, {})
-    incoming = len(data.get("incoming_calls", []))  # who calls this file
-    internal = len(data.get("internal_calls", []))  # calls within this file
-    outgoing = len(data.get("outgoing_calls", []))  # what this file calls
+    incoming = len(data.get("incoming_calls", []))
+    internal = len(data.get("internal_calls", []))
+    outgoing = len(data.get("outgoing_calls", []))
     imports = len(data.get("imports", []))
     return incoming * 3.0 + internal * 2.0 + outgoing * 1.0 + imports * 0.5
 
@@ -127,43 +205,39 @@ def _assign_tier(score: float, max_score: float) -> str:
     return "optional"
 
 
-def _estimate_token_budget(
-    diff_text: str,
-    file_list: list[str],
-) -> dict[str, int]:
-    """Estimate token consumption per file from diff patch size.
-
-    Used to cap batch sizes so we don't exceed the model's context window.
-    Rough estimate: 4 chars ≈ 1 token.
-    """
-    patches = split_diff_by_file(diff_text)
-    budget: dict[str, int] = {}
-    for f in file_list:
-        patch = patches.get(f, "")
-        budget[f] = len(patch) // 4
-    return budget
+def apply_large_pr_aggressive_filter(pr_files: list[str]) -> list[str]:
+    """Drop low-signal files when context window is tight."""
+    return [f for f in pr_files if not _is_low_signal(f)]
 
 
 def batch_pr_files(
     call_graph: dict,
     pr_files: list[str],
     diff_text: str = "",
+    context_window: int = 128000,
+    review_mode: str = 'normal',
 ) -> list[list[str]]:
-    """Split PR files into review batches ordered by priority and call-graph locality.
+    """Split PR files into review batches with context-window awareness.
 
-    Files are:
-    1. Separated into high-signal (code) and low-signal (config/docs/tests)
-    2. Scored by call-graph connectivity (incoming calls = highest weight)
-    3. Tiered into critical → warm → optional → low-signal
-    4. Clustered by call-graph edges (files that call each other stay together)
-    5. Packed into token-capped batches
+    Adds context-window awareness, adaptive-fit profile, and overhead-aware chunk budget.
 
-    Returns a single batch if ≤ 10 files.
+    1. Low-signal filter (when profile says so)
+    2. Score + tier by call-graph connectivity
+    3. Cluster by call-graph edges (files that call each other stay together)
+    4. Pack into token-capped batches using computed chunk budget
     """
     if len(pr_files) <= BATCH_THRESHOLD:
         return [pr_files]
 
-    # Split into high/low signal
+    profile = resolve_adaptive_profile(context_window)
+
+    # Apply aggressive filter for tight windows
+    if profile['lowSignalFilterUnconditional']:
+        pr_files = apply_large_pr_aggressive_filter(pr_files)
+        if len(pr_files) <= BATCH_THRESHOLD:
+            return [pr_files]
+
+    # Split into high/low signal for tiering
     high_signal: list[str] = []
     low_signal: list[str] = []
     for f in pr_files:
@@ -180,22 +254,31 @@ def batch_pr_files(
     sorted_files = tiered["critical"] + tiered["warm"] + tiered["optional"] + low_signal
     token_budget = _estimate_token_budget(diff_text, sorted_files) if diff_text else {}
 
+    # Compute chunk budget from context window
+    overhead = estimate_non_diff_overhead_tokens(len(sorted_files))
+    chunk_diff_budget = compute_chunk_budget(context_window, overhead)
+
     # Group related files together, then pack into token-limited batches
     clusters = _build_file_clusters(call_graph, sorted_files)
-    return _pack_clusters_into_batches(clusters, token_budget)
+    return _pack_clusters_into_batches(clusters, token_budget, max_budget=chunk_diff_budget)
+
+
+def _estimate_token_budget(diff_text: str, file_list: list[str]) -> dict[str, int]:
+    """Estimate token consumption per file from diff patch size. 4 chars ≈ 1 token."""
+    patches = split_diff_by_file(diff_text)
+    budget: dict[str, int] = {}
+    for f in file_list:
+        patch = patches.get(f, "")
+        budget[f] = len(patch) // 4
+    return budget
 
 
 def _build_file_clusters(call_graph: dict, pr_files: list[str]) -> list[set[str]]:
-    """Group files that call each other into clusters using call-graph edges.
-
-    Files within the same cluster are kept together in the same batch so the
-    reviewer can trace cross-file call chains without switching batches.
-    """
+    """Group files that call each other into clusters using call-graph edges."""
     G = nx.Graph()
     for pf in pr_files:
         G.add_node(pf)
 
-    # Connect files that have internal call edges between them
     per_file = call_graph.get("per_file", {})
     for file_path, data in per_file.items():
         for edge in data.get("internal_calls", []):
@@ -204,7 +287,6 @@ def _build_file_clusters(call_graph: dict, pr_files: list[str]) -> list[set[str]
                 G.add_edge(file_path, callee)
 
     clusters = list(nx.connected_components(G))
-    # Sort by position of the first file in pr_files (preserves priority order)
     file_index = {f: i for i, f in enumerate(pr_files)}
     return sorted(clusters, key=lambda c: min(file_index.get(f, 0) for f in c))
 
@@ -212,23 +294,24 @@ def _build_file_clusters(call_graph: dict, pr_files: list[str]) -> list[set[str]
 def _pack_clusters_into_batches(
     clusters: list[set[str]],
     token_budget: dict[str, int],
+    max_budget: int = 60000,
+    max_cluster_budget: int = 120000,
 ) -> list[list[str]]:
-    """Pack file clusters into batches capped by MAX_BATCH_TOKENS.
+    """Pack file clusters into batches capped by token budget.
 
     Each cluster is kept intact (files that call each other stay together).
-    If a single cluster exceeds the cap, it still goes in one batch — the
-    estimate is approximate and reviewers can handle oversize batches.
+    If a single cluster exceeds the cap, it still goes in one batch.
     """
     batches: list[list[str]] = []
     current: list[str] = []
     current_tokens = 0
+    effective_max = min(max_budget, max_cluster_budget)
 
     for cluster in clusters:
         cluster_list = sorted(cluster)
         cluster_tokens = sum(token_budget.get(f, 5000) for f in cluster_list)
 
-        # Start a new batch if this cluster would push us over the limit
-        if current_tokens + cluster_tokens > MAX_BATCH_TOKENS and current:
+        if current_tokens + cluster_tokens > effective_max and current:
             batches.append(current)
             current = []
             current_tokens = 0
@@ -243,12 +326,7 @@ def _pack_clusters_into_batches(
 
 
 def filter_blast_radius_for_files(blast_radius_md: str, batch_files: list[str]) -> str:
-    """Filter blast radius markdown to only include sections for the given files.
-
-    The blast radius document has sections starting with '## <file_path>'.
-    This extracts only the sections relevant to files in this batch so each
-    batch only sees its own impact analysis.
-    """
+    """Filter blast radius markdown to only include sections for the given files."""
     batch_set = set(batch_files)
     lines = blast_radius_md.split("\n")
     filtered_lines: list[str] = []
