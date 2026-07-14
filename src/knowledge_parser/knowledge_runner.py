@@ -18,8 +18,8 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-REPO_URL = "https://github.com/MabudAlam/bigset/"
-PR_NUMBER = 2
+REPO_URL = "https://github.com/MabudAlam/QC_BugViper_test"
+PR_NUMBER = 11
 OUTPUT_DIR = "./output"
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
