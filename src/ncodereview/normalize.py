@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from ncodereview.dedup import deduplicate_issues
 from ncodereview.diff import get_changed_line_ranges, overlaps_added_lines
+
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_and_validate_review_data(
@@ -26,14 +30,12 @@ def normalize_and_validate_review_data(
 
         file_path = normalized["file"]
 
-        # File not in PR's changed files → outside-diff
         if file_path not in changed_set:
             normalized["classification"] = "outside-diff"
             normalized["status"] = "new"
             filtered.append(normalized)
             continue
 
-        # Line range doesn't overlap with any diff addition → outside-diff
         if not overlaps_added_lines(
             normalized.get("line_start"),
             normalized.get("line_end"),
@@ -204,89 +206,49 @@ def normalize_walkthrough(raw_walkthrough, changed_files: list[str]) -> list[dic
 
 
 def extract_review_from_result(result: dict) -> dict | None:
+    """Parse structured response using FinalReviewOutput schema, with text fallback."""
+    import json as _json
+    import re as _re
+    from ncodereview.schemas import FinalReviewOutput
+
     structured = result.get("structured_response")
+
     if structured is not None:
-        if isinstance(structured, dict):
-            return structured
         if hasattr(structured, "model_dump"):
-            return structured.model_dump()
-        if hasattr(structured, "dict"):
-            return structured.dict()
-    text = result.get("content") or result.get("text") or ""
+            structured = structured.model_dump()
+        elif hasattr(structured, "dict"):
+            structured = structured.dict()
+
+        try:
+            return FinalReviewOutput.parse_obj(structured).model_dump()
+        except Exception as exc:
+            logger.warning("FinalReviewOutput parse failed: %s — trying text fallback", exc)
+
+    text = result.get("content") or ""
     if messages := result.get("messages"):
-        last_msg = messages[-1]
-        if hasattr(last_msg, "content"):
-            text = last_msg.content
-        elif isinstance(last_msg, dict):
-            text = last_msg.get("content", text)
-    review = _parse_json_from_text(text)
-    if review is not None:
-        # Also extract raw subagent outputs from the message history.
-        # Each subagent result appears as an AIMessage with content containing
-        # the raw JSON from that subagent (task result messages).
-        raw_outputs: dict[str, str] = {}
-        for msg in messages:
-            content = ""
-            if hasattr(msg, "content"):
-                content = msg.content
-            elif isinstance(msg, dict):
-                content = msg.get("content", "")
-            if not content or not isinstance(content, str):
-                continue
-            # Try to parse as JSON — if it has "issues" and/or "positives"
-            # at top level it looks like a subagent raw output
-            try:
-                import json
-                parsed = json.loads(content)
-                if isinstance(parsed, dict) and ("issues" in parsed or "positives" in parsed):
-                    # Determine which subagent from name annotation or first key
-                    name = None
-                    if hasattr(msg, "name") and msg.name:
-                        name = msg.name
-                    elif isinstance(msg, dict) and msg.get("name"):
-                        name = msg.get("name")
-                    key = name if name else _infer_subagent_key(parsed)
-                    if key:
-                        raw_outputs[key] = content
-            except (json.JSONDecodeError, Exception):
-                pass
-        if raw_outputs and "raw_agent_outputs" not in review:
-            review["raw_agent_outputs"] = raw_outputs
-    return review
+        last = messages[-1]
+        text = getattr(last, "content", "") or ""
 
-
-def _infer_subagent_key(parsed: dict) -> str | None:
-    """Infer subagent name from the structure of a raw subagent JSON."""
-    issues = parsed.get("issues", [])
-    positives = parsed.get("positives", [])
-    if not issues and not positives:
-        return None
-    # All subagents return the same shape; use a heuristic based on content
-    # The orchestrator prompt tells it to key by subagent name, so if the
-    # orchestrator followed instructions, raw_outputs will already be populated.
-    # This is a fallback for when the orchestrator didn't include it.
-    return "subagent"
-
-
-def _parse_json_from_text(text: str) -> dict | None:
-    import json
-    import re
     text = text.strip()
-    code_block_match = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", text)
-    if code_block_match:
-        try:
-            return json.loads(code_block_match.group(1))
-        except json.JSONDecodeError:
-            pass
-    brace_start = text.find("{")
-    if brace_start == -1:
+    if not text:
         return None
-    for try_start in range(brace_start, len(text)):
+
+    text = _re.sub(r"```json\s*", "", text)
+    text = _re.sub(r"```\s*$", "", text)
+    text = text.strip()
+
+    try:
+        return FinalReviewOutput.parse_obj(_json.loads(text)).model_dump()
+    except Exception:
+        pass
+
+    m = _re.search(r"\{[\s\S]*\}", text)
+    if m:
         try:
-            candidate = text[try_start:]
-            return json.loads(candidate)
-        except json.JSONDecodeError:
+            return FinalReviewOutput.parse_obj(_json.loads(m.group(0))).model_dump()
+        except Exception:
             pass
+
     return None
 
 
