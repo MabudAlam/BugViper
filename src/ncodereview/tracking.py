@@ -9,6 +9,7 @@ from typing import Any
 
 from common.firebase_models import PRMetadata, PrReviewStatus, RepoMetadata, ReviewRunData
 from common.firebase_service import firebase_service
+from ncodereview.schemas import RepoDetails
 
 logger = logging.getLogger(__name__)
 
@@ -117,22 +118,22 @@ async def upsert_repo_metadata(
     uid: str,
     owner: str,
     repo: str,
-    repo_info: dict[str, Any],
+    repo_info: RepoDetails,
 ) -> None:
     try:
         repo_data = RepoMetadata(
             owner=owner, repo_name=repo,
-            full_name=repo_info.get("full_name", f"{owner}/{repo}"),
-            description=repo_info.get("description"),
-            language=repo_info.get("language"),
-            stars=repo_info.get("stars") or 0,
-            forks=repo_info.get("forks") or 0,
-            private=repo_info.get("private", False),
-            default_branch=repo_info.get("default_branch", "main"),
-            size=repo_info.get("size") or 0,
-            topics=repo_info.get("topics") or [],
-            github_created_at=repo_info.get("created_at"),
-            github_updated_at=repo_info.get("updated_at"),
+            full_name=repo_info.full_name or f"{owner}/{repo}",
+            description=repo_info.description,
+            language=repo_info.language,
+            stars=repo_info.stars or 0,
+            forks=repo_info.forks or 0,
+            private=repo_info.private or False,
+            default_branch=repo_info.default_branch or "main",
+            size=repo_info.size or 0,
+            topics=repo_info.topics or [],
+            github_created_at=repo_info.created_at,
+            github_updated_at=repo_info.updated_at,
             ingestion_status="pending",
         )
         firebase_service.upsert_repo_metadata(uid, owner, repo, repo_data)

@@ -1,26 +1,13 @@
-"""GitHub App client.
-
-This module is the single integration point for GitHub App authentication and
-GitHub REST API calls.
-
-Implementation notes:
-- Uses githubkit for HTTP, retries, and endpoint wrappers.
-- Maintains small, explicit caches (installation token + PR payload) to avoid
-  redundant requests and races.
-"""
-
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-import subprocess
-import tempfile
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
+from common.diff_parser import split_diff_by_file
 from githubkit import GitHub
 from githubkit.auth import AppAuthStrategy, TokenAuthStrategy
 from githubkit.exception import GitHubException
@@ -166,94 +153,41 @@ class GitHubClient:
     # Repository helpers
     # ------------------------------------------------------------------
 
-    async def check_repository_access(self, owner: str, repo: str) -> bool:
-        try:
-            gh = await self._get_repo_gh(owner, repo)
-            r = await gh.rest.repos.async_get(owner, repo)
-            return r.status_code == 200
-        except Exception:
-            return False
+    async def get_repository_info(self, owner: str, repo: str) -> RepoDetails:
+        """Return repository metadata (name, description, stars, etc.)."""
+        from ncodereview.schemas import RepoDetails
 
-    async def get_repository_info(self, owner: str, repo: str) -> Dict[str, Any]:
         gh = await self._get_repo_gh(owner, repo)
         r = await gh.rest.repos.async_get(owner, repo)
         d = r.parsed_data
 
-        # githubkit returns datetimes for created_at/updated_at; our API/Firebase
-        # models store these as strings for JSON friendliness.
         created_at = getattr(d, "created_at", None)
         if hasattr(created_at, "isoformat"):
             created_at = created_at.isoformat()
         updated_at = getattr(d, "updated_at", None)
         if hasattr(updated_at, "isoformat"):
             updated_at = updated_at.isoformat()
-        return {
-            "name": getattr(d, "name", None),
-            "full_name": getattr(d, "full_name", None),
-            "description": getattr(d, "description", None),
-            "private": getattr(d, "private", None),
-            "default_branch": getattr(d, "default_branch", None),
-            "language": getattr(d, "language", None),
-            "size": getattr(d, "size", None),
-            "stars": getattr(d, "stargazers_count", None),
-            "forks": getattr(d, "forks_count", None),
-            "topics": getattr(d, "topics", None) or [],
-            "created_at": created_at,
-            "updated_at": updated_at,
-        }
-
-    async def clone_repository(
-        self,
-        owner: str,
-        repo: str,
-        branch: Optional[str] = None,
-        clone_dir: Optional[Path] = None,
-    ) -> Path:
-        token = await self._get_installation_token(owner, repo)
-
-        if clone_dir is None:
-            clone_dir = Path(tempfile.gettempdir()) / owner / repo
-        else:
-            clone_dir = Path(clone_dir) / owner / repo
-
-        if clone_dir.exists():
-            import shutil
-
-            shutil.rmtree(clone_dir)
-        clone_dir.parent.mkdir(parents=True, exist_ok=True)
-
-        clone_url = f"https://x-access-token:{token}@github.com/{owner}/{repo}.git"
-        cmd = ["git", "clone"]
-        if branch:
-            cmd.extend(["--branch", branch])
-        cmd.extend([clone_url, str(clone_dir)])
-
-        logger.info("Cloning %s/%s ...", owner, repo)
-        result = await asyncio.to_thread(
-            subprocess.run,
-            cmd,
-            capture_output=True,
-            text=True,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        return RepoDetails(
+            name=getattr(d, "name", None),
+            full_name=getattr(d, "full_name", None),
+            description=getattr(d, "description", None),
+            private=getattr(d, "private", None),
+            default_branch=getattr(d, "default_branch", None),
+            language=getattr(d, "language", None),
+            size=getattr(d, "size", None),
+            stars=getattr(d, "stargazers_count", None),
+            forks=getattr(d, "forks_count", None),
+            topics=getattr(d, "topics", None) or [],
+            created_at=created_at,
+            updated_at=updated_at,
         )
-
-        if result.returncode != 0:
-            stderr = str(result.stderr or "").replace(token, "***")
-            if "Repository not found" in stderr:
-                raise GitHubAppAccessError(
-                    f"Repository '{owner}/{repo}' not found via git clone. "
-                    "Ensure the GitHub App has Contents: Read permission."
-                )
-            raise GitCloneError(f"git clone failed for {owner}/{repo}:\n{stderr}")
-
-        logger.info("Cloned %s/%s → %s", owner, repo, clone_dir)
-        return clone_dir
 
     # ------------------------------------------------------------------
     # PR data (consistent snapshot)
     # ------------------------------------------------------------------
 
     async def _get_pr(self, owner: str, repo: str, pr_number: int) -> dict:
+        """Fetch the raw PR object from GitHub."""
         gh = await self._get_repo_gh(owner, repo)
         r = await gh.rest.pulls.async_get(owner, repo, pr_number)
         pr_obj = r.parsed_data
@@ -266,18 +200,22 @@ class GitHubClient:
             return dict(pr_obj)
 
     async def get_pr_info(self, owner: str, repo: str, pr_number: int) -> Dict[str, str]:
+        """Return PR title and body."""
         d = await self._get_pr(owner, repo, pr_number)
         return {"title": d.get("title") or "", "body": d.get("body") or ""}
 
     async def get_pr_base_sha(self, owner: str, repo: str, pr_number: int) -> str:
+        """Return the base branch SHA for a PR."""
         d = await self._get_pr(owner, repo, pr_number)
         return str(d["base"]["sha"])
 
     async def get_pr_head_ref(self, owner: str, repo: str, pr_number: int) -> str:
+        """Return the head commit SHA for a PR."""
         d = await self._get_pr(owner, repo, pr_number)
         return str(d["head"]["sha"])
 
     async def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
+        """Return the unified diff for a PR (base...head comparison)."""
         d = await self._get_pr(owner, repo, pr_number)
         base_sha = str(d["base"]["sha"])
         head_sha = str(d["head"]["sha"])
@@ -297,7 +235,7 @@ class GitHubClient:
         base_sha: str,
         head_sha: str,
     ) -> str:
-        """Return the diff between two commits (base...head)."""
+        """Return the diff between any two commits (base...head)."""
         gh = await self._get_repo_gh(owner, repo)
         r = await gh.arequest(
             "GET",
@@ -306,88 +244,83 @@ class GitHubClient:
         )
         return r.text
 
-    async def get_pr_files(self, owner: str, repo: str, pr_number: int) -> List[Dict[str, Any]]:
-        gh = await self._get_repo_gh(owner, repo)
-        out: List[Dict[str, Any]] = []
-        page = 1
-        while True:
-            r = await gh.rest.pulls.async_list_files(
-                owner,
-                repo,
-                pr_number,
-                page=page,
-                per_page=100,
-            )
-            batch = list(r.parsed_data)
-            if not batch:
-                break
-            for f in batch:
-                out.append(
-                    {
-                        "filename": getattr(f, "filename", None),
-                        "status": getattr(f, "status", None),
-                        "additions": getattr(f, "additions", 0),
-                        "deletions": getattr(f, "deletions", 0),
-                        "changes": getattr(f, "changes", 0),
-                        "patch": getattr(f, "patch", None),
-                    }
-                )
-            if len(batch) < 100:
-                break
-            page += 1
-        return out
+    async def _get_head_branch(self, owner: str, repo: str, pr_number: int) -> str:
+        """Return the head branch name of a PR. Falls back to 'main' on failure."""
+        try:
+            pr = await self._get_pr(owner, repo, pr_number)
+            return pr.get("head", {}).get("ref", "") or "main"
+        except Exception:
+            return "main"
 
-    async def get_pr_commits(self, owner: str, repo: str, pr_number: int) -> List[Dict[str, Any]]:
-        gh = await self._get_repo_gh(owner, repo)
-        out: List[Dict[str, Any]] = []
-        page = 1
-        while True:
-            r = await gh.rest.pulls.async_list_commits(
-                owner,
-                repo,
-                pr_number,
-                page=page,
-                per_page=100,
-            )
-            batch = list(r.parsed_data)
-            if not batch:
-                break
-            for c in batch:
-                commit = getattr(c, "commit", None)
-                msg = getattr(commit, "message", "") if commit else ""
-                date = None
-                if commit and getattr(commit, "author", None):
-                    date = getattr(commit.author, "date", None)
-                out.append(
-                    {
-                        "sha": getattr(c, "sha", None),
-                        "message": (msg.split("\n")[0] if msg else ""),
-                        "date": date,
-                    }
-                )
-            if len(batch) < 100:
-                break
-            page += 1
-        return out
+    async def fetch_pr_data(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> GithubPrDetails:
+        """Fetch all PR data needed for review in parallel."""
+        from ncodereview.schemas import GithubPrDetails, GithubPrFiles, GithubPrMeta
 
-    async def has_open_pr_for_branch(self, owner: str, repo: str, branch: str) -> bool:
-        """Return True if there is an open PR whose head is owner:branch.
-
-        Used to avoid ingesting direct pushes to a branch that is already
-        represented by an open PR (which would be an intermediate, unmerged state).
-        """
-
-        gh = await self._get_repo_gh(owner, repo)
-        head = f"{owner}:{branch}"
-        r = await gh.rest.pulls.async_list(
-            owner,
-            repo,
-            state="open",
-            head=head,
-            per_page=1,
-            page=1,
+        diff_text, pr_info, head_sha, base_sha = await asyncio.gather(
+            self.get_pr_diff(owner, repo, pr_number),
+            self.get_pr_info(owner, repo, pr_number),
+            self.get_pr_head_ref(owner, repo, pr_number),
+            self.get_pr_base_sha(owner, repo, pr_number),
         )
-        return bool(list(r.parsed_data))
+        head_branch = await self._get_head_branch(owner, repo, pr_number)
+        changed = list(split_diff_by_file(diff_text).keys())
+        pr_files_raw = await asyncio.gather(
+            *[self.get_file_content(owner, repo, f, ref=head_sha) for f in changed],
+            return_exceptions=True,
+        )
+        files = [
+            GithubPrFiles(filename=fp, fileContent=content)
+            for fp, content in zip(changed, pr_files_raw)
+            if not isinstance(content, Exception) and content is not None
+        ]
+        return GithubPrDetails(
+            difftext=diff_text,
+            prMeta=GithubPrMeta(prTitle=pr_info.get("title", ""), prBody=pr_info.get("body", "")),
+            head_sha=head_sha,
+            base_sha=base_sha,
+            head_branch=head_branch,
+            files=files,
+        )
+
+    async def get_incremental_diff(
+        self,
+        owner: str,
+        repo: str,
+        base_sha: str,
+        head_sha: str,
+    ) -> str | None:
+        """Return the diff between two commits. Returns None on failure."""
+        try:
+            return await self.compare_two_shas(owner, repo, base_sha, head_sha)
+        except Exception:
+            return None
+
+    async def get_installation_token(self, owner: str, repo: str) -> str:
+        """Return a valid installation token for the given repo."""
+        return await self._get_installation_token(owner, repo)
+
+    async def post_failure_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        reason: str,
+    ) -> None:
+        """Post a failure comment to the PR. Swallows errors so the caller still completes."""
+        try:
+            await self.post_comment(
+                owner,
+                repo,
+                pr_number,
+                f"BugViper Review Failed\n\n`{reason}`",
+            )
+        except Exception as exc:
+            logger.warning("Could not post failure comment: %s", exc)
 
     async def get_file_content(
         self,
@@ -396,6 +329,7 @@ class GitHubClient:
         path: str,
         ref: Optional[str] = None,
     ) -> Optional[str]:
+        """Return file content at the given ref. Returns None if 404."""
         gh = await self._get_repo_gh(owner, repo)
         params = {"ref": ref} if ref else None
         try:
@@ -416,6 +350,7 @@ class GitHubClient:
     # ------------------------------------------------------------------
 
     async def post_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
+        """Post a comment on a PR issue thread."""
         gh = await self._get_repo_gh(owner, repo)
         await gh.rest.issues.async_create_comment(owner, repo, pr_number, body=body)
 
@@ -428,6 +363,7 @@ class GitHubClient:
         body: str,
         event: Literal["APPROVE", "REQUEST_CHANGES", "COMMENT"] = "COMMENT",
     ) -> None:
+        """Submit a PR review with a body and event type."""
         gh = await self._get_repo_gh(owner, repo)
         await gh.rest.pulls.async_create_review(
             owner,
@@ -475,20 +411,32 @@ class GitHubClient:
                 try:
                     if "start_line" in attempt:
                         resp = await gh.rest.pulls.async_create_review_comment(
-                            owner, repo, pr_number,
-                            body=body, commit_id=commit_sha, path=path,
-                            line=a_line, start_line=attempt["start_line"],
+                            owner,
+                            repo,
+                            pr_number,
+                            body=body,
+                            commit_id=commit_sha,
+                            path=path,
+                            line=a_line,
+                            start_line=attempt["start_line"],
                             side="RIGHT",
                         )
                     else:
                         resp = await gh.rest.pulls.async_create_review_comment(
-                            owner, repo, pr_number,
-                            body=body, commit_id=commit_sha, path=path,
-                            line=a_line, side="RIGHT",
+                            owner,
+                            repo,
+                            pr_number,
+                            body=body,
+                            commit_id=commit_sha,
+                            path=path,
+                            line=a_line,
+                            side="RIGHT",
                         )
                     comment_id = resp.parsed_data.id if resp.parsed_data else None
                     in_reply_to = (
-                        getattr(resp.parsed_data, "in_reply_to_id", None) if resp.parsed_data else None
+                        getattr(resp.parsed_data, "in_reply_to_id", None)
+                        if resp.parsed_data
+                        else None
                     )
                     thread_id = in_reply_to or comment_id
                     return {"success": True, "comment_id": comment_id, "thread_id": thread_id}
@@ -516,16 +464,22 @@ class GitHubClient:
                     # Connection/network errors — retry
                     logger.debug(
                         "GitHub API error on %s:%s (attempt %d): %s",
-                        path, commit_sha[:7], retry + 1, exc,
+                        path,
+                        commit_sha[:7],
+                        retry + 1,
+                        exc,
                     )
                     last_error = exc
                     if retry < 2:
                         import asyncio
+
                         await asyncio.sleep(1 * (retry + 1))
                     else:
                         logger.warning(
                             "Inline comment failed after 3 retries for %s:%s: %s",
-                            path, line, exc,
+                            path,
+                            line,
+                            exc,
                         )
                         return {"success": False, "comment_id": None, "thread_id": None}
 
@@ -548,23 +502,6 @@ class GitHubClient:
             return False
         return 400 <= int(status) < 500
 
-    async def update_pr_body(self, owner: str, repo: str, pr_number: int, body: str) -> None:
-        gh = await self._get_repo_gh(owner, repo)
-        existing_pr = await self._get_pr(owner, repo, pr_number)
-        existing_body = existing_pr.get("body") or ""
-
-        if existing_body and "## Summary by BugViper" not in existing_body:
-            new_body = f"{existing_body}\n\n{body}"
-        else:
-            new_body = body
-
-        await gh.rest.pulls.async_update(
-            owner,
-            repo,
-            pr_number,
-            body=new_body,
-        )
-
     async def create_comment_reaction(
         self,
         owner: str,
@@ -572,6 +509,7 @@ class GitHubClient:
         comment_id: int,
         reaction: Literal["+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"],
     ) -> bool:
+        """Add a reaction emoji to a PR comment. Returns True on success."""
         valid_reactions = {"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"}
         if reaction not in valid_reactions:
             logger.warning("Invalid reaction: %s. Must be one of %s", reaction, valid_reactions)
@@ -769,29 +707,12 @@ class GitHubClient:
         )
         return _json.loads(r.text) if r.text else {}
 
+    # ------------------------------------------------------------------
+    # OAuth (user token) helpers
+    # ------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Module-level singleton — reuses caches across all review runs
-# ---------------------------------------------------------------------------
-_client: Optional[GitHubClient] = None
-
-
-def get_github_client() -> GitHubClient:
-    global _client
-    if _client is None:
-        _client = GitHubClient()
-    return _client
-
-
-# ---------------------------------------------------------------------------
-# OAuth (user token) helpers
-# ---------------------------------------------------------------------------
-
-
-class GitHubOAuthService:
-    """GitHub API calls authenticated with a user's OAuth token."""
-
-    def fetch_user_profile(self, token: str) -> dict:
+    @staticmethod
+    def fetch_user_profile(token: str) -> dict:
         """Fetch GitHub user profile for the given OAuth access token.
 
         Returns empty dict on failure (non-critical for login flow).
@@ -818,7 +739,8 @@ class GitHubOAuthService:
             logger.warning("Unexpected error fetching GitHub profile: %s", exc)
         return {}
 
-    def fetch_user_repos(self, token: str) -> list[dict]:
+    @staticmethod
+    def fetch_user_repos(token: str) -> list[dict]:
         """Fetch the authenticated user's repositories.
 
         Returns a list of repo dicts.
@@ -860,4 +782,14 @@ class GitHubOAuthService:
             raise ValueError(f"GitHub API error: {getattr(exc, 'status_code', 'unknown')}") from exc
 
 
-github_oauth_service = GitHubOAuthService()
+# ---------------------------------------------------------------------------
+# Module-level singleton — reuses caches across all review runs
+# ---------------------------------------------------------------------------
+_client: Optional[GitHubClient] = None
+
+
+def get_github_client() -> GitHubClient:
+    global _client
+    if _client is None:
+        _client = GitHubClient()
+    return _client

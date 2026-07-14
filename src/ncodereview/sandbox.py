@@ -107,33 +107,11 @@ def inject_call_graph(sbx: Sandbox, call_graph_json: str, callgraph_md: str) -> 
     review_dir = "/home/user/review"
     sbx.commands.run(f"mkdir -p {review_dir}")
     sbx.files.write(f"{review_dir}/call_graph.json", call_graph_json)
-    sbx.files.write(f"{review_dir}/call_graph.md", callgraph_md)
+    sbx.files.write(f"{review_dir}/blast_radius.md", callgraph_md)
     logger.info(
-        "Injected call_graph.json (%d chars) and call_graph.md (%d chars) into sandbox",
+        "Injected call_graph.json (%d chars) and blast_radius.md (%d chars) into sandbox",
         len(call_graph_json),
         len(callgraph_md),
-    )
-
-
-def inject_files(sbx: Sandbox, file_list: list[str], blast_radius_md: str) -> None:
-    """Write batch-specific files to the sandbox.
-
-    Args:
-        sbx: E2B sandbox instance
-        file_list: List of file paths in this batch
-        blast_radius_md: Filtered blast radius markdown for this batch
-    """
-    review_dir = "/home/user/review"
-    sbx.commands.run(f"mkdir -p {review_dir}")
-
-    file_list_json = json.dumps(file_list)
-    sbx.files.write(f"{review_dir}/batch_files.json", file_list_json)
-    sbx.files.write(f"{review_dir}/blast_radius.md", blast_radius_md)
-
-    logger.info(
-        "Injected batch: %d files, blast_radius.md (%d chars)",
-        len(file_list),
-        len(blast_radius_md),
     )
 
 

@@ -7,11 +7,20 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MINIMAX_BASE_URL = "https://api.minimax.io/v1"
 
 
+_LLM_DEFAULTS = {
+    "temperature": 0,
+    "max_retries": 10,
+    "timeout": 120,
+    "streaming": False,
+}
+
+
 def load_gemini_model(model: str) -> BaseChatModel:
     llm = ChatOpenAI(
         model=f"google/{model}",
         api_key=os.getenv("OPENROUTER_API_KEY"),
         base_url=OPENROUTER_BASE_URL,
+        **_LLM_DEFAULTS,
     )
     llm.profile = {"max_input_tokens": 128000}
     return llm
@@ -29,6 +38,7 @@ def load_minimax_model(model: str) -> BaseChatModel:
         model=model,
         api_key=api_key,
         base_url=MINIMAX_BASE_URL,
+        **_LLM_DEFAULTS,
     )
     llm.profile = {"max_input_tokens": 128000}
     return llm
@@ -44,6 +54,7 @@ def load_chat_model(model: str) -> BaseChatModel:
         model=model,
         api_key=os.getenv("OPENROUTER_API_KEY"),
         base_url=OPENROUTER_BASE_URL,
+        **_LLM_DEFAULTS,
     )
     llm.profile = {"max_input_tokens": 128000}
     return llm
