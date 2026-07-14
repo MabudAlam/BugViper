@@ -155,7 +155,7 @@ class GitHubClient:
 
     async def get_repository_info(self, owner: str, repo: str) -> RepoDetails:
         """Return repository metadata (name, description, stars, etc.)."""
-        from ncodereview.types import RepoDetails
+        from ncodereview.schemas import RepoDetails
 
         gh = await self._get_repo_gh(owner, repo)
         r = await gh.rest.repos.async_get(owner, repo)
@@ -259,7 +259,7 @@ class GitHubClient:
         pr_number: int,
     ) -> GithubPrDetails:
         """Fetch all PR data needed for review in parallel."""
-        from ncodereview.types import GithubPrDetails, GithubPrFiles, GithubPrMeta
+        from ncodereview.schemas import GithubPrDetails, GithubPrFiles, GithubPrMeta
 
         diff_text, pr_info, head_sha, base_sha = await asyncio.gather(
             self.get_pr_diff(owner, repo, pr_number),
