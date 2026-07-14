@@ -83,6 +83,11 @@ Issues = "https://github.com/Pavel401/BugViper/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/api",
