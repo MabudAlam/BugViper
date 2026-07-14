@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 
 from common.schemas import ContextData, FileSummary, Issue, ReconciledReview
@@ -8,6 +9,9 @@ _SECURITY_TOOLS = {"bandit", "semgrep", "gitleaks"}
 
 
 def _model_label(debug_info: dict | None) -> str:
+    env_model = os.environ.get("DEEPAGENT_MODEL")
+    if env_model:
+        return env_model
     if debug_info and debug_info.get("deepagent"):
         return "deepagent"
     return "BugViper AI"
@@ -388,59 +392,6 @@ def format_inline_comment(issue: Issue) -> str:
 
 
     return "\n".join(lines)
-def _render_debug_section(raw_agent_outputs: dict[str, str], debug_info: dict) -> list[str]:
-    """Render a collapsible debug section with agent JSON + full lint dump."""
-    lines: list[str] = []
-    lines.append("<details>")
-    lines.append("<summary>🛠️ Debug — Agent output &amp; static analysis dump</summary>")
-    lines.append("")
-
-    # Pipeline stats
-    tool_rounds = debug_info.get("tool_rounds_used", 0)
-    lint_raw = debug_info.get("lint_raw_count", 0)
-    lint_pr = debug_info.get("lint_on_diff_count", 0)
-    lines.append(f"**Explorer tool rounds:** {tool_rounds}")
-    lines.append(f"**Lint findings:** {lint_pr} in PR files / {lint_raw} total (pre-filter)")
-    lines.append("")
-
-    # Raw lint dump
-    lint_raw_issues: list[dict] = debug_info.get("lint_raw", [])
-    if lint_raw_issues:
-        lines.append("**All lint findings (including pre-existing / off-diff):**")
-        lines.append("")
-        lines.append("| File | Line | Tool | Rule | Severity |")
-        lines.append("|------|------|------|------|----------|")
-        for i in lint_raw_issues:
-            title = i.get("title", "")
-            rule = ""
-            if "] " in title:
-                after = title.split("] ", 1)[1]
-                rule = after.split(":")[0].strip() if ":" in after else after.split()[0]
-            tool = title[1 : title.index("]")] if title.startswith("[") and "]" in title else "lint"
-            lines.append(
-                f"| `{i.get('file', '')}` | {i.get('line_start', '')} "
-                f"| {tool} | `{rule}` | {i.get('severity', '')} |"
-            )
-        lines.append("")
-
-    # Raw agent JSON outputs per file
-    if raw_agent_outputs:
-        lines.append("**Raw Agent Output (JSON):**")
-        lines.append("")
-        for file_path, raw_json in raw_agent_outputs.items():
-            lines.append(f"### `{file_path}`")
-            lines.append("")
-            # Escape embedded code blocks to prevent markdown breakage
-            display = raw_json.replace("```", "\\`\\`\\`")
-            lines.append("```json")
-            lines.append(display)
-            lines.append("```")
-            lines.append("")
-
-    lines.append("</details>")
-    lines.append("")
-    return lines
-
 
 def format_review_summary(
     review: ReconciledReview,
@@ -452,8 +403,6 @@ def format_review_summary(
     inline_posted: int = 0,
     inline_skipped: int = 0,
     judgment_counts: dict[str, int] | None = None,
-    raw_agent_outputs: dict[str, str] | None = None,
-    debug_info: dict | None = None,
 ) -> str:
     """Format the top-level PR review body (overview only).
 
@@ -472,13 +421,7 @@ def format_review_summary(
     # ── Header ────────────────────────────────────────────────────────────────
     parts.append("## 🐍 BugViper AI Code Review")
     parts.append("")
-    head_sha = None
-    if debug_info:
-        head_sha = debug_info.get("head_sha")
-    sha_part = f" | **Head SHA**: `{head_sha}`" if head_sha else ""
-    parts.append(
-        f"**PR**: #{pr_number} | **Model**: `{_model_label(debug_info)}`{sha_part}"
-    )
+    parts.append(f"**PR**: #{pr_number} | **Model**: `{_model_label(None)}`")
     parts.append("")
 
     high_conf_actionable = [
@@ -499,29 +442,9 @@ def format_review_summary(
         if getattr(i, "classification", None) == "outside-diff"
     ]
 
-    badges = []
-    if fixed_issues:
-        badges.append(f"✅ {len(fixed_issues)} fixed")
-    if open_issues:
-        badges.append(f"🔁 {len(open_issues)} still open")
-    if new_issues:
-        badges.append(f"🆕 {len(new_issues)} new")
-    if lint_issues:
-        badges.append(f"🔬 {len(lint_issues)} static")
-    if badges:
-        parts.append("  ".join(badges))
-        parts.append("")
-
-    if judgment_counts:
-        parts.append(
-            f"**Actionable:** {len(high_conf_actionable)}  "
-            f"| 🟡 **Nitpicks:** {judgment_counts.get('nitpick', len(nitpicks))}  "
-            f"| ⚪ **Outside diff:** {judgment_counts.get('outside-diff', len(outside_diff))}  "
-            f"| ✂️ **Dropped (false):** {judgment_counts.get('false', 0)}"
-        )
-    else:
-        nitpick_note = f" + {len(nitpicks)} nitpicks below" if nitpicks else ""
-        parts.append(f"**Actionable: {len(high_conf_actionable)}**{nitpick_note}")
+    total = len(new_issues) + len(open_issues)
+    parts.append(f"**Issues found: {total}**")
+    parts.append("")
     if inline_posted:
         skipped_note = f" ({inline_skipped} outside diff)" if inline_skipped else ""
         parts.append(
@@ -748,18 +671,10 @@ def format_review_summary(
             )
         )
 
-    # ── Debug section ─────────────────────────────────────────────────────────
-    if raw_agent_outputs or debug_info:
-        for line in _render_debug_section(raw_agent_outputs or {}, debug_info or {}):
-            parts.append(line)
-
     # ── Footer ────────────────────────────────────────────────────────────────
     parts.append("---")
     parts.append("")
-    parts.append(
-        f"*🤖 Generated by [BugViper](https://github.com/Pavel401/BugViper)"
-        f" | Powered by `{_model_label(debug_info)}`*"
-    )
+    parts.append("*Reviewed By BugViper*")
 
     return "\n".join(parts)
 
@@ -771,8 +686,6 @@ def format_github_comment(
     lint_issues: list[Issue] | None = None,
     files_changed_summary: list[FileSummary] | None = None,
     walk_through: list[str] | None = None,
-    raw_agent_outputs: dict[str, str] | None = None,
-    debug_info: dict | None = None,
 ) -> str:
     """Format a ReconciledReview into a GitHub PR comment (CodeRabbit-style)."""
     parts: list[str] = []
@@ -787,7 +700,7 @@ def format_github_comment(
     # ── Header ────────────────────────────────────────────────────────────────
     parts.append("## 🐍 BugViper AI Code Review")
     parts.append("")
-    parts.append(f"**PR**: #{pr_number} | **Model**: {_model_label(debug_info)}")
+    parts.append(f"**PR**: #{pr_number} | **Model**: `{_model_label(None)}`")
     parts.append("")
 
     run_summary_parts = []
@@ -928,17 +841,9 @@ def format_github_comment(
         parts.append("</details>")
         parts.append("")
 
-    # ── Debug section ─────────────────────────────────────────────────────────
-    if raw_agent_outputs or debug_info:
-        for line in _render_debug_section(raw_agent_outputs or {}, debug_info or {}):
-            parts.append(line)
-
     # ── Footer ────────────────────────────────────────────────────────────────
     parts.append("---")
     parts.append("")
-    parts.append(
-        f"*🤖 Generated by [BugViper](https://github.com/Pavel401/BugViper)"
-        f" | Powered by `{_model_label(debug_info)}`*"
-    )
+    parts.append("*Reviewed By BugViper*")
 
     return "\n".join(parts)
