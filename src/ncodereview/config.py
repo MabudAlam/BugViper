@@ -46,9 +46,19 @@ class DeepAgentConfig(BaseSettings):
     deepagent_review_mode: str = Field(
         default="normal",
         description=(
-            "Review depth: 'fast' (generalist, ~4 steps/lens), "
+            "Review depth: "
+            "'fast' (generalist, ~4 steps/lens), "
             "'normal' (generalist, ~20 steps/lens), "
             "'deep' (3 specialized agents in parallel, ~100 steps each)."
+        ),
+    )
+
+    max_input_tokens: int = Field(
+        default=128000,
+        description=(
+            "Maximum input tokens for the model (context window). "
+            "Used for adaptive-fit profile selection and chunk budget computation. "
+            "Thresholds: >=64K=full, 32-64K=compact, <32K=minimal."
         ),
     )
 
