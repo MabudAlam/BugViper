@@ -1,3 +1,5 @@
+"""Subagent creation with step budgets and mode dispatch."""
+
 from __future__ import annotations
 
 from deepagents.backends import BackendProtocol
@@ -7,6 +9,7 @@ from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain.agents.middleware.todo import TodoListMiddleware
 from langchain_core.language_models import BaseChatModel
 
+from ncodereview.model_call_limit import ModelCallLimitMiddleware
 from ncodereview.prompts import (
     CORRECTNESS_REVIEWER_PROMPT,
     GENERALIST_PROMPT,
@@ -15,7 +18,21 @@ from ncodereview.prompts import (
 )
 from ncodereview.schemas import SubagentReviewPayload
 
-RUN_LIMIT = 20
+# Step budgets per review mode
+FAST_MODE_STEPS: dict[str, int] = {
+    'generalist': 4,
+    'bug': 4,
+    'security': 3,
+    'performance': 3,
+}
+NORMAL_MODE_STEPS: dict[str, int] = {
+    'generalist': 30,
+    'bug': 30,
+    'security': 20,
+    'performance': 20,
+}
+DEEP_MODE_STEPS = 100
+
 SUMMARIZATION_TRIGGER_TOKENS = 15000
 SUMMARIZATION_KEEP_TOKENS = 5000
 
@@ -34,10 +51,45 @@ finalize your response. If you run out of tool calls before covering all files,
 report whatever findings you have and note which files were not reviewed."""
 
 
-def calculate_batch_tool_limits(files_in_batch: int) -> int:
-    base = 60
-    extra = files_in_batch * 15
-    return min(base + extra, 300)
+def calculate_batch_tool_limits(files_in_batch: int, review_mode: str = 'normal') -> int:
+    if review_mode == 'fast':
+        base = max(FAST_MODE_STEPS.values())
+    elif review_mode == 'deep':
+        base = DEEP_MODE_STEPS
+    else:
+        base = max(NORMAL_MODE_STEPS.values())
+
+    if review_mode == 'deep':
+        return DEEP_MODE_STEPS
+
+    BASELINE_FILES = 8
+    STEPS_PER_EXTRA_FILE = 0.5
+
+    if files_in_batch <= BASELINE_FILES:
+        return base
+
+    extra = round((files_in_batch - BASELINE_FILES) * STEPS_PER_EXTRA_FILE)
+    return min(base + extra, DEEP_MODE_STEPS)
+
+
+def get_subagent_steps(agent_name: str, review_mode: str, files_in_batch: int) -> int:
+    if review_mode == 'deep':
+        return DEEP_MODE_STEPS
+
+    table = FAST_MODE_STEPS if review_mode == 'fast' else NORMAL_MODE_STEPS
+    base = table.get(agent_name, 20)
+
+    if review_mode == 'fast':
+        return base
+
+    BASELINE_FILES = 8
+    STEPS_PER_EXTRA_FILE = 0.5
+
+    if files_in_batch <= BASELINE_FILES:
+        return base
+
+    extra = round((files_in_batch - BASELINE_FILES) * STEPS_PER_EXTRA_FILE)
+    return min(base + extra, DEEP_MODE_STEPS)
 
 
 def _build_review_agent(
@@ -46,7 +98,7 @@ def _build_review_agent(
     system_prompt: str,
     model: BaseChatModel | str,
     backend: BackendProtocol,
-    run_limit: int = 20,
+    run_limit: int = 30,
 ) -> dict:
     from deepagents.middleware.summarization import (
         SummarizationMiddleware,
@@ -64,15 +116,16 @@ def _build_review_agent(
         system_prompt=system_prompt,
         tools=[],
         middleware=[
+            ModelCallLimitMiddleware(run_limit=run_limit, exit_behavior="report"),
             FilesystemMiddleware(backend=backend),
-            ToolCallLimitMiddleware(run_limit=run_limit),
+            ToolCallLimitMiddleware(run_limit=300),
             TodoListMiddleware(system_prompt=CODE_REVIEW_TODO_PROMPT),
             summ,
             SummarizationToolMiddleware(summ),
         ],
         name=name,
         response_format=SubagentReviewPayload,
-    )  # ty:ignore[no-matching-overload]
+    )
     return {
         "name": name,
         "description": description,
@@ -83,18 +136,20 @@ def _build_review_agent(
 def build_subagents(
     model: BaseChatModel | str,
     backend: BackendProtocol,
-    run_limit: int = 20,
+    review_mode: str = 'normal',
+    files_in_batch: int = 1,
     use_generalist: bool = False,
 ) -> list[dict]:
     if use_generalist:
-        return _build_generalist_subagents(model, backend, run_limit)
-    return _build_full_subagents(model, backend, run_limit)
+        return _build_generalist_subagents(model, backend, review_mode, files_in_batch)
+    return _build_full_subagents(model, backend, review_mode, files_in_batch)
 
 
 def _build_full_subagents(
     model: BaseChatModel | str,
     backend: BackendProtocol,
-    run_limit: int,
+    review_mode: str,
+    files_in_batch: int,
 ) -> list[dict]:
     return [
         _build_review_agent(
@@ -104,7 +159,7 @@ def _build_full_subagents(
             CORRECTNESS_REVIEWER_PROMPT,
             model,
             backend,
-            run_limit=run_limit,
+            run_limit=get_subagent_steps('bug', review_mode, files_in_batch),
         ),
         _build_review_agent(
             "security-auditor",
@@ -114,7 +169,7 @@ def _build_full_subagents(
             SECURITY_AUDITOR_PROMPT,
             model,
             backend,
-            run_limit=run_limit,
+            run_limit=get_subagent_steps('security', review_mode, files_in_batch),
         ),
         _build_review_agent(
             "perf-reviewer",
@@ -124,7 +179,7 @@ def _build_full_subagents(
             PERF_REVIEWER_PROMPT,
             model,
             backend,
-            run_limit=run_limit,
+            run_limit=get_subagent_steps('performance', review_mode, files_in_batch),
         ),
     ]
 
@@ -132,7 +187,8 @@ def _build_full_subagents(
 def _build_generalist_subagents(
     model: BaseChatModel | str,
     backend: BackendProtocol,
-    run_limit: int,
+    review_mode: str,
+    files_in_batch: int,
 ) -> list[dict]:
     return [
         _build_review_agent(
@@ -141,6 +197,6 @@ def _build_generalist_subagents(
             GENERALIST_PROMPT,
             model,
             backend,
-            run_limit=run_limit,
+            run_limit=get_subagent_steps('generalist', review_mode, files_in_batch),
         ),
     ]
