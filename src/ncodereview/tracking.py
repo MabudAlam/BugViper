@@ -9,7 +9,7 @@ from typing import Any
 
 from common.firebase_models import PRMetadata, PrReviewStatus, RepoMetadata, ReviewRunData
 from common.firebase_service import firebase_service
-from ncodereview.types import RepoDetails
+from ncodereview.schemas import RepoDetails
 
 logger = logging.getLogger(__name__)
 
