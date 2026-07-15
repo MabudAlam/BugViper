@@ -12,15 +12,16 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from common.diff_parser import split_diff_by_file
-from common.github_client import GitHubClient, get_github_client
-from knowledge_parser.call_graph import analyze_pr_call_graph, render_blast_radius_markdown
-from knowledge_parser.knowledge_runner import (
+from code_graph import (
+    build_graph,
     changed_files_from_diff,
     clone_with_token,
-    parse_project,
+    extract_pr_call_graph,
+    parse_source_files,
+    render_blast_radius_markdown,
 )
-from knowledge_parser.repo_graph import upload_pr_call_graph
+from common.diff_parser import split_diff_by_file
+from common.github_client import GitHubClient, get_github_client
 from ncodereview.agent import (
     build_user_message,
     build_verifier_task,
@@ -31,8 +32,7 @@ from ncodereview.agent import (
 from ncodereview.batch import (
     batch_pr_files,
     filter_blast_radius_for_files,
-    resolve_adaptive_profile,
-    estimate_prompt_tokens,
+    filter_call_graph_for_files,
 )
 from ncodereview.config import config, ensure_env
 from ncodereview.diff import get_changed_line_ranges
@@ -148,9 +148,10 @@ def _generate_call_graph(
     with tempfile.TemporaryDirectory() as tmpdir:
         clone_path = Path(tmpdir) / "repo"
         clone_with_token(github_token, f"{owner}/{repo}", head_sha, clone_path)
-        ast_data = parse_project(str(clone_path), owner, repo)
+        files, parsed = parse_source_files(str(clone_path))
+        graph = build_graph(str(clone_path), files, parsed)
 
-    call_graph = analyze_pr_call_graph(ast_data, changed_files)
+    call_graph = extract_pr_call_graph(graph, changed_files)
     call_graph_json = json.dumps(call_graph, indent=2)
     blast_radius_md = render_blast_radius_markdown(call_graph)
 
@@ -165,18 +166,14 @@ def _generate_call_graph(
 def _batch_pr_files_if_needed(
     call_graph: dict,
     pr_files: list[str],
-    diff_text: str = "",
-    context_window: int = 128000,
     review_mode: str = 'normal',
 ) -> tuple[list[list[str]], bool]:
-    """Batch PR files using a context-window-aware algorithm.
+    """Batch PR files using call-graph connectivity.
 
     Args:
         call_graph: The call graph dict
         pr_files: List of PR file paths
-        diff_text: Full PR diff (for token-budget estimation)
-        context_window: Model max input tokens (for adaptive-fit)
-        review_mode: Review depth mode
+        review_mode: Review depth mode ('fast', 'normal', 'deep')
 
     Returns:
         Tuple of (batches, is_batched) where is_batched=True if batching occurred
@@ -184,8 +181,6 @@ def _batch_pr_files_if_needed(
     batches = batch_pr_files(
         call_graph,
         pr_files,
-        diff_text=diff_text,
-        context_window=context_window,
         review_mode=review_mode,
     )
     is_batched = len(batches) > 1
@@ -196,6 +191,8 @@ def _batch_pr_files_if_needed(
             len(pr_files),
             len(batches),
         )
+        for i, b in enumerate(batches):
+            logger.info("  Batch %d: %d files", i, len(b))
 
     return batches, is_batched
 
@@ -441,6 +438,7 @@ async def _run_review_with_batches(
     pr_title: str,
     batches: list[list[str]],
     blast_radius_md: str,
+    call_graph_json: str,
     diff_text: str,
     review_type: str,
     review_mode: str = 'normal',
@@ -449,7 +447,7 @@ async def _run_review_with_batches(
     """Run review across multiple batches in parallel, then merge results.
 
     Creates one sandbox per batch and runs all batches concurrently.
-    Each batch only sees its slice of the diff and blast radius.
+    Each batch only sees its slice of the diff, blast radius, and call graph.
 
     Mode dispatch:
       deep   → 3 specialized subagents (correctness, security, perf) in parallel
@@ -465,6 +463,7 @@ async def _run_review_with_batches(
         pr_title: PR title
         batches: List of file batches
         blast_radius_md: Full blast radius markdown (will be filtered per batch)
+        call_graph_json: Full call graph JSON (will be filtered per batch)
         diff_text: Full unified diff (will be sliced per batch)
         review_type: Type of review
         review_mode: One of 'fast', 'normal', 'deep' — review depth mode
@@ -525,10 +524,11 @@ async def _run_review_with_batches(
             )
 
             batch_blast_radius = filter_blast_radius_for_files(blast_radius_md, batch_files)
+            batch_call_graph = filter_call_graph_for_files(call_graph_json, batch_files)
             batch_diff = _slice_diff_for_batch(diff_text, batch_files)
             batch_line_ranges = get_changed_line_ranges(batch_diff)
             inject_diff(sbx, batch_diff)
-            sbx.files.write("/home/user/review/blast_radius.md", batch_blast_radius)
+            inject_call_graph(sbx, batch_call_graph, batch_blast_radius)
 
             review_data, agent_result = await _run_single_review(
                 sbx=sbx,
@@ -593,7 +593,7 @@ async def _run_review_with_batches(
 ###############################################################################
 
 
-def _upload_review_artifacts(
+def _dump_review_artifacts(
     owner: str,
     repo: str,
     pr_number: int,
@@ -602,27 +602,7 @@ def _upload_review_artifacts(
     blast_radius_md: str,
     diff_text: str,
 ) -> None:
-    """Upload review artifacts to Firebase Storage.
-
-    Args:
-        owner: Repository owner
-        repo: Repository name
-        pr_number: PR number
-        head_sha: PR head SHA
-        call_graph_json: Full call graph JSON string
-        blast_radius_md: Blast radius markdown
-        diff_text: PR diff text
-    """
-    logger.info("Uploading call graph artifacts to storage...")
-    upload_pr_call_graph(
-        owner=owner,
-        repo=repo,
-        pr_number=pr_number,
-        sha=head_sha,
-        call_graph_json=call_graph_json,
-        blast_radius_md=blast_radius_md,
-        diff_text=diff_text,
-    )
+    logger.info("Review artifacts generated for %s/%s PR#%s", owner, repo, pr_number)
 
 
 ###############################################################################
@@ -673,7 +653,6 @@ async def run_review_pipeline(
         diff_review_mode = resolve_review_mode(review_type)
         # agent_dispatch_mode for agent dispatch (fast/normal/deep)
         agent_dispatch_mode = config.deepagent_review_mode
-        context_window = config.max_input_tokens
         last_review_sha = await get_last_review_sha(uid, owner, repo, pr_number)
 
         # Step 2: Determine review diff (full or incremental)
@@ -705,12 +684,10 @@ async def run_review_pipeline(
             pr_data.difftext, github_token, owner, repo, pr_data.head_sha
         )
 
-        # Step 4: Batch files if needed (context-window-aware)
+        # Step 4: Batch files if needed (call-graph-based)
         batches, is_batched = _batch_pr_files_if_needed(
             call_graph,
             [f.filename for f in pr_data.files],
-            diff_text=pr_data.difftext,
-            context_window=context_window,
             review_mode=agent_dispatch_mode,
         )
 
@@ -718,9 +695,6 @@ async def run_review_pipeline(
         total_files = len(pr_data.files)
 
         if is_batched:
-            _, call_graph_json, blast_radius_md = _generate_call_graph(
-                pr_data.difftext, github_token, owner, repo, pr_data.head_sha
-            )
             sbx = None
 
             review_data = await _run_review_with_batches(
@@ -733,6 +707,7 @@ async def run_review_pipeline(
                 pr_title=pr_title,
                 batches=batches,
                 blast_radius_md=blast_radius_md,
+                call_graph_json=call_graph_json,
                 diff_text=pr_data.difftext,
                 review_type=review_type,
                 review_mode=agent_dispatch_mode,
@@ -782,8 +757,8 @@ async def run_review_pipeline(
                 )
                 _save_stage(owner, repo, pr_number, "verifier_output", safe_serialize(review_data))
 
-        # Step 7: Upload artifacts
-        _upload_review_artifacts(
+        # Step 7: Store artifacts
+        _dump_review_artifacts(
             owner=owner,
             repo=repo,
             pr_number=pr_number,
