@@ -24,13 +24,22 @@ async def handle_review(payload: PRReviewPayload):
         payload.pr_number,
         payload.review_type,
     )
-    from ncodereview import run_review_pipeline
+    from ncodereview import config, run_review_pipeline, run_deep_review_pipeline
 
-    await run_review_pipeline(
-        owner=payload.owner,
-        repo=payload.repo,
-        pr_number=payload.pr_number,
-        review_type=payload.review_type,
-        comment_id=payload.comment_id,
-    )
+    if config.deepagent_review_mode == 'deep':
+        await run_deep_review_pipeline(
+            owner=payload.owner,
+            repo=payload.repo,
+            pr_number=payload.pr_number,
+            review_type=payload.review_type,
+            comment_id=payload.comment_id,
+        )
+    else:
+        await run_review_pipeline(
+            owner=payload.owner,
+            repo=payload.repo,
+            pr_number=payload.pr_number,
+            review_type=payload.review_type,
+            comment_id=payload.comment_id,
+        )
     return {"status": "ok"}
