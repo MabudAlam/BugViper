@@ -210,16 +210,26 @@ async def _handle_comment_review(payload: dict) -> dict:
             )
             return {"status": "ignored", "reason": "review already running"}
 
-    from ncodereview import run_review_pipeline
+    from ncodereview import config, run_review_pipeline, run_deep_review_pipeline
 
-    await run_review_pipeline(
-        owner,
-        repo_name,
-        pr_number,
-        review_type=review_type.value,
-        comment_id=comment_id,
-        uid=uid,
-    )
+    if config.deepagent_review_mode == 'deep':
+        await run_deep_review_pipeline(
+            owner,
+            repo_name,
+            pr_number,
+            review_type=review_type.value,
+            comment_id=comment_id,
+            uid=uid,
+        )
+    else:
+        await run_review_pipeline(
+            owner,
+            repo_name,
+            pr_number,
+            review_type=review_type.value,
+            comment_id=comment_id,
+            uid=uid,
+        )
 
     return {"status": "completed", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
 

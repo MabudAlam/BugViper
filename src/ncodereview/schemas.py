@@ -105,6 +105,9 @@ class VerifierVerdict(BaseModel):
     keep: bool = Field(default=True, description="True to keep, False to drop")
     rationale: str = Field(default="", description="Why the finding was kept or dropped")
     confidence: str = Field(default="medium", description="high|medium|low")
+    corrected_line_start: int | None = Field(default=None, description="Corrected line start if original was wrong")
+    corrected_line_end: int | None = Field(default=None, description="Corrected line end if original was wrong")
+    corrected_code_snippet: str | None = Field(default=None, description="Corrected code snippet if original was wrong")
 
 
 class VerifierOutput(BaseModel):

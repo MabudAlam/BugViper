@@ -1,4 +1,3 @@
-"""Review data normalization and validation."""
 
 from __future__ import annotations
 
@@ -159,7 +158,7 @@ def looks_like_positive_issue(issue: dict) -> bool:
 
 
 def add_positive_from_issue(review_data: dict, issue: dict) -> None:
-    positives = review_data.setdefault("positives", [])
+    positives: Unknown = review_data.setdefault("positives", [])
     positives.append({"file_path": issue["file"], "positive_finding": [issue["title"]]})
 
 

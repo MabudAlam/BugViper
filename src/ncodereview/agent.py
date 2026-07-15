@@ -1,102 +1,5 @@
 from __future__ import annotations
 
-import os
-
-from langchain_e2b import E2BSandbox
-
-from ncodereview.schemas import FinalReviewOutput
-from ncodereview.subagents import build_subagents
-
-
-def create_deep_agent(
-    model,
-    sbx,
-    review_type: str,
-    review_mode: str = 'normal',
-    run_limit: int = 30,
-    files_in_batch: int = 1,
-    use_generalist: bool = False,
-):
-    """Create a DeepAgent with orchestrator + subagents.
-
-    Args:
-        model: The LLM model.
-        sbx: E2B sandbox.
-        review_type: Type of review (incremental_review, full_review).
-        review_mode: One of 'fast', 'normal', 'deep'.
-        run_limit: Max tool calls for the orchestrator.
-        files_in_batch: Number of files in this batch (for adaptive step budget).
-        use_generalist: If True, use generalist instead of 3 specialized agents.
-    """
-    from deepagents import create_deep_agent
-    from deepagents.backends import CompositeBackend
-
-    e2b_backend = E2BSandbox(sandbox=sbx)
-    backend = CompositeBackend(
-        default=e2b_backend,
-        routes={},
-        artifacts_root="/home/user/artifacts",
-    )
-    return create_deep_agent(
-        model=model,
-        backend=backend,
-        tools=[],
-        subagents=build_subagents(
-            model=model,
-            backend=backend,
-            review_mode=review_mode,
-            files_in_batch=files_in_batch,
-            use_generalist=use_generalist,
-        ),
-        system_prompt=build_orchestrator_prompt(
-            review_type,
-            use_generalist=use_generalist,
-            review_mode=review_mode,
-        ),
-        response_format=FinalReviewOutput,
-    )
-
-
-def build_orchestrator_prompt(
-    review_type: str,
-    use_generalist: bool = False,
-    review_mode: str = 'normal',
-) -> str:
-    """Build the orchestrator's system prompt.
-
-    Selects the prompt base by dispatch policy and appends mode-specific guidance.
-    """
-    from ncodereview.prompts import GENERALIST_ORCHESTRATOR_PROMPT, ORCHESTRATOR_PROMPT
-
-    if use_generalist:
-        prompt = GENERALIST_ORCHESTRATOR_PROMPT
-    else:
-        prompt = ORCHESTRATOR_PROMPT
-
-    # Append mode-specific instructions
-    if review_mode == 'deep':
-        prompt += (
-            "\n\n<SpeedMode>DEEP REVIEW</SpeedMode> — Run ALL specialized subagents "
-            "(correctness-reviewer, security-auditor, perf-reviewer) in parallel. "
-            "Each subagent has up to 100 tool calls for thorough investigation.\n"
-        )
-    elif review_mode == 'fast':
-        prompt += (
-            "\n\n<SpeedMode>FAST REVIEW</SpeedMode> — Focus on the most impactful issues. "
-            "Subagents have reduced tool budgets for quick scanning.\n"
-        )
-    else:
-        prompt += (
-            "\n\n<SpeedMode>NORMAL REVIEW</SpeedMode> — Standard depth review.\n"
-        )
-
-    if review_type == "incremental_review":
-        prompt += (
-            "\nThis is an INCREMENTAL review — focus on changes in the diff. "
-            "Pre-existing issues outside the diff are out of scope.\n"
-        )
-    return prompt
-
 
 def create_verifier_agent(model, sbx, run_limit=10):
     """Create a standalone verifier agent with sandbox tools (read_file, grep).
@@ -109,7 +12,7 @@ def create_verifier_agent(model, sbx, run_limit=10):
     from langchain.agents.middleware import ToolCallLimitMiddleware
     from langchain_e2b import E2BSandbox
 
-    from ncodereview.model_call_limit import ModelCallLimitMiddleware
+    from ncodereview.middleware import ModelCallLimitMiddleware
     from ncodereview.prompts import VERIFIER_SYSTEM_PROMPT
     from ncodereview.schemas import VerifierOutput
 
@@ -176,8 +79,7 @@ def create_direct_generalist_agent(
 
     from ncodereview.prompts import GENERALIST_PROMPT
     from ncodereview.schemas import FinalReviewOutput
-    from ncodereview.model_call_limit import ModelCallLimitMiddleware
-    # from langchain.agents.middleware import ModelCallLimitMiddleware
+    from ncodereview.middleware import ModelCallLimitMiddleware
 
     e2b_backend = E2BSandbox(sandbox=sbx)
     backend = CompositeBackend(
@@ -197,13 +99,48 @@ def create_direct_generalist_agent(
                 exit_behavior="report",
                 response_format=FinalReviewOutput,
             ),
-            # ModelCallLimitMiddleware( run_limit=3, exit_behavior="end"),
-
             ToolCallLimitMiddleware(run_limit=300),
         ],
         response_format=FinalReviewOutput,
     )
 
+
+# ── Step budgets ──────────────────────────────────────────────────────────
+
+NORMAL_MODE_STEPS: dict[str, int] = {
+    'generalist': 30,
+    'bug': 30,
+    'security': 20,
+    'performance': 20,
+}
+DEEP_MODE_STEPS = 100
+
+
+def calculate_batch_tool_limits(files_in_batch: int, review_mode: str = 'normal') -> int:
+    if review_mode == 'deep':
+        return DEEP_MODE_STEPS
+    base = max(NORMAL_MODE_STEPS.values())
+    BASELINE_FILES = 8
+    STEPS_PER_EXTRA_FILE = 0.5
+    if files_in_batch <= BASELINE_FILES:
+        return base
+    extra = round((files_in_batch - BASELINE_FILES) * STEPS_PER_EXTRA_FILE)
+    return min(base + extra, DEEP_MODE_STEPS)
+
+
+def get_subagent_steps(agent_name: str, review_mode: str, files_in_batch: int) -> int:
+    if review_mode == 'deep':
+        return DEEP_MODE_STEPS
+    base = NORMAL_MODE_STEPS.get(agent_name, 20)
+    BASELINE_FILES = 8
+    STEPS_PER_EXTRA_FILE = 0.5
+    if files_in_batch <= BASELINE_FILES:
+        return base
+    extra = round((files_in_batch - BASELINE_FILES) * STEPS_PER_EXTRA_FILE)
+    return min(base + extra, DEEP_MODE_STEPS)
+
+
+# ── Agent creation ────────────────────────────────────────────────────────
 
 MAX_RANGES_DISPLAY = 8
 
@@ -249,4 +186,93 @@ def build_user_message(
         f"    When reading source files, use `read_file /home/user/workspace/repo/<file>`.\n"
         f"  </Brief>\n"
         f"</ReviewJob>"
+    )
+
+
+def create_specialized_agent(model, sbx, system_prompt: str, name: str, run_limit: int = 30):
+    """Create a standalone specialized agent using the same pattern as the generalist.
+
+    Uses create_deep_agent (deepagents library) with FinalReviewOutput,
+    matching create_direct_generalist_agent exactly.
+    """
+    from deepagents import create_deep_agent
+    from deepagents.backends import CompositeBackend
+    from langchain.agents.middleware import ToolCallLimitMiddleware
+    from langchain_e2b import E2BSandbox
+
+    from ncodereview.middleware import ModelCallLimitMiddleware
+    from ncodereview.schemas import FinalReviewOutput
+
+    e2b_backend = E2BSandbox(sandbox=sbx)
+    backend = CompositeBackend(
+        default=e2b_backend,
+        routes={},
+        artifacts_root="/home/user/artifacts",
+    )
+
+    return create_deep_agent(
+        model=model,
+        backend=backend,
+        tools=[],
+        system_prompt=system_prompt,
+        middleware=[
+            ModelCallLimitMiddleware(
+                run_limit=run_limit,
+                exit_behavior="report",
+                response_format=FinalReviewOutput,
+            ),
+            ToolCallLimitMiddleware(run_limit=300),
+        ],
+        response_format=FinalReviewOutput,
+    )
+
+
+def merge_subagent_results(results: list[dict]) -> "FinalReviewOutput":
+    """Merge multiple FinalReviewOutput results into a single FinalReviewOutput."""
+    from ncodereview.schemas import FinalReviewOutput
+
+    all_issues = []
+    all_positives = []
+    all_walkthrough = []
+    seen_files = set()
+    agent_names = ["correctness", "security", "performance"]
+    issue_counts = []
+
+    for i, result in enumerate(results):
+        structured = result.get("structured_response")
+        if structured is None:
+            continue
+        if hasattr(structured, "model_dump"):
+            data = structured.model_dump()
+        elif hasattr(structured, "dict"):
+            data = structured.dict()
+        else:
+            data = structured
+
+        issues = data.get("issues", [])
+        for issue in issues:
+            issue["_agent"] = agent_names[i] if i < len(agent_names) else f"agent_{i}"
+        all_issues.extend(issues)
+        all_positives.extend(data.get("positives", []))
+
+        for wt in data.get("walkthrough", []):
+            f = wt.get("file", "")
+            summary = wt.get("summary", "")
+            if f and summary:
+                # Merge with existing entry for same file if exists
+                existing = next((e for e in all_walkthrough if e.get("file") == f), None)
+                if existing:
+                    existing["summary"] += f" | {summary}"
+                else:
+                    all_walkthrough.append({"file": f, "summary": summary})
+
+        issue_counts.append(f"{agent_names[i]}: {len(issues)} issues")
+
+    summary = "Deep review completed. " + " | ".join(issue_counts) + "." if issue_counts else "Deep review completed."
+
+    return FinalReviewOutput(
+        issues=all_issues,
+        positives=all_positives,
+        walkthrough=all_walkthrough,
+        summary=summary,
     )
