@@ -25,7 +25,7 @@ from common.github_client import GitHubClient, get_github_client
 from ncodereview.agent import (
     build_user_message,
     build_verifier_task,
-    create_deep_agent,
+    calculate_batch_tool_limits,
     create_direct_generalist_agent,
     create_verifier_agent,
 )
@@ -57,7 +57,6 @@ from ncodereview.sandbox import (
     inject_diff,
     kill_sandbox,
 )
-from ncodereview.subagents import calculate_batch_tool_limits
 from ncodereview.tracking import (
     get_last_review_sha,
     mark_review_failed,
@@ -173,7 +172,7 @@ def _batch_pr_files_if_needed(
     Args:
         call_graph: The call graph dict
         pr_files: List of PR file paths
-        review_mode: Review depth mode ('fast', 'normal', 'deep')
+        review_mode: Review depth mode ('normal', 'deep')
 
     Returns:
         Tuple of (batches, is_batched) where is_batched=True if batching occurred
@@ -351,9 +350,8 @@ async def _run_single_review(
     review_mode: str = 'normal',
     run_limit: int = 30,
     line_ranges: dict[str, list[dict[str, int]]] | None = None,
-    use_generalist: bool = False,
 ) -> dict:
-    """Run review for a single batch of files.
+    """Run review for a single batch of files using the generalist agent.
 
     Args:
         sbx: E2B sandbox instance
@@ -361,33 +359,21 @@ async def _run_single_review(
         batch_files: List of files in this batch
         blast_radius_md: Blast radius markdown (filtered for batch)
         review_type: Type of review to perform
-        review_mode: One of 'fast', 'normal', 'deep' — review depth mode
-        run_limit: Max tool calls per subagent
+        review_mode: Review depth mode
+        run_limit: Max tool calls for the agent
         line_ranges: Changed line ranges per file from diff
-        use_generalist: If True, use generalist instead of 3 specialized agents
 
     Returns:
         Tuple of (review_data_dict, raw_agent_result_dict).
     """
-    if use_generalist:
-        agent = create_direct_generalist_agent(
-            model=load_chat_model(config.deepagent_model),
-            sbx=sbx,
-            review_type=review_type,
-            review_mode=review_mode,
-            run_limit=run_limit,
-            files_in_batch=len(batch_files),
-        )
-    else:
-        agent = create_deep_agent(
-            model=load_chat_model(config.deepagent_model),
-            sbx=sbx,
-            review_type=review_type,
-            review_mode=review_mode,
-            run_limit=run_limit,
-            files_in_batch=len(batch_files),
-            use_generalist=False,
-        )
+    agent = create_direct_generalist_agent(
+        model=load_chat_model(config.deepagent_model),
+        sbx=sbx,
+        review_type=review_type,
+        review_mode=review_mode,
+        run_limit=run_limit,
+        files_in_batch=len(batch_files),
+    )
 
     user_msg = build_user_message(pr_title=pr_title, pr_files=batch_files, line_ranges=line_ranges)
     logger.info(
@@ -452,7 +438,6 @@ async def _run_review_with_batches(
     Mode dispatch:
       deep   → 3 specialized subagents (correctness, security, perf) in parallel
       normal → 1 generalist subagent
-      fast   → 1 generalist subagent with fewer steps
 
     Args:
         owner: Repository owner
@@ -466,17 +451,16 @@ async def _run_review_with_batches(
         call_graph_json: Full call graph JSON (will be filtered per batch)
         diff_text: Full unified diff (will be sliced per batch)
         review_type: Type of review
-        review_mode: One of 'fast', 'normal', 'deep' — review depth mode
+        review_mode: One of 'normal', 'deep' — review depth mode
         total_files: Total number of PR files
 
     Returns:
         Merged review result from all batches
     """
-    # Mode dispatch: deep→specialized, normal/fast→generalist
-    use_generalist = review_mode != 'deep'
+    # Mode dispatch: normal→generalist (deep uses separate pipeline)
     logger.info(
-        "review_mode=%s use_generalist=%s files=%d batches=%d",
-        review_mode, use_generalist, total_files, len(batches),
+        "review_mode=%s files=%d batches=%d",
+        review_mode, total_files, len(batches),
     )
 
     max_concurrent = config.max_concurrent_sandboxes
@@ -539,7 +523,6 @@ async def _run_review_with_batches(
                 review_mode=review_mode,
                 run_limit=run_limit,
                 line_ranges=batch_line_ranges,
-                use_generalist=use_generalist,
             )
 
             _save_stage(owner, repo, pr_number, "agent_structured", safe_serialize(agent_result))
@@ -651,7 +634,7 @@ async def run_review_pipeline(
         pr_title = pr_data.prMeta.prTitle
         # review_mode for diff computation (incremental vs full)
         diff_review_mode = resolve_review_mode(review_type)
-        # agent_dispatch_mode for agent dispatch (fast/normal/deep)
+        # agent_dispatch_mode for agent dispatch (normal/deep)
         agent_dispatch_mode = config.deepagent_review_mode
         last_review_sha = await get_last_review_sha(uid, owner, repo, pr_number)
 
@@ -729,8 +712,6 @@ async def run_review_pipeline(
             )
             inject_diff(sbx, review_diff_text)
             inject_call_graph(sbx, call_graph_json, blast_radius_md)
-            # Mode dispatch: deep→specialized, normal/fast→generalist
-            use_generalist_nonbatched = agent_dispatch_mode != 'deep'
             review_data, agent_result = await _run_single_review(
                 sbx=sbx,
                 pr_title=pr_title,
@@ -739,7 +720,6 @@ async def run_review_pipeline(
                 review_type=review_type,
                 review_mode=agent_dispatch_mode,
                 run_limit=30,
-                use_generalist=use_generalist_nonbatched,
             )
 
             _save_stage(owner, repo, pr_number, "agent_structured", safe_serialize(agent_result))
