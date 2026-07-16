@@ -26,7 +26,7 @@ async def handle_review(payload: PRReviewPayload):
     )
     from ncodereview import config, run_review_pipeline, run_deep_review_pipeline
 
-    if config.deepagent_review_mode == 'deep':
+    if config.DEEPAGENT_REVIEW_MODE == 'deep':
         await run_deep_review_pipeline(
             owner=payload.owner,
             repo=payload.repo,
