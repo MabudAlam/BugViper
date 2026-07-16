@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 
+from ncodereview.config import config
 from ncodereview.llm import load_chat_model
 
 logger = logging.getLogger(__name__)
-
-DEDUP_CONTENT_THRESHOLD = 0.5
 
 DEDUP_SCHEMA = {
     "type": "object",
@@ -159,7 +157,7 @@ def deduplicate_issues(
     if len(issues) <= 1:
         return issues
 
-    model_id = model_id or os.getenv("DEDUP_MODEL", "openai/gpt-4o-mini")
+    model_id = model_id or config.DEDUP_MODEL
     model = load_chat_model(model_id)
     structured = model.with_structured_output(DEDUP_SCHEMA, method="json_mode", include_raw=False)
 
@@ -249,7 +247,7 @@ def deduplicate_issues(
                     result_list.append(dup)
                 continue
 
-            if content_similarity(dup, keep) < DEDUP_CONTENT_THRESHOLD:
+            if content_similarity(dup, keep) < config.DEDUP_CONTENT_THRESHOLD:
                 classified_indices.add(dup_idx)
                 if dup_idx not in added_indices:
                     added_indices.add(dup_idx)
