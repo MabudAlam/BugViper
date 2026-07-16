@@ -9,7 +9,7 @@ _SECURITY_TOOLS = {"bandit", "semgrep", "gitleaks"}
 
 
 def _model_label(debug_info: dict | None) -> str:
-    env_model = os.environ.get("DEEPAGENT_MODEL")
+    env_model = os.environ.get("DEEPAGENT_CODE_REVIEW_MODEL")
     if env_model:
         return env_model
     if debug_info and debug_info.get("deepagent"):
