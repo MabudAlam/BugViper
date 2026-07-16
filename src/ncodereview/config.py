@@ -19,12 +19,12 @@ class DeepAgentConfig(BaseSettings):
         case_sensitive=False,
     )
 
-    e2b_api_key: str = Field(
+    E2B_API_KEY: str = Field(
         default="",
         description="E2B API key. https://e2b.dev/dashboard",
     )
 
-    deepagent_model: str = Field(
+    DEEPAGENT_CODE_REVIEW_MODEL: str = Field(
         default="MiniMax-M2.7",
         description=(
             "Model id for the orchestrator and subagents. "
@@ -33,17 +33,42 @@ class DeepAgentConfig(BaseSettings):
         ),
     )
 
-    deepagent_sandbox_timeout: int = Field(
+    DEEPAGENT_CODE_REVIEW_MODEL_FALLBACK: list[str] = Field(
+        default=["gpt-4o-mini"],
+        description="Fallback models when the primary model fails.",
+    )
+
+    MODEL_RETRY_MAX_RETRIES: int = Field(
+        default=3,
+        description="Maximum retry attempts for model calls.",
+    )
+
+    MODEL_RETRY_BACKOFF_FACTOR: float = Field(
+        default=2.0,
+        description="Exponential backoff factor for retries.",
+    )
+
+    MODEL_RETRY_INITIAL_DELAY: float = Field(
+        default=1.0,
+        description="Initial delay in seconds before first retry.",
+    )
+
+    MODEL_RETRY_MAX_DELAY: float = Field(
+        default=60.0,
+        description="Maximum delay in seconds between retries.",
+    )
+
+    DEEPAGENT_SANDBOX_TIMEOUT: int = Field(
         default=1800,
         description="E2B sandbox lifetime in seconds (default 30 min).",
     )
 
-    deepagent_max_tool_rounds: int = Field(
+    DEEPAGENT_MAX_TOOL_ROUNDS: int = Field(
         default=40,
         description="Soft cap on tool rounds for the orchestrator. Subagents inherit.",
     )
 
-    deepagent_review_mode: str = Field(
+    DEEPAGENT_REVIEW_MODE: str = Field(
         default="normal",
         description=(
             "Review depth: "
@@ -52,7 +77,7 @@ class DeepAgentConfig(BaseSettings):
         ),
     )
 
-    max_input_tokens: int = Field(
+    MAX_INPUT_TOKENS: int = Field(
         default=128000,
         description=(
             "Maximum input tokens for the model (context window). "
@@ -61,7 +86,7 @@ class DeepAgentConfig(BaseSettings):
         ),
     )
 
-    e2b_sandbox_template_small: str = Field(
+    E2B_SANDBOX_TEMPLATE_SMALL: str = Field(
         default="",
         description=(
             "E2B sandbox template name for small batches (<=5 files). "
@@ -69,7 +94,7 @@ class DeepAgentConfig(BaseSettings):
         ),
     )
 
-    e2b_sandbox_template_large: str = Field(
+    E2B_SANDBOX_TEMPLATE_LARGE: str = Field(
         default="",
         description=(
             "E2B sandbox template name for large batches (>5 files). "
@@ -77,12 +102,37 @@ class DeepAgentConfig(BaseSettings):
         ),
     )
 
-    max_concurrent_sandboxes: int = Field(
+    MAX_CONCURRENT_SANDBOXES: int = Field(
         default=4,
         description=(
             "Maximum number of concurrent E2B sandboxes. "
             "Prevents hitting E2B rate/resource limits. Default: 4"
         ),
+    )
+
+    VERIFIER_RUN_LIMIT_MULTIPLIER: int = Field(
+        default=6,
+        description="Multiplier for verifier run limit: min(findings * multiplier, max).",
+    )
+
+    VERIFIER_RUN_LIMIT_MAX: int = Field(
+        default=50,
+        description="Maximum run limit for the verifier agent.",
+    )
+
+    DEDUP_MODEL: str = Field(
+        default="openai/gpt-4o-mini",
+        description="Model ID for the deduplication step.",
+    )
+
+    DEDUP_CONTENT_THRESHOLD: float = Field(
+        default=0.5,
+        description="Minimum content similarity to consider findings as duplicates.",
+    )
+
+    VERIFIER_MODEL: str = Field(
+        default="MiniMax-M2.7",
+        description="Model ID for the verifier agent.",
     )
 
     @classmethod
