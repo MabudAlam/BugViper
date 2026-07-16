@@ -75,8 +75,11 @@ def create_direct_generalist_agent(
     """
     from deepagents import create_deep_agent
     from deepagents.backends import CompositeBackend
-    from langchain.agents.middleware import ToolCallLimitMiddleware
+    from langchain.agents.middleware import ToolCallLimitMiddleware, ModelFallbackMiddleware, ModelRetryMiddleware
+    from langchain_e2b import E2BSandbox
 
+    from ncodereview.config import config
+    from ncodereview.llm import load_chat_model
     from ncodereview.prompts import GENERALIST_PROMPT
     from ncodereview.schemas import FinalReviewOutput
     from ncodereview.middleware import ModelCallLimitMiddleware
@@ -94,6 +97,16 @@ def create_direct_generalist_agent(
         tools=[],
         system_prompt=GENERALIST_PROMPT,
         middleware=[
+            ModelRetryMiddleware(
+                max_retries=config.MODEL_RETRY_MAX_RETRIES,
+                backoff_factor=config.MODEL_RETRY_BACKOFF_FACTOR,
+                initial_delay=config.MODEL_RETRY_INITIAL_DELAY,
+                max_delay=config.MODEL_RETRY_MAX_DELAY,
+            ),
+            ModelFallbackMiddleware(
+                model,
+                *(load_chat_model(m) for m in config.DEEPAGENT_CODE_REVIEW_MODEL_FALLBACK),
+            ),
             ModelCallLimitMiddleware(
                 run_limit=run_limit,
                 exit_behavior="report",
@@ -197,9 +210,11 @@ def create_specialized_agent(model, sbx, system_prompt: str, name: str, run_limi
     """
     from deepagents import create_deep_agent
     from deepagents.backends import CompositeBackend
-    from langchain.agents.middleware import ToolCallLimitMiddleware
+    from langchain.agents.middleware import ToolCallLimitMiddleware, ModelFallbackMiddleware, ModelRetryMiddleware
     from langchain_e2b import E2BSandbox
 
+    from ncodereview.config import config
+    from ncodereview.llm import load_chat_model
     from ncodereview.middleware import ModelCallLimitMiddleware
     from ncodereview.schemas import FinalReviewOutput
 
@@ -216,6 +231,16 @@ def create_specialized_agent(model, sbx, system_prompt: str, name: str, run_limi
         tools=[],
         system_prompt=system_prompt,
         middleware=[
+            ModelRetryMiddleware(
+                max_retries=config.MODEL_RETRY_MAX_RETRIES,
+                backoff_factor=config.MODEL_RETRY_BACKOFF_FACTOR,
+                initial_delay=config.MODEL_RETRY_INITIAL_DELAY,
+                max_delay=config.MODEL_RETRY_MAX_DELAY,
+            ),
+            ModelFallbackMiddleware(
+                model,
+                *(load_chat_model(m) for m in config.DEEPAGENT_CODE_REVIEW_MODEL_FALLBACK),
+            ),
             ModelCallLimitMiddleware(
                 run_limit=run_limit,
                 exit_behavior="report",
