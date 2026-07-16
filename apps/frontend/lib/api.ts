@@ -43,8 +43,13 @@ export interface DashboardStats {
   total_positives: number;
 }
 
-export const getDashboardStats = (): Promise<DashboardStats> =>
-  apiFetch("/api/v1/repos/dashboard/stats");
+export interface RepoOverview {
+  stats: DashboardStats;
+  repos: RepoSummary[];
+}
+
+export const getRepoOverview = (): Promise<RepoOverview> =>
+  apiFetch("/api/v1/repos/overview");
 
 export interface RepoSummary {
   owner: string;
@@ -64,8 +69,6 @@ export interface RepoSummary {
   reviewCount: number;
 }
 
-export const listRepositories = () => apiFetch("/api/v1/repos/");
-
 export interface PRReviewSummary {
   owner: string;
   repo: string;
@@ -81,6 +84,43 @@ export interface PRReviewSummary {
   lastReviewedSha: string | null;
   createdAt: string | null;
 }
+
+export interface RepoAnalyticsRun {
+  runNumber: number;
+  issues: number;
+  resolved: number;
+}
+
+export interface RepoAnalyticsPR {
+  owner: string;
+  repo: string;
+  prNumber: number;
+  repoId: string;
+  reviewStatus: string | null;
+  reviewCount: number;
+  openIssueCount: number;
+  totalIssuesRaised: number;
+  totalPositives: number;
+  lastReviewType: string | null;
+  lastReviewedAt: string | null;
+  lastReviewedSha: string | null;
+  createdAt: string | null;
+  runs: RepoAnalyticsRun[];
+}
+
+export interface RepoAnalyticsDetail {
+  owner: string;
+  repoName: string;
+  totalPrs: number;
+  totalReviews: number;
+  totalIssuesGenerated: number;
+  totalIssuesResolved: number;
+  totalPositives: number;
+  prs: RepoAnalyticsPR[];
+}
+
+export const getRepoAnalytics = (owner: string, repo: string): Promise<RepoAnalyticsDetail> =>
+  apiFetch(`/api/v1/repos/${owner}/${repo}/analytics`);
 
 export const listRepoPRs = (owner: string, repo: string): Promise<PRReviewSummary[]> =>
   apiFetch(`/api/v1/repos/${owner}/${repo}/prs`);
