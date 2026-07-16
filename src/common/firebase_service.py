@@ -11,10 +11,13 @@ from common.firebase_init import _initialize_firebase
 from common.firebase_models import (
     FirebaseUserData,
     FirebaseUserProfile,
+    PRAnalyticsEntry,
     PendingInstallation,
     PRMetadata,
     PrReviewStatus,
+    RepoAnalytics,
     ReviewRunData,
+    RunAnalytics,
 )
 
 
@@ -39,6 +42,132 @@ class BugViperFirebaseService:
     @property
     def db(self):
         return self._db
+
+    # ── Firestore ref helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _repo_key(owner: str, repo: str) -> str:
+        return f"{owner}_{repo}"
+
+    def _pr_ref(self, uid: str, owner: str, repo: str, pr_number: int):
+        repo_key = self._repo_key(owner, repo)
+        return (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("prs")
+            .document(str(pr_number))
+        )
+
+    def _analytics_ref(self, uid: str, owner: str, repo: str):
+        repo_key = self._repo_key(owner, repo)
+        return (
+            self._db.collection("users")
+            .document(uid)
+            .collection("repos")
+            .document(repo_key)
+            .collection("analytics")
+            .document("summary")
+        )
+
+    # ── Analytics ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _count_resolved(issues: list[dict]) -> int:
+        return sum(1 for i in issues if i.get("status") in ("fixed", "resolved"))
+
+    def _recompute_pr_analytics(self, uid: str, owner: str, repo: str, pr_number: int) -> None:
+        """Read all runs for a PR and update the repo analytics doc."""
+        pr_ref = self._pr_ref(uid, owner, repo, pr_number)
+        analytics_ref = self._analytics_ref(uid, owner, repo)
+
+        runs = list(pr_ref.collection("reviews").stream())
+
+        pr_runs = []
+        for run_doc in runs:
+            run = run_doc.to_dict()
+            issues = run.get("issues", [])
+            pr_runs.append({
+                "run_number": run.get("runNumber", 0),
+                "issues": len(issues),
+                "resolved": self._count_resolved(issues),
+            })
+
+        total_issues = sum(r["issues"] for r in pr_runs)
+        total_resolved = sum(r["resolved"] for r in pr_runs)
+        positives = sum(
+            r.to_dict().get("positivesCount", 0) for r in runs
+        )
+
+        now = datetime.now(timezone.utc).isoformat()
+        pr_doc = pr_ref.get()
+        pr_data = pr_doc.to_dict() if pr_doc.exists else {}
+        latest_run = runs[-1].to_dict() if runs else {}
+
+        pr_entry = _to_dict(PRAnalyticsEntry(
+            pr_number=pr_number,
+            owner=pr_data.get("owner", owner),
+            repo=pr_data.get("repo", repo),
+            repo_id=pr_data.get("repoId", ""),
+            created_at=pr_data.get("createdAt") or latest_run.get("createdAt"),
+            last_reviewed_at=latest_run.get("endedAt") or pr_data.get("lastReviewedAt"),
+            last_review_type=pr_data.get("lastReviewType"),
+            last_reviewed_sha=pr_data.get("lastReviewedSha"),
+            review_status=pr_data.get("reviewStatus") or latest_run.get("reviewStatusOverride"),
+            runs=[RunAnalytics(**r) for r in pr_runs],
+            total_issues=total_issues,
+            total_resolved=total_resolved,
+            positives=positives,
+        ))
+
+        existing = analytics_ref.get()
+        analytics = existing.to_dict() if existing.exists else {
+            "owner": owner,
+            "repoName": repo,
+            "totalPrs": 0,
+            "totalReviews": 0,
+            "totalIssuesGenerated": 0,
+            "totalIssuesResolved": 0,
+            "totalPositives": 0,
+            "prs": {},
+            "updatedAt": now,
+        }
+
+        prs = analytics.get("prs", {})
+        prs[str(pr_number)] = pr_entry
+        analytics["prs"] = prs
+        analytics["totalPrs"] = len(prs)
+
+        total_reviews = 0
+        total_issues_generated = 0
+        total_issues_resolved = 0
+        total_positives = 0
+        for p in prs.values():
+            total_reviews += len(p.get("runs", []))
+            total_issues_generated += p.get("totalIssues", 0)
+            total_issues_resolved += p.get("totalResolved", 0)
+            total_positives += p.get("positives", 0)
+
+        analytics["totalReviews"] = total_reviews
+        analytics["totalIssuesGenerated"] = total_issues_generated
+        analytics["totalIssuesResolved"] = total_issues_resolved
+        analytics["totalPositives"] = total_positives
+        analytics["updatedAt"] = now
+
+        analytics_ref.set(analytics)
+
+    def get_repo_analytics(self, uid: str, owner: str, repo: str) -> RepoAnalytics | None:
+        """Return the analytics doc for a repo, or None if it doesn't exist."""
+        doc = self._analytics_ref(uid, owner, repo).get()
+        if not doc.exists:
+            return None
+        raw = doc.to_dict()
+        prs = {}
+        for k, v in raw.get("prs", {}).items():
+            runs = [RunAnalytics.model_validate(r) for r in v.get("runs", [])]
+            prs[k] = PRAnalyticsEntry.model_validate({**v, "runs": runs})
+        return RepoAnalytics.model_validate({**raw, "prs": prs})
 
     # ── User CRUD ─────────────────────────────────────────────────────────
 
@@ -523,17 +652,9 @@ class BugViperFirebaseService:
 
         Returns the run document ID (e.g. "run_2").
         """
-        repo_key = f"{owner}_{repo}"
         now = datetime.now(timezone.utc).isoformat()
 
-        pr_ref = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .document(repo_key)
-            .collection("prs")
-            .document(str(pr_number))
-        )
+        pr_ref = self._pr_ref(uid, owner, repo, pr_number)
 
         existing_runs = list(pr_ref.collection("reviews").stream())
         run_number = len(existing_runs) + 1
@@ -572,6 +693,8 @@ class BugViperFirebaseService:
             }
         )
 
+        self._recompute_pr_analytics(uid, owner, repo, pr_number)
+
         logger.info(
             "Marked review completed: %s/%s#%s run=%s issues=%d",
             owner,
@@ -605,17 +728,9 @@ class BugViperFirebaseService:
                 f"save_review_run: pr_number must be a positive int, got {pr_number!r}"
             )
 
-        repo_key = f"{owner}_{repo}"
         now = datetime.now(timezone.utc).isoformat()
 
-        pr_ref = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .document(repo_key)
-            .collection("prs")
-            .document(str(pr_number))
-        )
+        pr_ref = self._pr_ref(uid, owner, repo, pr_number)
 
         # Determine next run number
         existing = list(pr_ref.collection("reviews").stream())
@@ -639,6 +754,7 @@ class BugViperFirebaseService:
             )
 
         logger.info(f"Saved review run {run_id} for {owner}/{repo}#{pr_number}")
+        self._recompute_pr_analytics(uid, owner, repo, pr_number)
         return run_id
 
     def get_all_review_runs(
@@ -649,18 +765,8 @@ class BugViperFirebaseService:
         pr_number: int,
     ) -> list[dict]:
         """Fetch all review runs for a PR, newest first."""
-        repo_key = f"{owner}_{repo}"
-        runs_ref = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .document(repo_key)
-            .collection("prs")
-            .document(str(pr_number))
-            .collection("reviews")
-        )
-        docs = list(runs_ref.stream())
-        docs.sort(key=lambda d: d.to_dict().get("runNumber", 0), reverse=True)
+        runs_ref = self._pr_ref(uid, owner, repo, pr_number).collection("reviews")
+        docs = list(runs_ref.order_by("runNumber", direction="DESCENDING").stream())
         return [d.to_dict() for d in docs if d.exists]
 
     def mark_review_comments_resolved(
@@ -683,16 +789,8 @@ class BugViperFirebaseService:
         if not resolved_by_comment_id:
             return 0
 
-        repo_key = f"{owner}_{repo}"
         now = datetime.now(timezone.utc).isoformat()
-        pr_ref = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .document(repo_key)
-            .collection("prs")
-            .document(str(pr_number))
-        )
+        pr_ref = self._pr_ref(uid, owner, repo, pr_number)
         review_docs = list(pr_ref.collection("reviews").stream())
 
         updated_comments = 0
@@ -761,6 +859,8 @@ class BugViperFirebaseService:
             )
             pr_ref.update({"openIssueCount": open_issue_count, "updatedAt": now})
 
+        self._recompute_pr_analytics(uid, owner, repo, pr_number)
+
         logger.info(
             "Marked %d review comments resolved for %s/%s#%s",
             updated_comments,
@@ -785,27 +885,12 @@ class BugViperFirebaseService:
         Returns:
             The last review run dict with issues, or None if no reviews exist.
         """
-        repo_key = f"{owner}_{repo}"
-        pr_ref = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .document(repo_key)
-            .collection("prs")
-            .document(str(pr_number))
-            .collection("reviews")
-        )
+        pr_ref = self._pr_ref(uid, owner, repo, pr_number)
 
-        existing = list(pr_ref.stream())
-        if not existing:
+        docs = list(pr_ref.collection("reviews").order_by("runNumber", direction="DESCENDING").limit(1).stream())
+        if not docs:
             return None
-
-        existing.sort(
-            key=lambda d: d.to_dict().get("runNumber", 0) if d.exists else 0,
-            reverse=True,
-        )
-        last_doc = existing[0]
-        return last_doc.to_dict() if last_doc.exists else None
+        return docs[0].to_dict()
 
     def update_previous_run_issues(
         self,
@@ -834,20 +919,10 @@ class BugViperFirebaseService:
         if not last_run or not last_run.get("issues"):
             return
 
-        repo_key = f"{owner}_{repo}"
         run_number = last_run.get("runNumber", 1)
         run_id = f"run_{run_number}"
 
-        run_ref = (
-            self._db.collection("users")
-            .document(uid)
-            .collection("repos")
-            .document(repo_key)
-            .collection("prs")
-            .document(str(pr_number))
-            .collection("reviews")
-            .document(run_id)
-        )
+        run_ref = self._pr_ref(uid, owner, repo, pr_number).collection("reviews").document(run_id)
 
         old_issues = last_run.get("issues", [])
         issue_map = {(i.get("file"), i.get("line_start"), i.get("title")): i for i in old_issues}
@@ -873,6 +948,8 @@ class BugViperFirebaseService:
             run_ref.update({"issues": list(issue_map.values())})
             fixed_count = sum(1 for i in validated_issues if i.get("status") == "fixed")
             logger.info(f"Updated {fixed_count} fixed issues in previous run")
+
+        self._recompute_pr_analytics(uid, owner, repo, pr_number)
 
     def get_review_run(
         self,
