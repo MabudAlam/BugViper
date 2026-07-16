@@ -5,11 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  getDashboardStats,
-  listRepoPRs,
+  getRepoOverview,
   listPRReviews,
   getPRReviewRun,
-  listRepositories,
+  getRepoAnalytics,
   getInstallationStatus,
   type DashboardStats,
   type PRReviewSummary,
@@ -383,8 +382,28 @@ function RepoDetailContent({ repo, onClose }: { repo: RepoSummary; onClose: () =
 
   useEffect(() => {
     let cancelled = false;
-    listRepoPRs(repo.owner, repo.repoName)
-      .then((data) => { if (!cancelled) setPrs(data); })
+    getRepoAnalytics(repo.owner, repo.repoName)
+      .then((data) => {
+        if (cancelled) return;
+        const mapped: PRReviewSummary[] = data.prs
+          .sort((a, b) => b.prNumber - a.prNumber)
+          .map((p) => ({
+            owner: p.owner,
+            repo: p.repo,
+            prNumber: p.prNumber,
+            repoId: p.repoId,
+            reviewStatus: p.reviewStatus,
+            reviewCount: p.reviewCount,
+            openIssueCount: p.openIssueCount,
+            totalIssuesRaised: p.totalIssuesRaised,
+            totalPositives: p.totalPositives,
+            lastReviewType: p.lastReviewType,
+            lastReviewedAt: p.lastReviewedAt,
+            lastReviewedSha: p.lastReviewedSha,
+            createdAt: p.createdAt,
+          }));
+        setPrs(mapped);
+      })
       .catch(() => { if (!cancelled) setPrs([]); });
     return () => { cancelled = true; };
   }, [repo.owner, repo.repoName]);
@@ -511,20 +530,9 @@ function RepoSheet({ repo, open, onClose }: { repo: RepoSummary | null; open: bo
 }
 
 function RepoCard({ repo, idx, onSelect }: { repo: RepoSummary; idx: number; onSelect: () => void }) {
-  const [prs, setPrs] = useState<PRReviewSummary[] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    listRepoPRs(repo.owner, repo.repoName)
-      .then((data) => { if (!cancelled) setPrs(data); })
-      .catch(() => { if (!cancelled) setPrs([]); });
-    return () => { cancelled = true; };
-  }, [repo.owner, repo.repoName]);
-
-  const prList = prs ?? [];
-  const totalIssues = prList.reduce((sum, p) => sum + p.totalIssuesRaised, 0);
-  const totalResolved = prList.reduce((sum, p) => sum + (p.totalIssuesRaised - p.openIssueCount), 0);
-  const totalReviews = prList.reduce((sum, p) => sum + p.reviewCount, 0);
+  const totalIssues = repo.totalIssuesRaised;
+  const totalResolved = totalIssues - repo.openIssueCount;
+  const totalReviews = repo.reviewCount;
 
   return (
     <div className="animate-fade-in-up" style={{ animationDelay: `${100 + idx * 80}ms` }}>
@@ -633,10 +641,10 @@ export default function DashboardPage() {
   const [installation, setInstallation] = useState<InstallationStatus | null>(null);
 
   useEffect(() => {
-    Promise.all([getDashboardStats(), listRepositories(), getInstallationStatus()])
-      .then(([s, r, inst]) => {
-        setStats(s);
-        setRepos(r);
+    Promise.all([getRepoOverview(), getInstallationStatus()])
+      .then(([overview, inst]) => {
+        setStats(overview.stats);
+        setRepos(overview.repos);
         setInstallation(inst);
       })
       .catch(() => {
