@@ -204,7 +204,6 @@ def _batch_pr_files_if_needed(
 async def _run_verifier_in_sandbox(
     sbx: Any,
     review_data: dict,
-    pr_data: Any,
     review_diff_text: str,
 ) -> dict:
     """Run verifier INSIDE the sandbox with tool access (read_file, grep).
@@ -221,10 +220,9 @@ async def _run_verifier_in_sandbox(
         return review_data
 
     user_msg = build_verifier_task(flat)
-    # One more tool-call step per finding, cap at 30
-    run_limit = min(len(flat) * 4, 30)
+    run_limit = min(len(flat) * config.VERIFIER_RUN_LIMIT_MULTIPLIER, config.VERIFIER_RUN_LIMIT_MAX)
     verifier_agent = create_verifier_agent(
-        model=load_chat_model(config.deepagent_model),
+        model=load_chat_model(config.VERIFIER_MODEL),
         sbx=sbx,
         run_limit=run_limit,
     )
@@ -331,7 +329,7 @@ async def _create_sandbox(
         head_sha=head_sha,
         head_branch=head_branch,
         github_token=github_token,
-        timeout=config.deepagent_sandbox_timeout,
+        timeout=config.DEEPAGENT_SANDBOX_TIMEOUT,
         template=template,
     )
 
@@ -367,7 +365,7 @@ async def _run_single_review(
         Tuple of (review_data_dict, raw_agent_result_dict).
     """
     agent = create_direct_generalist_agent(
-        model=load_chat_model(config.deepagent_model),
+        model=load_chat_model(config.DEEPAGENT_CODE_REVIEW_MODEL),
         sbx=sbx,
         review_type=review_type,
         review_mode=review_mode,
@@ -463,7 +461,7 @@ async def _run_review_with_batches(
         review_mode, total_files, len(batches),
     )
 
-    max_concurrent = config.max_concurrent_sandboxes
+    max_concurrent = config.MAX_CONCURRENT_SANDBOXES
 
     logger.info(
         "Starting parallel review: %d batches with %d total files, max_concurrent=%d",
@@ -485,9 +483,9 @@ async def _run_review_with_batches(
         try:
             batch_size = len(batch_files)
             sandbox_template = (
-                config.e2b_sandbox_template_large
+                config.E2B_SANDBOX_TEMPLATE_LARGE
                 if batch_size > 1
-                else config.e2b_sandbox_template_small
+                else config.E2B_SANDBOX_TEMPLATE_SMALL
             )
 
             sbx = await _create_sandbox(
@@ -535,7 +533,6 @@ async def _run_review_with_batches(
                 review_data = await _run_verifier_in_sandbox(
                     sbx=sbx,
                     review_data=review_data,
-                    pr_data=None,
                     review_diff_text=batch_diff,
                 )
                 _save_stage(owner, repo, pr_number, "verifier_output", safe_serialize(review_data))
@@ -613,12 +610,12 @@ async def run_review_pipeline(
     7. Post results to GitHub
     """
     # Validate environment
-    if not config.e2b_api_key:
+    if not config.E2B_API_KEY:
         logger.error("E2B_API_KEY not set — cannot run deepagent review")
         return
 
     ensure_env()
-    os.environ["E2B_API_KEY"] = config.e2b_api_key
+    os.environ["E2B_API_KEY"] = config.E2B_API_KEY
 
     started_at = time.time()
 
@@ -635,7 +632,7 @@ async def run_review_pipeline(
         # review_mode for diff computation (incremental vs full)
         diff_review_mode = resolve_review_mode(review_type)
         # agent_dispatch_mode for agent dispatch (normal/deep)
-        agent_dispatch_mode = config.deepagent_review_mode
+        agent_dispatch_mode = config.DEEPAGENT_REVIEW_MODE
         last_review_sha = await get_last_review_sha(uid, owner, repo, pr_number)
 
         # Step 2: Determine review diff (full or incremental)
@@ -698,9 +695,9 @@ async def run_review_pipeline(
             )
         else:
             sandbox_template = (
-                config.e2b_sandbox_template_large
+                config.E2B_SANDBOX_TEMPLATE_LARGE
                 if total_files > 3
-                else config.e2b_sandbox_template_small
+                else config.E2B_SANDBOX_TEMPLATE_SMALL
             )
             sbx = await _create_sandbox(
                 owner=owner,
@@ -732,7 +729,6 @@ async def run_review_pipeline(
                 review_data = await _run_verifier_in_sandbox(
                     sbx=sbx,
                     review_data=review_data,
-                    pr_data=pr_data,
                     review_diff_text=review_diff_text,
                 )
                 _save_stage(owner, repo, pr_number, "verifier_output", safe_serialize(review_data))
