@@ -43,6 +43,9 @@ async def on_comment(request: Request):
     if event_type == "installation":
         return await _handle_installation_event(payload)
 
+    if event_type == "pull_request_review_thread":
+        return await _handle_review_thread_event(payload)
+
     return {"status": "ignored", "reason": f"unhandled event '{event_type}'"}
 
 
@@ -212,7 +215,7 @@ async def _handle_comment_review(payload: dict) -> dict:
 
     from ncodereview import config, run_review_pipeline, run_deep_review_pipeline
 
-    if config.deepagent_review_mode == 'deep':
+    if config.DEEPAGENT_REVIEW_MODE == 'deep':
         await run_deep_review_pipeline(
             owner,
             repo_name,
@@ -232,6 +235,79 @@ async def _handle_comment_review(payload: dict) -> dict:
         )
 
     return {"status": "completed", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
+
+
+async def _handle_review_thread_event(payload: dict) -> dict:
+    """Track resolved review threads in Firebase when a user resolves an inline comment."""
+    action = payload.get("action")
+    logger.info("Review thread event: action=%s", action)
+
+    if action != "resolved":
+        return {"status": "ignored", "reason": f"action '{action}' not tracked"}
+
+    repo_info = payload.get("repository", {})
+    pull = payload.get("pull_request", {})
+    owner = repo_info.get("owner", {}).get("login", "")
+    repo_name = repo_info.get("name", "")
+    pr_number = pull.get("number")
+    thread = payload.get("thread", {})
+    comments = thread.get("comments", [])
+    thread_review_id = thread.get("pull_request_review_id")
+
+    logger.info(
+        "Thread event: %s/%s#%s thread_review_id=%s comments=%d",
+        owner, repo_name, pr_number, thread_review_id, len(comments),
+    )
+
+    if not owner or not repo_name or not pr_number or not comments:
+        return {"status": "ignored", "reason": "missing required fields"}
+
+    thread_comment_ids = {str(c["id"]) for c in comments if c.get("id")}
+    logger.info("Thread comment IDs: %s", thread_comment_ids)
+
+    uid = firebase_service.find_project_owner_id(owner)
+    if not uid:
+        logger.warning("No project owner found for %s", owner)
+        return {"status": "ignored", "reason": "project owner not found"}
+
+    try:
+        runs = firebase_service.get_all_review_runs(uid, owner, repo_name, pr_number)
+        logger.info("Found %d review runs for %s/%s#%s", len(runs), owner, repo_name, pr_number)
+    except Exception as exc:
+        logger.warning("Could not fetch review runs for thread event: %s", exc)
+        return {"status": "error", "reason": str(exc)}
+
+    matched_entries = []
+    for run in runs:
+        for entry in run.get("githubCommentIds", []):
+            cid = str(entry.get("comment_id", ""))
+            if cid in thread_comment_ids and entry.get("status") != "resolved":
+                logger.info("Matched comment %s in run", cid)
+                matched_entries.append(entry)
+                continue
+            # Fallback: match by thread_id if comment_id didn't match
+            tid = str(entry.get("thread_id", ""))
+            if thread_review_id and tid == str(thread_review_id) and entry.get("status") != "resolved":
+                logger.info("Matched thread %s in run", tid)
+                matched_entries.append(entry)
+
+    if not matched_entries:
+        logger.info("No matching BugViper comments in resolved thread")
+        return {"status": "ok", "resolved": 0}
+
+    try:
+        db_updated = firebase_service.mark_review_comments_resolved(
+            uid, owner, repo_name, pr_number, matched_entries
+        )
+        logger.info(
+            "Tracked %d resolved comments for %s/%s#%s (db: %d)",
+            len(matched_entries), owner, repo_name, pr_number, db_updated,
+        )
+    except Exception as exc:
+        logger.warning("Failed to update Firebase for resolved thread: %s", exc)
+        return {"status": "error", "reason": str(exc)}
+
+    return {"status": "ok", "resolved": len(matched_entries), "db_updated": db_updated}
 
 
 # ── GitHub App Installation Events ────────────────────────────────────────
