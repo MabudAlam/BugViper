@@ -179,6 +179,52 @@ class ReviewRunData(BaseModel):
     duration_seconds: Optional[float] = Field(None, serialization_alias="durationSeconds")
 
 
+class RunAnalytics(BaseModel):
+    """Per-run issue counts stored in the analytics doc."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    run_number: int = Field(default=0, alias="runNumber")
+    issues: int = 0
+    resolved: int = 0
+
+
+class PRAnalyticsEntry(BaseModel):
+    """Per-PR summary stored in the analytics doc."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pr_number: int = Field(alias="prNumber")
+    owner: str = ""
+    repo: str = ""
+    repo_id: str = Field(default="", alias="repoId")
+    created_at: Optional[str] = Field(None, alias="createdAt")
+    last_reviewed_at: Optional[str] = Field(None, alias="lastReviewedAt")
+    last_review_type: Optional[str] = Field(None, alias="lastReviewType")
+    last_reviewed_sha: Optional[str] = Field(None, alias="lastReviewedSha")
+    review_status: Optional[str] = Field(None, alias="reviewStatus")
+    runs: list[RunAnalytics] = Field(default_factory=list)
+    total_issues: int = Field(default=0, alias="totalIssues")
+    total_resolved: int = Field(default=0, alias="totalResolved")
+    positives: int = 0
+
+
+class RepoAnalytics(BaseModel):
+    """Repo-level analytics doc stored at users/{uid}/repos/{owner}_{repo}/analytics."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    owner: str
+    repo_name: str = Field(alias="repoName")
+    total_prs: int = Field(default=0, alias="totalPrs")
+    total_reviews: int = Field(default=0, alias="totalReviews")
+    total_issues_generated: int = Field(default=0, alias="totalIssuesGenerated")
+    total_issues_resolved: int = Field(default=0, alias="totalIssuesResolved")
+    total_positives: int = Field(default=0, alias="totalPositives")
+    prs: dict[str, PRAnalyticsEntry] = Field(default_factory=dict)
+    updated_at: str = Field(default="", alias="updatedAt")
+
+
 class PendingInstallation(BaseModel):
     """Pending GitHub App installation, stored until user signs up and it's linked.
 
