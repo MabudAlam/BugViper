@@ -48,7 +48,7 @@ async def _run_deep_single_review(
     line_ranges: dict[str, list[dict[str, int]]] | None = None,
 ) -> dict:
     user_msg = build_user_message(pr_title=pr_title, pr_files=batch_files, line_ranges=line_ranges)
-    model = load_chat_model(config.deepagent_model)
+    model = load_chat_model(config.DEEPAGENT_CODE_REVIEW_MODEL)
 
     agents_info = [
         ("correctness-reviewer", CORRECTNESS_REVIEWER_PROMPT, get_subagent_steps('bug', review_mode, len(batch_files))),
@@ -99,7 +99,7 @@ async def _run_deep_review_with_batches(
     review_type: str,
     total_files: int = 0,
 ) -> dict:
-    max_concurrent = config.max_concurrent_sandboxes
+    max_concurrent = config.MAX_CONCURRENT_SANDBOXES
 
     logger.info(
         "Starting deep review: %d batches with %d total files, max_concurrent=%d",
@@ -113,8 +113,8 @@ async def _run_deep_review_with_batches(
         sbx = None
         try:
             sandbox_template = (
-                config.e2b_sandbox_template_large if len(batch_files) > 1
-                else config.e2b_sandbox_template_small
+                config.E2B_SANDBOX_TEMPLATE_LARGE if len(batch_files) > 1
+                else config.E2B_SANDBOX_TEMPLATE_SMALL
             )
 
             sbx = await _create_sandbox(
@@ -182,12 +182,12 @@ async def run_deep_review_pipeline(
     comment_id: int | None = None,
     uid: str | None = None,
 ) -> None:
-    if not config.e2b_api_key:
+    if not config.E2B_API_KEY:
         logger.error("E2B_API_KEY not set — cannot run deepagent review")
         return
 
     ensure_env()
-    os.environ["E2B_API_KEY"] = config.e2b_api_key
+    os.environ["E2B_API_KEY"] = config.E2B_API_KEY
     started_at = time.time()
 
     from common.github_client import get_github_client
@@ -257,8 +257,8 @@ async def run_deep_review_pipeline(
             )
         else:
             sandbox_template = (
-                config.e2b_sandbox_template_large if total_files > 3
-                else config.e2b_sandbox_template_small
+                config.E2B_SANDBOX_TEMPLATE_LARGE if total_files > 3
+                else config.E2B_SANDBOX_TEMPLATE_SMALL
             )
             sbx = await _create_sandbox(
                 owner=owner, repo=repo, head_sha=pr_data.head_sha,
