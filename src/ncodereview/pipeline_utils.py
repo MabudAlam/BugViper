@@ -69,7 +69,7 @@ async def _create_sandbox(
         head_sha=head_sha,
         head_branch=head_branch,
         github_token=github_token,
-        timeout=config.deepagent_sandbox_timeout,
+        timeout=config.DEEPAGENT_SANDBOX_TIMEOUT,
         template=template,
     )
 
@@ -121,9 +121,9 @@ async def _run_verifier_in_sandbox(
         return review_data
 
     user_msg = build_verifier_task(flat)
-    run_limit = min(len(flat) * 6, 50)
+    run_limit = min(len(flat) * config.VERIFIER_RUN_LIMIT_MULTIPLIER, config.VERIFIER_RUN_LIMIT_MAX)
     verifier_agent = create_verifier_agent(
-        model=load_chat_model(config.deepagent_model),
+        model=load_chat_model(config.VERIFIER_MODEL),
         sbx=sbx,
         run_limit=run_limit,
     )
