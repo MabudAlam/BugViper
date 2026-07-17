@@ -131,7 +131,7 @@ echo -e "${BLUE}[1/5] Starting API server...${NC}"
 kill_port "$API_PORT"
 cd "$PROJECT_ROOT"
 
-source .venv/bin/activate && uvicorn api.app:app --host 0.0.0.0 --port "$API_PORT" --reload --reload-dir "$PROJECT_ROOT/src/api" --reload-dir "$PROJECT_ROOT/src/common" --reload-dir "$PROJECT_ROOT/src/ncodereview" > "$PROJECT_ROOT/logs/api.log" 2>&1 &
+source .venv/bin/activate && uvicorn api.app:app --host 0.0.0.0 --port "$API_PORT" --reload --reload-dir "$PROJECT_ROOT/src/api" --reload-dir "$PROJECT_ROOT/src/common" --reload-dir "$PROJECT_ROOT/src/ai_code_review" > "$PROJECT_ROOT/logs/api.log" 2>&1 &
 API_PID=$!
 echo $API_PID >> "$PID_FILE"
 echo -e "${GREEN}✓ API started (PID: $API_PID)${NC}"
@@ -142,7 +142,7 @@ echo -e "\n${BLUE}[2/5] Starting Review Service...${NC}"
 kill_port "$REVIEW_PORT"
 cd "$PROJECT_ROOT"
 
-source .venv/bin/activate && uvicorn ncodereview.app:app --host 0.0.0.0 --port "$REVIEW_PORT" --reload --reload-dir "$PROJECT_ROOT/src/ncodereview" --reload-dir "$PROJECT_ROOT/src/common" > "$PROJECT_ROOT/logs/review.log" 2>&1 &
+source .venv/bin/activate && uvicorn ai_code_review.app:app --host 0.0.0.0 --port "$REVIEW_PORT" --reload --reload-dir "$PROJECT_ROOT/src/ai_code_review" --reload-dir "$PROJECT_ROOT/src/common" > "$PROJECT_ROOT/logs/review.log" 2>&1 &
 REVIEW_PID=$!
 echo $REVIEW_PID >> "$PID_FILE"
 echo -e "${GREEN}✓ Review Service started (PID: $REVIEW_PID)${NC}"

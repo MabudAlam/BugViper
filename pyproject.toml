@@ -111,7 +111,7 @@ packages = [
     "src/common",
     "src/db",
     "src/ingestion_service",
-    "src/ncodereview",
+    "src/ai_code_review",
 ]
 
 

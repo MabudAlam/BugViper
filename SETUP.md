@@ -281,7 +281,7 @@ BugViper/
 │   ├── db/                # Neo4j client
 │   ├── code_review_agent/ # LangGraph review agent
 │   ├── ingestion_service/ # Repository ingestion
-│   └── lint_service/      # Multi-language linting
+│   └── ai_code_review/e2b/   # E2B-based linter execution
 ├── infra/
 │   ├── docker/            # Dockerfiles
 │   └── cloudbuild/        # Cloud Build configs
@@ -301,7 +301,6 @@ BugViper/
 | API | 8000 | http://localhost:8000 |
 | Ingestion | 8080 | http://localhost:8080 |
 | Review | 8100 | http://localhost:8100 |
-| Lint | 8090 | http://localhost:8090 |
 | Neo4j Browser | 7474 | http://localhost:7474 |
 
 | Environment Variable | Description |
@@ -312,6 +311,5 @@ BugViper/
 | `GITHUB_WEBHOOK_SECRET` | Webhook verification secret |
 | `SERVICE_FILE_LOC` | Firebase service account JSON |
 | `NEO4J_*` | Neo4j connection settings |
-| `LINT_SERVICE_URL` | URL of lint service |
 | `INGESTION_SERVICE_URL` | URL of ingestion service |
 | `REVIEW_SERVICE_URL` | URL of review service |
