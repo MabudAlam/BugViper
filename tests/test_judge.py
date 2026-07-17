@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import asyncio
 
-from ncodereview.judge import (
+from ai_code_review.judge import (
     bounded_read,
     judge_findings,
     partition_findings,
     summarize_judgment,
 )
-from ncodereview.schemas import SubagentReviewIssue
+from ai_code_review.schemas import SubagentReviewIssue
 
 
 class _MockModel:

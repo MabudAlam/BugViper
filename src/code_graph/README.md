@@ -178,4 +178,4 @@ for file_path, data in pr_graph["per_file"].items():
 
 ## Batching
 
-For PRs with many files, call-graph-based batching groups related files together. See `ncodereview/batch.py` for the Louvain community detection + score-based packing into batches of 8 (normal mode) or 20 (deep mode).
+For PRs with many files, call-graph-based batching groups related files together. See `ai_code_review/batch.py` for the Louvain community detection + score-based packing into batches of 8 (normal mode) or 20 (deep mode).

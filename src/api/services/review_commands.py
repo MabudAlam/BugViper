@@ -18,6 +18,7 @@ class ReviewType(Enum):
 
     INCREMENTAL_REVIEW = "incremental_review"
     FULL_REVIEW = "full_review"
+    RUN_LINT = "run_lint"
     RESOLVE = "resolve"
     HELP = "help"
 
@@ -41,6 +42,11 @@ ALL_COMMANDS: list[ReviewCommand] = [
         description="Full diff review — all changed files.",
     ),
     ReviewCommand(
+        label="run lint",
+        review_type=ReviewType.RUN_LINT,
+        description="Run linter tools on the PR and post results.",
+    ),
+    ReviewCommand(
         label="resolve",
         review_type=ReviewType.RESOLVE,
         description="Resolve all BugViper inline review comments on this PR.",
@@ -60,7 +66,9 @@ _REVIEW_COMMAND_PATTERN = re.compile(
     @bugviper                 # bot mention
     \s+                       # require whitespace after mention
     (?:
-        full\s+review         # "full review" — must come before "review" to avoid partial match
+        full\s+review         # "full review" — must come before "review"
+        |
+        run\s+lint            # "run lint" — lint-only command
         |
         help(?=\s|$)          # "help"
         |
@@ -97,6 +105,8 @@ def extract_review_command(comment_body: str) -> Optional[ReviewType]:
 
     if "full" in raw:
         return ReviewType.FULL_REVIEW
+    if "run lint" in raw:
+        return ReviewType.RUN_LINT
     if raw.startswith("@bugviper help"):
         return ReviewType.HELP
     if raw.startswith("@bugviper resolve"):

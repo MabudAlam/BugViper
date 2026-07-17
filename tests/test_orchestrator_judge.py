@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from ncodereview.pipeline import (
+from ai_code_review.pipeline import (
     _normalize_and_validate_review_data,
     _run_judge_pass_if_needed,
 )
@@ -151,7 +151,7 @@ def test_fallback_judge_runs_when_orchestrator_skipped():
                     )
                 )
 
-        from ncodereview.judge import judge_findings
+        from ai_code_review.judge import judge_findings
 
         annotated = await judge_findings(
             _to_subagent_issues(review_data["issues"]), pr_files, model=_MockJudgeModel()
@@ -166,7 +166,7 @@ def test_fallback_judge_runs_when_orchestrator_skipped():
 
 
 def _to_subagent_issues(raw):
-    from ncodereview.schemas import SubagentReviewIssue
+    from ai_code_review.schemas import SubagentReviewIssue
 
     return [
         SubagentReviewIssue(

@@ -20,7 +20,7 @@ from code_graph import (
     render_blast_radius_markdown,
 )
 from code_graph.utils import clone_with_token
-from ncodereview.batch import (
+from ai_code_review.batch import (
     _assign_tier,
     _is_low_signal,
     _score_file,

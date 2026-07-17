@@ -12,9 +12,9 @@ def create_verifier_agent(model, sbx, run_limit=10):
     from langchain.agents.middleware import ToolCallLimitMiddleware
     from langchain_e2b import E2BSandbox
 
-    from ncodereview.middleware import ModelCallLimitMiddleware
-    from ncodereview.prompts import VERIFIER_SYSTEM_PROMPT
-    from ncodereview.schemas import VerifierOutput
+    from ai_code_review.middleware import ModelCallLimitMiddleware
+    from ai_code_review.prompts import VERIFIER_SYSTEM_PROMPT
+    from ai_code_review.schemas import VerifierOutput
 
     e2b_backend = E2BSandbox(sandbox=sbx)
     backend = CompositeBackend(
@@ -37,7 +37,7 @@ def create_verifier_agent(model, sbx, run_limit=10):
 
 def build_verifier_task(flat_issues: list[dict]) -> str:
     """Build the verifier task prompt with all findings inline."""
-    from ncodereview.prompts import VERIFIER_TASK_PROMPT
+    from ai_code_review.prompts import VERIFIER_TASK_PROMPT
 
     lines: list[str] = []
     for i, issue in enumerate(flat_issues):
@@ -78,11 +78,11 @@ def create_direct_generalist_agent(
     from langchain.agents.middleware import ToolCallLimitMiddleware, ModelFallbackMiddleware, ModelRetryMiddleware
     from langchain_e2b import E2BSandbox
 
-    from ncodereview.config import config
-    from ncodereview.llm import load_chat_model
-    from ncodereview.prompts import GENERALIST_PROMPT
-    from ncodereview.schemas import FinalReviewOutput
-    from ncodereview.middleware import ModelCallLimitMiddleware
+    from ai_code_review.config import config
+    from ai_code_review.llm import load_chat_model
+    from ai_code_review.prompts import GENERALIST_PROMPT
+    from ai_code_review.schemas import FinalReviewOutput
+    from ai_code_review.middleware import ModelCallLimitMiddleware
 
     e2b_backend = E2BSandbox(sandbox=sbx)
     backend = CompositeBackend(
@@ -213,10 +213,10 @@ def create_specialized_agent(model, sbx, system_prompt: str, name: str, run_limi
     from langchain.agents.middleware import ToolCallLimitMiddleware, ModelFallbackMiddleware, ModelRetryMiddleware
     from langchain_e2b import E2BSandbox
 
-    from ncodereview.config import config
-    from ncodereview.llm import load_chat_model
-    from ncodereview.middleware import ModelCallLimitMiddleware
-    from ncodereview.schemas import FinalReviewOutput
+    from ai_code_review.config import config
+    from ai_code_review.llm import load_chat_model
+    from ai_code_review.middleware import ModelCallLimitMiddleware
+    from ai_code_review.schemas import FinalReviewOutput
 
     e2b_backend = E2BSandbox(sandbox=sbx)
     backend = CompositeBackend(
@@ -254,7 +254,7 @@ def create_specialized_agent(model, sbx, system_prompt: str, name: str, run_limi
 
 def merge_subagent_results(results: list[dict]) -> "FinalReviewOutput":
     """Merge multiple FinalReviewOutput results into a single FinalReviewOutput."""
-    from ncodereview.schemas import FinalReviewOutput
+    from ai_code_review.schemas import FinalReviewOutput
 
     all_issues = []
     all_positives = []

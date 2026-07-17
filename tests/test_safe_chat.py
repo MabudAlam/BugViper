@@ -8,7 +8,7 @@ import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 
-from ncodereview.safe_chat import with_null_choices_retry
+from ai_code_review.safe_chat import with_null_choices_retry
 
 
 class _FakeChat(BaseChatModel):

@@ -10,6 +10,9 @@ python build_small.py
 
 # Build large template (4 vCPU, 4GB RAM)
 python build_large.py
+
+# Build linter template (2 vCPU, 8GB RAM, pre-installed ruff + golangci-lint)
+python build_linter.py
 ```
 
 ## Add to .env
@@ -17,9 +20,11 @@ python build_large.py
 ```bash
 E2B_SANDBOX_TEMPLATE_SMALL=bugviper-small
 E2B_SANDBOX_TEMPLATE_LARGE=bugviper-large
+# bugviper-linter is used automatically by the lint service
 ```
 
 ## Template Behavior
 
 - **Small (<=5 files)**: Uses `bugviper-small` - 2 vCPU template
 - **Large (>5 files)**: Uses `bugviper-large` - 4 vCPU template
+- **Linter**: Uses `bugviper-linter` - 2 vCPU / 8GB RAM template with pre-installed ruff + golangci-lint

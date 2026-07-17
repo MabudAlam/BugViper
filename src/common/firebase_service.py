@@ -18,6 +18,7 @@ from common.firebase_models import (
     RepoAnalytics,
     ReviewRunData,
     RunAnalytics,
+    ToolsConfig,
 )
 
 
@@ -1055,6 +1056,21 @@ class BugViperFirebaseService:
             return None
 
         return run
+
+    # ── Tools config ───────────────────────────────────────────────────────
+
+    def get_tools_config(self, uid: str) -> ToolsConfig:
+        """Read the user's linter tools config, returning defaults if not set."""
+        doc = self._db.collection("users").document(uid).collection("config").document("tools").get()
+        if not doc.exists:
+            return ToolsConfig()
+        return ToolsConfig.model_validate(doc.to_dict())
+
+    def save_tools_config(self, uid: str, tools_config: ToolsConfig) -> None:
+        """Save the user's linter tools config."""
+        self._db.collection("users").document(uid).collection("config").document("tools").set(
+            _to_dict(tools_config),
+        )
 
     def setModelConfig(self, uid: str, model_config: ModelConfig) -> None:
         """

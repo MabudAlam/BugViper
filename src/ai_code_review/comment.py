@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from api.services.lint_service import run_lint
 from api.utils.comment_formatter import format_inline_comment, format_review_summary
 from common.diff_parser import (
     calculate_comment_line,
@@ -40,16 +39,11 @@ async def post_review(
     summary: str,
     raw_agent_outputs: dict[str, str] | None = None,
     judgment_counts: dict[str, int] | None = None,
+    lint_findings: list[dict] | None = None,
 ) -> dict:
     """Post the review to GitHub — inline comments + PR review body."""
     issue_models = _build_issue_models(issues)
-
-    try:
-        lint_results = await run_lint(pr_files)
-        lint_issues = [i for i in lint_results if i.file in pr_files]
-    except Exception as exc:
-        logger.warning("Lint failed during review post: %s", exc)
-        lint_issues = []
+    lint_issues = lint_findings or []
 
     walkthrough_lines = [
         f"{w.get('file', '?')} — {w.get('summary', '')}" for w in walkthrough
@@ -66,11 +60,11 @@ async def post_review(
         reconciled,
         None,
         pr_number,
-        lint_issues=lint_issues,
         walk_through=walkthrough_lines,
         inline_posted=0,
         inline_skipped=0,
         judgment_counts=judgment_counts,
+        lint_findings=lint_issues,
     )
 
     has_blocking = any(
@@ -152,7 +146,6 @@ async def post_review(
         "skipped": inline_skipped,
         "event": event,
         "issues_count": len(issue_models),
-        "lint_count": len(lint_issues),
         "github_comment_ids": github_comment_ids,
     }
 
@@ -220,9 +213,10 @@ async def run_post_review(
     review_type: str,
     started_at: float,
 ) -> dict:
-    from ncodereview.tracking import mark_review_completed
-    from ncodereview.normalize import positives_to_strings
+    from ai_code_review.tracking import mark_review_completed
+    from ai_code_review.normalize import positives_to_strings
 
+    lint_findings = review_data.get("lint_findings", [])
     gh_stats = await post_review(
         owner=owner,
         repo=repo,
@@ -237,6 +231,7 @@ async def run_post_review(
         summary=review_data.get("summary", ""),
         raw_agent_outputs=review_data.get("raw_agent_outputs"),
         judgment_counts=review_data.get("_judgment_counts"),
+        lint_findings=lint_findings,
     )
     fb_stats = mark_review_completed(
         uid=uid,

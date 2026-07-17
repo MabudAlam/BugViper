@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 import re
 
-from ncodereview.config import config
-from ncodereview.llm import load_chat_model
+from ai_code_review.config import config
+from ai_code_review.llm import load_chat_model
 
 logger = logging.getLogger(__name__)
 

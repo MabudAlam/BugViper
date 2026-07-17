@@ -19,12 +19,12 @@ from code_graph import (
 )
 from common.diff_parser import split_diff_by_file
 from common.github_client import GitHubClient
-from ncodereview.agent import build_user_message, build_verifier_task, create_verifier_agent
-from ncodereview.artifacts import _dump_debug_artifacts, _save_stage, safe_serialize
-from ncodereview.config import config
-from ncodereview.llm import load_chat_model
-from ncodereview.normalize import flatten_issues
-from ncodereview.sandbox import (
+from ai_code_review.agent import build_user_message, build_verifier_task, create_verifier_agent
+from ai_code_review.artifacts import _dump_debug_artifacts, _save_stage, safe_serialize
+from ai_code_review.config import config
+from ai_code_review.llm import load_chat_model
+from ai_code_review.normalize import flatten_issues
+from ai_code_review.sandbox import (
     create_sandbox_with_repo,
     inject_call_graph,
     inject_diff,

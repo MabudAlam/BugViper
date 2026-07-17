@@ -22,42 +22,42 @@ from code_graph import (
 )
 from common.diff_parser import split_diff_by_file
 from common.github_client import GitHubClient, get_github_client
-from ncodereview.agent import (
+from ai_code_review.agent import (
     build_user_message,
     build_verifier_task,
     calculate_batch_tool_limits,
     create_direct_generalist_agent,
     create_verifier_agent,
 )
-from ncodereview.batch import (
+from ai_code_review.batch import (
     batch_pr_files,
     filter_blast_radius_for_files,
     filter_call_graph_for_files,
 )
-from ncodereview.config import config, ensure_env
-from ncodereview.diff import get_changed_line_ranges
-from ncodereview.schemas import GithubPrDetails
-from ncodereview.llm import load_chat_model
-from ncodereview.normalize import (
+from ai_code_review.config import config, ensure_env
+from ai_code_review.diff import get_changed_line_ranges
+from ai_code_review.schemas import GithubPrDetails
+from ai_code_review.llm import load_chat_model
+from ai_code_review.normalize import (
     extract_review_from_result,
     flatten_issues,
     normalize_and_validate_review_data,
     resolve_review_mode,
 )
-from ncodereview.artifacts import (
+from ai_code_review.artifacts import (
     _dump_debug_artifacts,
     _save_stage,
     safe_serialize,
 )
-from ncodereview.comment import run_post_review
-from ncodereview.result_merger import merge_batch_results
-from ncodereview.sandbox import (
+from ai_code_review.comment import run_post_review
+from ai_code_review.result_merger import merge_batch_results
+from ai_code_review.sandbox import (
     create_sandbox_with_repo,
     inject_call_graph,
     inject_diff,
     kill_sandbox,
 )
-from ncodereview.tracking import (
+from ai_code_review.tracking import (
     get_last_review_sha,
     mark_review_failed,
     mark_review_running,
@@ -709,6 +709,20 @@ async def run_review_pipeline(
             )
             inject_diff(sbx, review_diff_text)
             inject_call_graph(sbx, call_graph_json, blast_radius_md)
+
+            # Run linters first, then AI review
+            review_data: dict = {}
+            if uid:
+                from static_code_review.lint import run_linters_in_sandbox
+                changed_files = [f.filename for f in pr_data.files]
+                try:
+                    lint_findings = await run_linters_in_sandbox(uid, owner, repo, sbx, changed_files)
+                    if lint_findings:
+                        review_data["lint_findings"] = lint_findings
+                        logger.info("Lint: %d findings found before AI review", len(lint_findings))
+                except Exception as exc:
+                    logger.warning("E2B lint failed: %s", exc)
+
             review_data, agent_result = await _run_single_review(
                 sbx=sbx,
                 pr_title=pr_title,

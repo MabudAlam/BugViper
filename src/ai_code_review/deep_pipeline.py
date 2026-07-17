@@ -8,19 +8,19 @@ import os
 import time
 from typing import Any
 
-from ncodereview.batch import (
+from ai_code_review.batch import (
     _is_low_signal,
     _score_file,
     filter_call_graph_for_files,
     filter_blast_radius_for_files,
 )
-from ncodereview.agent import build_user_message, create_specialized_agent, get_subagent_steps, merge_subagent_results
-from ncodereview.artifacts import _dump_debug_artifacts, _save_stage, safe_serialize
-from ncodereview.config import config, ensure_env
-from ncodereview.diff import get_changed_line_ranges
-from ncodereview.llm import load_chat_model
-from ncodereview.normalize import flatten_issues, normalize_and_validate_review_data, resolve_review_mode
-from ncodereview.pipeline_utils import (
+from ai_code_review.agent import build_user_message, create_specialized_agent, get_subagent_steps, merge_subagent_results
+from ai_code_review.artifacts import _dump_debug_artifacts, _save_stage, safe_serialize
+from ai_code_review.config import config, ensure_env
+from ai_code_review.diff import get_changed_line_ranges
+from ai_code_review.llm import load_chat_model
+from ai_code_review.normalize import flatten_issues, normalize_and_validate_review_data, resolve_review_mode
+from ai_code_review.pipeline_utils import (
     ReviewError,
     _create_sandbox,
     _dump_review_artifacts,
@@ -29,10 +29,10 @@ from ncodereview.pipeline_utils import (
     _run_verifier_in_sandbox,
     _slice_diff_for_batch,
 )
-from ncodereview.prompts import CORRECTNESS_REVIEWER_PROMPT, PERF_REVIEWER_PROMPT, SECURITY_AUDITOR_PROMPT
-from ncodereview.result_merger import merge_batch_results
-from ncodereview.sandbox import inject_call_graph, inject_diff, kill_sandbox
-from ncodereview.tracking import get_last_review_sha, mark_review_failed, mark_review_running, upsert_repo_metadata
+from ai_code_review.prompts import CORRECTNESS_REVIEWER_PROMPT, PERF_REVIEWER_PROMPT, SECURITY_AUDITOR_PROMPT
+from ai_code_review.result_merger import merge_batch_results
+from ai_code_review.sandbox import inject_call_graph, inject_diff, kill_sandbox
+from ai_code_review.tracking import get_last_review_sha, mark_review_failed, mark_review_running, upsert_repo_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +296,7 @@ async def run_deep_review_pipeline(
             changed_files=[f.filename for f in pr_data.files],
         )
 
-        from ncodereview.comment import run_post_review
+        from ai_code_review.comment import run_post_review
         await run_post_review(
             gh=github, owner=owner, repo=repo, pr_number=pr_number,
             head_sha=pr_data.head_sha, base_sha=pr_data.base_sha,

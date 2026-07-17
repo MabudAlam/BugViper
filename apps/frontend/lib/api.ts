@@ -221,6 +221,30 @@ export interface InstallationStatus {
 export const getInstallationStatus = (): Promise<InstallationStatus> =>
   apiFetch("/api/v1/auth/installation");
 
+export interface LinterToolConfig {
+  name: string;
+  enabled: boolean;
+  url: string;
+  extensions: string[];
+  configFiles: string[];
+  configFile: string;
+}
+
+export interface ToolsConfig {
+  ruff: LinterToolConfig;
+  eslint: LinterToolConfig;
+  golangciLint: LinterToolConfig;
+}
+
+export const getToolsConfig = (): Promise<ToolsConfig> =>
+  apiFetch("/api/v1/tools/config");
+
+export const saveToolsConfig = (config: ToolsConfig): Promise<ToolsConfig> =>
+  apiFetch("/api/v1/tools/config", {
+    method: "PUT",
+    body: JSON.stringify(config),
+  });
+
 export const submitSupportQuery = (data: SupportQueryPayload): Promise<SupportQueryResult> =>
   fetch(`${API_BASE}/api/v1/support/query`, {
     method: "POST",

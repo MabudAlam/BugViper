@@ -1,11 +1,35 @@
 import os
-from collections import defaultdict
 
 from common.schemas import ContextData, FileSummary, Issue, ReconciledReview
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
-_SECURITY_TOOLS = {"bandit", "semgrep", "gitleaks"}
+def _render_lint_section(lint_findings: list[dict]) -> list[str]:
+    if not lint_findings:
+        return []
+    by_tool: dict[str, list[dict]] = {}
+    for f in lint_findings:
+        by_tool.setdefault(f.get("tool", "lint"), []).append(f)
+    lines: list[str] = []
+    lines.append("### \U0001f52c Static Analysis")
+    lines.append("")
+    lines.append(f"*{len(lint_findings)} finding(s) from {len(by_tool)} tool(s)*")
+    lines.append("")
+    for tool in sorted(by_tool):
+        items = by_tool[tool]
+        lines.append("<details open>")
+        lines.append(f"<summary>\U0001f527 {tool} ({len(items)} issue(s))</summary>")
+        lines.append("")
+        lines.append("| File | Line | Rule | Message |")
+        lines.append("|------|------|------|---------|")
+        for item in sorted(items, key=lambda i: (i.get("file", ""), i.get("line", 0))):
+            lines.append(
+                f"| `{item.get('file', '')}` | {item.get('line', 1)} "
+                f"| `{item.get('rule', '')}` | {item.get('message', '')} |"
+            )
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+    return lines
 
 
 def _model_label(debug_info: dict | None) -> str:
@@ -17,66 +41,7 @@ def _model_label(debug_info: dict | None) -> str:
     return "BugViper AI"
 
 
-def _extract_tool(issue: Issue) -> str:
-    """Parse tool name from lint issue titles like '[ruff] E501: ...'."""
-    if issue.title.startswith("[") and "]" in issue.title:
-        return issue.title[1 : issue.title.index("]")]
-    return "lint"
 
-
-def _render_static_section(lint_issues: list[Issue]) -> list[str]:
-    """Render grouped static analysis findings by tool.
-
-    Security tools (bandit, semgrep, gitleaks) are shown open by default.
-    Style/quality tools are collapsed.
-    """
-    if not lint_issues:
-        return []
-
-    by_tool: dict[str, list[Issue]] = defaultdict(list)
-    for issue in lint_issues:
-        by_tool[_extract_tool(issue)].append(issue)
-
-    lines: list[str] = []
-    lines.append("### 🔬 Static Analysis")
-    lines.append("")
-    lines.append(
-        f"*{len(lint_issues)} finding(s) from {len(by_tool)} tool(s) — "
-        "deterministic, confidence 10/10*"
-    )
-    lines.append("")
-
-    # Security tools first, then alphabetical
-    security = {t: v for t, v in by_tool.items() if t in _SECURITY_TOOLS}
-    quality = {t: v for t, v in by_tool.items() if t not in _SECURITY_TOOLS}
-
-    for tool, issues in list(security.items()) + sorted(quality.items()):
-        is_sec = tool in _SECURITY_TOOLS
-        # All sections open by default
-        lines.append("<details open>")
-        lines.append(
-            f"<summary>{'🔐' if is_sec else '🔧'} {tool} ({len(issues)} issue(s))</summary>"
-        )
-        lines.append("")
-        lines.append("| File | Line | Rule | Message |")
-        lines.append("|------|------|------|---------|")
-        for issue in sorted(issues, key=lambda i: (i.file, i.line_start)):
-            # Extract rule from title: "[tool] RULE: message" → "RULE"
-            rule = ""
-            if "] " in issue.title:
-                after_tool = issue.title.split("] ", 1)[1]
-                rule = (
-                    after_tool.split(":")[0].strip() if ":" in after_tool else after_tool.split()[0]
-                )
-            # No truncation — show full message
-            lines.append(
-                f"| `{issue.file}` | {issue.line_start} | `{rule}` | {issue.description} |"
-            )
-        lines.append("")
-        lines.append("</details>")
-        lines.append("")
-
-    return lines
 
 
 def _ai_fix_to_suggestion(ai_fix: str) -> str | None:
@@ -397,12 +362,12 @@ def format_review_summary(
     review: ReconciledReview,
     context: ContextData | None,
     pr_number: int,
-    lint_issues: list[Issue] | None = None,
     files_changed_summary: list[FileSummary] | None = None,
     walk_through: list[str] | None = None,
     inline_posted: int = 0,
     inline_skipped: int = 0,
     judgment_counts: dict[str, int] | None = None,
+    lint_findings: list[dict] | None = None,
 ) -> str:
     """Format the top-level PR review body (overview only).
 
@@ -410,9 +375,7 @@ def format_review_summary(
     shows the walkthrough, impact analysis, and positive findings.
     """
     parts: list[str] = []
-
-    # review.issues contains LLM-only findings; lint_issues are passed separately
-    lint_issues = lint_issues or []
+    lint_findings = lint_findings or []
     fixed_issues = [i for i in review.issues if i.status == "fixed"]
     open_issues = [i for i in review.issues if i.status == "still_open"]
     new_issues = [i for i in review.issues if i.status == "new"]
@@ -658,7 +621,7 @@ def format_review_summary(
         parts.append("")
 
     # ── Static analysis section ───────────────────────────────────────────────
-    for line in _render_static_section(lint_issues):
+    for line in _render_lint_section(lint_findings):
         parts.append(line)
 
     # ── Prompt For AI Agent ────────────────────────────────────────────────────
@@ -683,15 +646,11 @@ def format_github_comment(
     review: ReconciledReview,
     context: ContextData | None,
     pr_number: int,
-    lint_issues: list[Issue] | None = None,
     files_changed_summary: list[FileSummary] | None = None,
     walk_through: list[str] | None = None,
 ) -> str:
     """Format a ReconciledReview into a GitHub PR comment (CodeRabbit-style)."""
     parts: list[str] = []
-
-    # review.issues contains LLM-only findings; lint_issues are passed separately
-    lint_issues = lint_issues or []
     fixed_issues = [i for i in review.issues if i.status == "fixed"]
     open_issues = [i for i in review.issues if i.status == "still_open"]
     new_issues = [i for i in review.issues if i.status == "new"]
@@ -710,8 +669,6 @@ def format_github_comment(
         run_summary_parts.append(f"**{len(open_issues)} still open**")
     if new_issues:
         run_summary_parts.append(f"**{len(new_issues)} new**")
-    if lint_issues:
-        run_summary_parts.append(f"**{len(lint_issues)} static**")
     if run_summary_parts:
         parts.append(" · ".join(run_summary_parts))
         parts.append("")

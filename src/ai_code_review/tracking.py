@@ -9,7 +9,7 @@ from typing import Any
 
 from common.firebase_models import PRMetadata, PrReviewStatus, RepoMetadata, ReviewRunData
 from common.firebase_service import firebase_service
-from ncodereview.schemas import RepoDetails
+from ai_code_review.schemas import RepoDetails
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def mark_review_completed(
     base_sha: str,
     github_comment_ids: list[dict],
 ) -> dict:
-    from ncodereview.normalize import positives_to_strings
+    from ai_code_review.normalize import positives_to_strings
 
     issues = review_data.get("issues", [])
     positives = positives_to_strings(review_data.get("positives", []))

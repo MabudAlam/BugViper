@@ -4,12 +4,17 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 import logging
+import sys
 
 from fastapi import FastAPI
 
 from common.job_models import PRReviewPayload
 
 logger = logging.getLogger(__name__)
+
+logging.getLogger().setLevel(logging.INFO)
+if not logging.getLogger().hasHandlers():
+    logging.getLogger().addHandler(logging.StreamHandler(sys.stderr))
 
 app = FastAPI(title="BugViper Code Review Worker", version="0.1.0")
 
@@ -24,7 +29,7 @@ async def handle_review(payload: PRReviewPayload):
         payload.pr_number,
         payload.review_type,
     )
-    from ncodereview import config, run_review_pipeline, run_deep_review_pipeline
+    from ai_code_review import config, run_review_pipeline, run_deep_review_pipeline
 
     if config.DEEPAGENT_REVIEW_MODE == 'deep':
         await run_deep_review_pipeline(

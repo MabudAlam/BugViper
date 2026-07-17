@@ -225,6 +225,59 @@ class RepoAnalytics(BaseModel):
     updated_at: str = Field(default="", alias="updatedAt")
 
 
+class LinterToolConfig(BaseModel):
+    """Configuration for a single linter tool."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = ""
+    enabled: bool = True
+    url: str = Field(default="", alias="url")
+    extensions: list[str] = Field(default_factory=list)
+    config_files: list[str] = Field(default_factory=list, alias="configFiles")
+    config_file: str = Field(default="", alias="configFile")
+
+
+class ToolsConfig(BaseModel):
+    """User's linter tools configuration. Stored at users/{uid}/config/tools."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ruff: LinterToolConfig = Field(
+        default_factory=lambda: LinterToolConfig(
+            name="Ruff",
+            enabled=True,
+            url="https://docs.astral.sh/ruff/",
+            extensions=[".py", ".ipynb"],
+            config_files=["pyproject.toml", "ruff.toml", ".ruff.toml"],
+        ),
+    )
+    eslint: LinterToolConfig = Field(
+        default_factory=lambda: LinterToolConfig(
+            name="ESLint",
+            enabled=True,
+            url="https://eslint.org/",
+            extensions=[".js", ".ts", ".cjs", ".mjs", ".d.cts", ".d.mts", ".jsx", ".tsx",
+                        ".css", ".vue", ".svelte", ".astro", ".graphql", ".gql", ".mdx"],
+            config_files=["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs",
+                          "eslint.config.ts", "eslint.config.mts", "eslint.config.cts",
+                          ".eslintrc", ".eslintrc.js", ".eslintrc.cjs",
+                          ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml"],
+        ),
+        alias="eslint",
+    )
+    golangci_lint: LinterToolConfig = Field(
+        default_factory=lambda: LinterToolConfig(
+            name="golangci-lint",
+            enabled=True,
+            url="https://golangci-lint.run/",
+            extensions=[".go", ".go.mod"],
+            config_files=[".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json"],
+        ),
+        alias="golangciLint",
+    )
+
+
 class PendingInstallation(BaseModel):
     """Pending GitHub App installation, stored until user signs up and it's linked.
 

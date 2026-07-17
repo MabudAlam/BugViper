@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 import logging
 
-from ncodereview.dedup import deduplicate_issues
-from ncodereview.diff import get_changed_line_ranges, overlaps_added_lines
+from ai_code_review.dedup import deduplicate_issues
+from ai_code_review.diff import get_changed_line_ranges, overlaps_added_lines
 
 
 logger = logging.getLogger(__name__)
@@ -208,7 +208,7 @@ def extract_review_from_result(result: dict) -> dict | None:
     """Parse structured response using FinalReviewOutput schema, with text fallback."""
     import json as _json
     import re as _re
-    from ncodereview.schemas import FinalReviewOutput
+    from ai_code_review.schemas import FinalReviewOutput
 
     structured = result.get("structured_response")
 

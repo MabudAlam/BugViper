@@ -1,7 +1,7 @@
 """Shared Pydantic models for code review I/O.
 
 Used by:
-- `ncodereview/` — DeepAgent pipeline (tools.py, schemas.py, pipeline.py)
+- `ai_code_review/` — DeepAgent pipeline
 - `api/utils/comment_formatter.py` — formats Issue/ContextData for posting
 - `api/services/lint_service.py` — Issue type for static-analysis findings
 """

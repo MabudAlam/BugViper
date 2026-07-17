@@ -213,27 +213,22 @@ async def _handle_comment_review(payload: dict) -> dict:
             )
             return {"status": "ignored", "reason": "review already running"}
 
-    from ncodereview import config, run_review_pipeline, run_deep_review_pipeline
+    if review_type == ReviewType.RUN_LINT:
+        from static_code_review.lint import run_lint_only
 
-    if config.DEEPAGENT_REVIEW_MODE == 'deep':
-        await run_deep_review_pipeline(
-            owner,
-            repo_name,
-            pr_number,
-            review_type=review_type.value,
-            comment_id=comment_id,
-            uid=uid,
-        )
-    else:
-        await run_review_pipeline(
-            owner,
-            repo_name,
-            pr_number,
-            review_type=review_type.value,
-            comment_id=comment_id,
-            uid=uid,
-        )
+        await run_lint_only(owner, repo_name, pr_number, uid)
+        return {"status": "completed", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "lint"}
 
+    from static_code_review.lint import run_full_review
+
+    await run_full_review(
+        owner=owner,
+        repo=repo_name,
+        pr_number=pr_number,
+        uid=uid or "",
+        review_type=review_type.value,
+        comment_id=comment_id,
+    )
     return {"status": "completed", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
 
 
