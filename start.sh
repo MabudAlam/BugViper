@@ -19,7 +19,7 @@ export PYTHONPATH="$PROJECT_ROOT/src"
 API_PORT="${API_PORT:-8000}"
 REVIEW_PORT="${REVIEW_PORT:-8100}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
-LINT_HOST_PORT="${LINT_HOST_PORT:-8090}"
+
 
 NGROK_DOMAIN="${NGROK_DOMAIN:-}"
 NGROK_URL="${NGROK_URL:-}"
@@ -68,11 +68,10 @@ cleanup() {
     fi
 
     # Kill any remaining processes on our ports
-    for port in "$API_PORT" "$REVIEW_PORT" "$LINT_HOST_PORT" "$FRONTEND_PORT"; do
+    for port in "$API_PORT" "$REVIEW_PORT"  "$FRONTEND_PORT"; do
         lsof -ti :"$port" 2>/dev/null | xargs kill -9 2>/dev/null || true
     done
 
-    docker stop bugviper-lint 2>/dev/null || true
 
     echo -e "${GREEN}All services stopped.${NC}"
     exit 0
@@ -128,7 +127,7 @@ if [ -z "$NGROK_DOMAIN" ] && [ -n "$NGROK_URL" ]; then
 fi
 
 # Start API
-echo -e "${BLUE}[1/6] Starting API server...${NC}"
+echo -e "${BLUE}[1/5] Starting API server...${NC}"
 kill_port "$API_PORT"
 cd "$PROJECT_ROOT"
 
@@ -139,50 +138,18 @@ echo -e "${GREEN}✓ API started (PID: $API_PID)${NC}"
 echo -e "  Log file: logs/api.log"
 
 # Start Review Service
-echo -e "\n${BLUE}[2/6] Starting Review Service...${NC}"
+echo -e "\n${BLUE}[2/5] Starting Review Service...${NC}"
 kill_port "$REVIEW_PORT"
 cd "$PROJECT_ROOT"
 
-source .venv/bin/activate && uvicorn code_review_agent.app:app --host 0.0.0.0 --port "$REVIEW_PORT" --reload --reload-dir "$PROJECT_ROOT/src/ncodereview" --reload-dir "$PROJECT_ROOT/src/common" > "$PROJECT_ROOT/logs/review.log" 2>&1 &
+source .venv/bin/activate && uvicorn ncodereview.app:app --host 0.0.0.0 --port "$REVIEW_PORT" --reload --reload-dir "$PROJECT_ROOT/src/ncodereview" --reload-dir "$PROJECT_ROOT/src/common" > "$PROJECT_ROOT/logs/review.log" 2>&1 &
 REVIEW_PID=$!
 echo $REVIEW_PID >> "$PID_FILE"
 echo -e "${GREEN}✓ Review Service started (PID: $REVIEW_PID)${NC}"
 echo -e "  Log file: logs/review.log"
 
-# Start Lint Service (Docker)
-echo -e "\n${BLUE}[3/6] Starting Lint Service (Docker)...${NC}"
-kill_port "$LINT_HOST_PORT"
-if command -v docker &> /dev/null && docker info &> /dev/null 2>&1; then
-    # Stop any existing container
-    docker stop bugviper-lint 2>/dev/null
-    docker rm bugviper-lint 2>/dev/null
-
-    # Build the image if it doesn't exist
-    if ! docker image inspect bugviper-lint-service &>/dev/null; then
-        echo -e "  Building lint service image (first time, ~2 min)..."
-        docker build -q -t bugviper-lint-service -f infra/docker/Dockerfile.lint . > "$PROJECT_ROOT/logs/lint-build.log" 2>&1
-        if [ $? -ne 0 ]; then
-            echo -e "  ${YELLOW}⚠ Lint image build failed — check logs/lint-build.log${NC}"
-            LINT_AVAILABLE=false
-        else
-            LINT_AVAILABLE=true
-        fi
-    else
-        LINT_AVAILABLE=true
-    fi
-
-    if [ "$LINT_AVAILABLE" = true ]; then
-        docker run -d --name bugviper-lint -p "$LINT_HOST_PORT":8080 bugviper-lint-service > /dev/null 2>&1
-        echo -e "${GREEN}✓ Lint Service started (http://localhost:${LINT_HOST_PORT})${NC}"
-        echo -e "  ${YELLOW}Add LINT_SERVICE_URL=http://localhost:${LINT_HOST_PORT} to .env to enable linting${NC}"
-    fi
-else
-    echo -e "  ${YELLOW}⚠ Docker not running — lint service skipped${NC}"
-    echo -e "  ${YELLOW}  Start Docker Desktop and re-run to enable linting${NC}"
-fi
-
 # Start Frontend
-echo -e "\n${BLUE}[4/6] Starting Frontend...${NC}"
+echo -e "\n${BLUE}[3/5] Starting Frontend...${NC}"
 kill_port "$FRONTEND_PORT"
 if [ "$FRONTEND_AVAILABLE" = true ]; then
     cd "$PROJECT_ROOT/apps/frontend"
@@ -233,7 +200,7 @@ done
 
 # Start ngrok if available
 if [ "$NGROK_AVAILABLE" = true ]; then
-    echo -e "\n${BLUE}[5/6] Starting ngrok tunnel...${NC}"
+    echo -e "\n${BLUE}[4/5] Starting ngrok tunnel...${NC}"
     if [ -n "$NGROK_DOMAIN" ]; then
         ngrok http "$API_PORT" --domain="$NGROK_DOMAIN" > "$PROJECT_ROOT/logs/ngrok.log" 2>&1 &
     else
@@ -259,7 +226,7 @@ if [ "$NGROK_AVAILABLE" = true ]; then
         echo -e "\r  ${YELLOW}Could not retrieve ngrok URL${NC}"
     fi
 else
-    echo -e "\n${YELLOW}[5/6] Skipping ngrok (not installed)${NC}"
+    echo -e "\n${YELLOW}[4/5] Skipping ngrok (not installed)${NC}"
 fi
 
 # Display summary
@@ -273,7 +240,6 @@ echo -e "  API:         ${YELLOW}http://localhost:${API_PORT}${NC}"
 echo -e "  API Docs:    ${YELLOW}http://localhost:${API_PORT}/docs${NC}"
 echo -e "  Review:      ${YELLOW}http://localhost:${REVIEW_PORT}${NC}"
 echo -e "  Review Docs: ${YELLOW}http://localhost:${REVIEW_PORT}/docs${NC}"
-echo -e "  Lint:        ${YELLOW}http://localhost:${LINT_HOST_PORT}${NC}"
 
 if [ "$NGROK_AVAILABLE" = true ] && [ -n "$NGROK_URL" ]; then
     echo -e "  Ngrok:       ${YELLOW}$NGROK_URL${NC}"
@@ -322,7 +288,8 @@ while true; do
     fi
 
     if [ "$NGROK_STARTED" = true ] && [ "$NGROK_PID" != "" ] && ! kill -0 "$NGROK_PID" 2>/dev/null; then
-        echo -e "\n${RED}✗ Ngrok process exited (PID: $NGROK_PID). Stopping all services...${NC}"
-        cleanup
+        echo -e "\n${YELLOW}⚠ Ngrok tunnel exited (PID: $NGROK_PID). Webhook URL will not be available.${NC}"
+        NGROK_STARTED=false
+        NGROK_PID=""
     fi
 done
