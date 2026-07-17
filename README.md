@@ -321,6 +321,8 @@ cp .env.example .env   # fill in variables
 uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+> **Verification:** Open `http://localhost:8000/docs` (or `/redoc`) after the server starts. If the API documentation loads successfully, the backend is running correctly and is ready for frontend and repository ingestion requests.
+
 ### Frontend
 
 ```bash
