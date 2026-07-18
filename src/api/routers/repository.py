@@ -159,6 +159,8 @@ class PRDetailsFromAnalytics(BaseModel):
     lastReviewedAt: str | None
     lastReviewedSha: str | None
     createdAt: str | None
+    mergedAt: str | None = None
+    closedAt: str | None = None
     runs: list[dict]
 
 class RepoAnalyticsDetail(BaseModel):
@@ -169,6 +171,10 @@ class RepoAnalyticsDetail(BaseModel):
     totalIssuesGenerated: int
     totalIssuesResolved: int
     totalPositives: int
+    prsPerWeek: float = 0.0
+    addressedRate: float = 0.0
+    avgMergeTimeHours: float = 0.0
+    dailyBreakdown: list[dict] = []
     prs: list[PRDetailsFromAnalytics]
 
 class DashboardStats(BaseModel):
@@ -178,6 +184,9 @@ class DashboardStats(BaseModel):
     total_issues_raised: int
     total_issues_resolved: int
     total_positives: int
+    prs_per_week: float = 0.0
+    addressed_rate: float = 0.0
+    avg_merge_time_hours: float = 0.0
 
 class RepoOverviewResponse(BaseModel):
     stats: DashboardStats
@@ -317,6 +326,9 @@ async def repo_overview(
     total_issues_raised = 0
     total_issues_resolved = 0
     total_positives = 0
+    weighted_prs_per_week = 0.0
+    weighted_merge_time = 0.0
+    stats_repo_count = 0
     results: list[RepoSummary] = []
 
     for i, repo_doc in enumerate(repo_docs):
@@ -334,6 +346,9 @@ async def repo_overview(
             total_issues_raised += a.get("totalIssuesGenerated", 0)
             total_issues_resolved += a.get("totalIssuesResolved", 0)
             total_positives += a.get("totalPositives", 0)
+            weighted_prs_per_week += a.get("prsPerWeek", 0)
+            weighted_merge_time += a.get("avgMergeTimeHours", 0)
+            stats_repo_count += 1
         results.append(summary)
 
     return RepoOverviewResponse(
@@ -344,6 +359,9 @@ async def repo_overview(
             total_issues_raised=total_issues_raised,
             total_issues_resolved=total_issues_resolved,
             total_positives=total_positives,
+            prs_per_week=round(weighted_prs_per_week / max(stats_repo_count, 1), 1),
+            addressed_rate=round(total_issues_resolved / max(total_issues_raised, 1), 3),
+            avg_merge_time_hours=round(weighted_merge_time / max(stats_repo_count, 1), 1),
         ),
         repos=results,
     )
@@ -382,6 +400,8 @@ async def get_repo_analytics(
             lastReviewedAt=p.last_reviewed_at,
             lastReviewedSha=p.last_reviewed_sha,
             createdAt=p.created_at,
+            mergedAt=p.merged_at,
+            closedAt=p.closed_at,
             runs=[r.model_dump(by_alias=True) for r in p.runs],
         ))
 
@@ -393,6 +413,10 @@ async def get_repo_analytics(
         totalIssuesGenerated=analytics.total_issues_generated,
         totalIssuesResolved=analytics.total_issues_resolved,
         totalPositives=analytics.total_positives,
+        prsPerWeek=analytics.prs_per_week,
+        addressedRate=analytics.addressed_rate,
+        avgMergeTimeHours=analytics.avg_merge_time_hours,
+        dailyBreakdown=analytics.daily_breakdown,
         prs=prs_list,
     )
 
@@ -435,3 +459,37 @@ async def dashboard_stats(uid: str = Depends(get_current_uid)) -> DashboardStats
         total_issues_resolved=total_issues_resolved,
         total_positives=total_positives,
     )
+
+
+@router.get("/dashboard/analytics")
+async def dashboard_analytics(uid: str = Depends(get_current_uid)) -> dict:
+    """Aggregate daily analytics across all repos."""
+    db = firebase_service.db
+    try:
+        repos_ref = db.collection("users").document(uid).collection("repos")
+        repo_docs = list(repos_ref.stream())
+    except Exception as exc:
+        logger.exception("Failed to fetch repos for dashboard analytics: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to load analytics")
+
+    merged: dict[str, dict] = {}
+    for repo_doc in repo_docs:
+        analytics_doc = repo_doc.reference.collection("analytics").document("summary").get()
+        if not analytics_doc.exists:
+            continue
+        a = analytics_doc.to_dict()
+        for entry in a.get("dailyBreakdown", []):
+            date = entry.get("date", "")
+            if not date:
+                continue
+            if date not in merged:
+                merged[date] = {"caught": 0, "resolved": 0, "reviews": 0}
+            merged[date]["caught"] += entry.get("caught", 0)
+            merged[date]["resolved"] += entry.get("resolved", 0)
+            merged[date]["reviews"] += entry.get("reviews", 0)
+
+    return {
+        "dailyBreakdown": [
+            {"date": d, **v} for d, v in sorted(merged.items())
+        ]
+    }

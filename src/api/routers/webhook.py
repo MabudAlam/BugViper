@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 
 from fastapi import APIRouter, Depends, Request
 
@@ -37,7 +38,10 @@ async def on_comment(request: Request):
     if event_type == "issue_comment":
         return await _handle_comment_review(payload)
 
-    if event_type in ("push", "pull_request"):
+    if event_type == "pull_request":
+        return await _handle_pull_request_event(payload)
+
+    if event_type == "push":
         return {"status": "ignored", "reason": "ingestion disabled"}
 
     if event_type == "installation":
@@ -219,17 +223,146 @@ async def _handle_comment_review(payload: dict) -> dict:
         await run_lint_only(owner, repo_name, pr_number, uid)
         return {"status": "completed", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "lint"}
 
-    from static_code_review.lint import run_full_review
-
-    await run_full_review(
+    await _route_review(
         owner=owner,
         repo=repo_name,
         pr_number=pr_number,
-        uid=uid or "",
-        review_type=review_type.value,
+        uid=uid,
+        review_type=review_type,
         comment_id=comment_id,
     )
     return {"status": "completed", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "review"}
+
+
+async def _route_review(
+    owner: str,
+    repo_name: str,
+    pr_number: int,
+    uid: str | None,
+    review_type: ReviewType,
+    comment_id: int | None,
+) -> None:
+    """Route review to either direct execution or Cloud Tasks based on DEBUG flag."""
+    debug = os.environ.get("DEBUG", "true").lower() == "true"
+
+    if debug:
+        from static_code_review.lint import run_full_review
+
+        await run_full_review(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+            uid=uid or "",
+            review_type=review_type.value,
+            comment_id=comment_id,
+        )
+        return
+
+    from api.services.cloud_tasks_service import CloudTasksService
+    from common.job_models import PRReviewPayload
+
+    payload = PRReviewPayload(
+        owner=owner,
+        repo=repo_name,
+        pr_number=pr_number,
+        review_type=review_type.value,
+        comment_id=comment_id,
+    )
+    service = CloudTasksService()
+    task_name = service.dispatch_pr_review(payload)
+    if task_name:
+        logger.info("Dispatched review to Cloud Tasks: %s", task_name)
+    else:
+        logger.error("Failed to dispatch review to Cloud Tasks, falling back to direct execution")
+        from static_code_review.lint import run_full_review
+
+        await run_full_review(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+            uid=uid or "",
+            review_type=review_type.value,
+            comment_id=comment_id,
+        )
+
+
+async def _handle_pull_request_event(payload: dict) -> dict:
+    """Track PR opened/merged/closed via pull_request webhook."""
+    action = payload.get("action", "")
+    pr = payload.get("pull_request", {})
+    repo_info = payload.get("repository", {})
+    owner = repo_info.get("owner", {}).get("login", "")
+    repo_name = repo_info.get("name", "")
+    pr_number = pr.get("number")
+
+    if not owner or not repo_name or not pr_number:
+        logger.warning("pull_request event missing owner/repo/number")
+        return {"status": "ignored", "reason": "missing fields"}
+
+    uid = firebase_service.find_project_owner_id(owner)
+    if not uid:
+        return {"status": "ignored", "reason": "project owner not found"}
+
+    from datetime import datetime, timezone
+    from common.firebase_models import PRMetadata
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if action == "opened":
+        pr_meta = PRMetadata(
+            owner=owner,
+            repo=repo_name,
+            pr_number=pr_number,
+            repo_id=f"{owner}/{repo_name}",
+            created_at=pr.get("created_at") or now_iso,
+            updated_at=now_iso,
+        )
+        firebase_service.upsert_pr_metadata(uid, owner, repo_name, pr_number, pr_meta)
+        logger.info("PR #%d opened — metadata saved for %s/%s", pr_number, owner, repo_name)
+        return {"status": "ok", "action": "pr_opened"}
+
+    if action in ("closed", "reopened"):
+        merged_at = pr.get("merged_at") if pr.get("merged") else None
+        closed_at = pr.get("closed_at") if action == "closed" else None
+
+        existing = firebase_service.get_pr_metadata(uid, owner, repo_name, pr_number)
+        if existing:
+            existing["mergedAt"] = merged_at
+            existing["closedAt"] = closed_at
+            existing["updatedAt"] = now_iso
+            pr_meta = PRMetadata(
+                owner=existing.get("owner", owner),
+                repo=existing.get("repo", repo_name),
+                pr_number=existing.get("prNumber", pr_number),
+                repo_id=existing.get("repoId", f"{owner}/{repo_name}"),
+                review_status=existing.get("reviewStatus"),
+                review_count=existing.get("reviewCount", 0),
+                open_issue_count=existing.get("openIssueCount", 0),
+                total_issues_raised=existing.get("totalIssuesRaised", 0),
+                total_positives=existing.get("totalPositives", 0),
+                last_review_type=existing.get("lastReviewType"),
+                last_reviewed_sha=existing.get("lastReviewedSha"),
+                last_review_base_sha=existing.get("lastReviewBaseSha"),
+                last_reviewed_at=existing.get("lastReviewedAt"),
+                created_at=existing.get("createdAt"),
+                updated_at=now_iso,
+                failed_reasons=existing.get("failedReasons", []),
+                merged_at=merged_at,
+                closed_at=closed_at,
+            )
+            firebase_service.upsert_pr_metadata(uid, owner, repo_name, pr_number, pr_meta)
+
+            if merged_at:
+                firebase_service._recompute_pr_analytics(uid, owner, repo_name, pr_number)
+
+            logger.info(
+                "PR #%d %s — metadata updated for %s/%s",
+                pr_number, "merged" if merged_at else ("reopened" if action == "reopened" else "closed (unmerged)"),
+                owner, repo_name,
+            )
+        return {"status": "ok", "action": f"pr_{action}"}
+
+    return {"status": "ignored", "reason": f"unhandled action '{action}'"}
 
 
 async def _handle_review_thread_event(payload: dict) -> dict:
