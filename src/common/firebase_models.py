@@ -146,6 +146,8 @@ class PRMetadata(BaseModel):
     created_at: Optional[str] = Field(None, serialization_alias="createdAt")
     updated_at: Optional[str] = Field(None, serialization_alias="updatedAt")
     failed_reasons: list[str] = Field(default_factory=list, serialization_alias="failedReasons")
+    merged_at: Optional[str] = Field(None, serialization_alias="mergedAt")
+    closed_at: Optional[str] = Field(None, serialization_alias="closedAt")
 
 
 class ReviewRunData(BaseModel):
@@ -207,6 +209,8 @@ class PRAnalyticsEntry(BaseModel):
     total_issues: int = Field(default=0, alias="totalIssues")
     total_resolved: int = Field(default=0, alias="totalResolved")
     positives: int = 0
+    merged_at: Optional[str] = Field(None, alias="mergedAt")
+    closed_at: Optional[str] = Field(None, alias="closedAt")
 
 
 class RepoAnalytics(BaseModel):
@@ -221,6 +225,10 @@ class RepoAnalytics(BaseModel):
     total_issues_generated: int = Field(default=0, alias="totalIssuesGenerated")
     total_issues_resolved: int = Field(default=0, alias="totalIssuesResolved")
     total_positives: int = Field(default=0, alias="totalPositives")
+    prs_per_week: float = Field(default=0.0, alias="prsPerWeek")
+    addressed_rate: float = Field(default=0.0, alias="addressedRate")
+    avg_merge_time_hours: float = Field(default=0.0, alias="avgMergeTimeHours")
+    daily_breakdown: list[dict] = Field(default_factory=list, alias="dailyBreakdown")
     prs: dict[str, PRAnalyticsEntry] = Field(default_factory=dict)
     updated_at: str = Field(default="", alias="updatedAt")
 

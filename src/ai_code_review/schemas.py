@@ -49,7 +49,6 @@ class RepoDetails(BaseModel):
 class SubagentReviewIssue(BaseModel):
     """Subagent-friendly issue type.
 
-    Mirrors `ReviewCodeIssue` but strips the `ge`/`le` bounds on `confidence` so
     the generated JSON schema does not contain `minimum`/`maximum` on an integer
     field — Anthropic/Bedrock reject those for `integer` types.
     """

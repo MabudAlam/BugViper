@@ -120,6 +120,8 @@ class BugViperFirebaseService:
             total_issues=total_issues,
             total_resolved=total_resolved,
             positives=positives,
+            merged_at=pr_data.get("mergedAt"),
+            closed_at=pr_data.get("closedAt"),
         ))
 
         existing = analytics_ref.get()
@@ -154,6 +156,79 @@ class BugViperFirebaseService:
         analytics["totalIssuesGenerated"] = total_issues_generated
         analytics["totalIssuesResolved"] = total_issues_resolved
         analytics["totalPositives"] = total_positives
+
+        # ── Derived stats ────────────────────────────────────────────────
+        created_dates = []
+        merge_times = []
+        for p in prs.values():
+            if p.get("createdAt"):
+                try:
+                    created_dates.append(datetime.fromisoformat(p["createdAt"]))
+                except Exception:
+                    pass
+            # Merge time: use real mergedAt if available, else approximate
+            # Skip PRs that were closed but not merged (closedAt without mergedAt)
+            end_time = p.get("mergedAt")
+            if not end_time and not p.get("closedAt"):
+                end_time = p.get("lastReviewedAt")
+            if p.get("createdAt") and end_time:
+                try:
+                    delta = (
+                        datetime.fromisoformat(end_time)
+                        - datetime.fromisoformat(p["createdAt"])
+                    )
+                    merge_times.append(delta.total_seconds() / 3600)
+                except Exception:
+                    pass
+
+        if created_dates:
+            span_days = (datetime.now(timezone.utc) - min(created_dates)).total_seconds() / 86400
+            total = len(created_dates)
+            if span_days < 7:
+                analytics["prsPerWeek"] = float(total)
+            else:
+                analytics["prsPerWeek"] = round(total / span_days * 7, 1)
+        else:
+            analytics["prsPerWeek"] = 0.0
+
+        analytics["addressedRate"] = round(
+            total_issues_resolved / max(total_issues_generated, 1), 3
+        )
+        analytics["avgMergeTimeHours"] = round(
+            sum(merge_times) / max(len(merge_times), 1), 1
+        ) if merge_times else 0.0
+
+        # ── Daily breakdown: aggregate issues caught/resolved by day ──────
+        daily: dict[str, dict[str, int]] = {}
+        for p in prs.values():
+            pr_num = p.get("prNumber") if isinstance(p, dict) else getattr(p, "pr_number", None)
+            if not pr_num:
+                continue
+            pr_ref_for_run = self._pr_ref(uid, owner, repo, pr_num)
+            pr_created = (p.get("createdAt") or "")[:10] if isinstance(p, dict) else ""
+            for run in p.get("runs", []):
+                run_num = run.get("runNumber", 0) if isinstance(run, dict) else run.run_number
+                run_ref = pr_ref_for_run.collection("reviews").document(f"run_{run_num}").get()
+                if not run_ref.exists:
+                    continue
+                run_data = run_ref.to_dict()
+                date_key = (
+                    run_data.get("startedAt")
+                    or run_data.get("endedAt")
+                    or run_data.get("createdAt")
+                    or pr_created
+                )[:10]
+                if not date_key:
+                    continue
+                if date_key not in daily:
+                    daily[date_key] = {"caught": 0, "resolved": 0, "reviews": 0}
+                daily[date_key]["caught"] += run_data.get("issuesCount", 0) if isinstance(run_data, dict) else 0
+                daily[date_key]["resolved"] += self._count_resolved(run_data.get("issues", []))
+                daily[date_key]["reviews"] += 1
+        analytics["dailyBreakdown"] = [
+            {"date": d, **v} for d, v in sorted(daily.items())
+        ]
+
         analytics["updatedAt"] = now
 
         analytics_ref.set(analytics)
