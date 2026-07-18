@@ -41,6 +41,9 @@ export interface DashboardStats {
   total_issues_raised: number;
   total_issues_resolved: number;
   total_positives: number;
+  prs_per_week: number;
+  addressed_rate: number;
+  avg_merge_time_hours: number;
 }
 
 export interface RepoOverview {
@@ -105,6 +108,8 @@ export interface RepoAnalyticsPR {
   lastReviewedAt: string | null;
   lastReviewedSha: string | null;
   createdAt: string | null;
+  mergedAt: string | null;
+  closedAt: string | null;
   runs: RepoAnalyticsRun[];
 }
 
@@ -116,11 +121,18 @@ export interface RepoAnalyticsDetail {
   totalIssuesGenerated: number;
   totalIssuesResolved: number;
   totalPositives: number;
+  prsPerWeek: number;
+  addressedRate: number;
+  avgMergeTimeHours: number;
+  dailyBreakdown: { date: string; caught: number; resolved: number; reviews: number }[];
   prs: RepoAnalyticsPR[];
 }
 
 export const getRepoAnalytics = (owner: string, repo: string): Promise<RepoAnalyticsDetail> =>
   apiFetch(`/api/v1/repos/${owner}/${repo}/analytics`);
+
+export const getDashboardAnalytics = (): Promise<{ dailyBreakdown: { date: string; caught: number; resolved: number; reviews: number }[] }> =>
+  apiFetch("/api/v1/repos/dashboard/analytics");
 
 export const listRepoPRs = (owner: string, repo: string): Promise<PRReviewSummary[]> =>
   apiFetch(`/api/v1/repos/${owner}/${repo}/prs`);
