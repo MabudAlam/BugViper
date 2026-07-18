@@ -17,7 +17,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY src/api/ src/api/
 COPY src/common/ src/common/
-COPY src/db/ src/db/
 COPY src/code_graph/ src/code_graph/
 COPY src/static_code_review/ src/static_code_review/
 COPY src/ai_code_review/ src/ai_code_review/
