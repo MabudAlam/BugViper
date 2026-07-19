@@ -144,7 +144,7 @@ class DeepAgentConfig(BaseSettings):
         dotenv_settings,
         file_secret_settings,
     ):
-        return (init_settings, dotenv_settings, file_secret_settings)
+        return (init_settings, env_settings, dotenv_settings, file_secret_settings)
 
 
 config = DeepAgentConfig()
