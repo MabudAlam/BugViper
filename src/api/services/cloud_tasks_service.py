@@ -126,6 +126,22 @@ class CloudTasksService:
             queue=self._review_queue,
         )
 
+    def dispatch_lint(self, payload: PRReviewPayload) -> Optional[str]:
+        """Dispatch a lint-only task to the review-service via Cloud Tasks."""
+        lint_payload = PRReviewPayload(
+            owner=payload.owner,
+            repo=payload.repo,
+            pr_number=payload.pr_number,
+            review_type="lint",
+            comment_id=payload.comment_id,
+        )
+        return self._dispatch(
+            "/tasks/review",
+            lint_payload,
+            service_url=self._review_url,
+            queue=self._review_queue,
+        )
+
     def dispatch_graph_upload(self, payload: GraphUploadPayload) -> Optional[str]:
         """Dispatch a graph upload task to the ingestion service."""
         return self._dispatch("/tasks/graph-upload", payload)

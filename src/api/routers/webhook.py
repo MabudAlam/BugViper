@@ -217,15 +217,9 @@ async def _handle_comment_review(payload: dict) -> dict:
             )
             return {"status": "ignored", "reason": "review already running"}
 
-    if review_type == ReviewType.RUN_LINT:
-        from static_code_review.lint import run_lint_only
-
-        await run_lint_only(owner, repo_name, pr_number, uid)
-        return {"status": "completed", "pr": f"{owner}/{repo_name}#{pr_number}", "action": "lint"}
-
     await _route_review(
         owner=owner,
-        repo=repo_name,
+        repo_name=repo_name,
         pr_number=pr_number,
         uid=uid,
         review_type=review_type,
@@ -246,16 +240,21 @@ async def _route_review(
     debug = os.environ.get("DEBUG", "true").lower() == "true"
 
     if debug:
-        from static_code_review.lint import run_full_review
+        if review_type == ReviewType.RUN_LINT:
+            from static_code_review.lint import run_lint_only
 
-        await run_full_review(
-            owner=owner,
-            repo=repo_name,
-            pr_number=pr_number,
-            uid=uid or "",
-            review_type=review_type.value,
-            comment_id=comment_id,
-        )
+            await run_lint_only(owner, repo_name, pr_number, uid)
+        else:
+            from static_code_review.lint import run_full_review
+
+            await run_full_review(
+                owner=owner,
+                repo=repo_name,
+                pr_number=pr_number,
+                uid=uid or "",
+                review_type=review_type.value,
+                comment_id=comment_id,
+            )
         return
 
     from api.services.cloud_tasks_service import CloudTasksService
@@ -269,21 +268,13 @@ async def _route_review(
         comment_id=comment_id,
     )
     service = CloudTasksService()
-    task_name = service.dispatch_pr_review(payload)
-    if task_name:
-        logger.info("Dispatched review to Cloud Tasks: %s", task_name)
+    if review_type == ReviewType.RUN_LINT:
+        task_name = service.dispatch_lint(payload)
     else:
-        logger.error("Failed to dispatch review to Cloud Tasks, falling back to direct execution")
-        from static_code_review.lint import run_full_review
+        task_name = service.dispatch_pr_review(payload)
 
-        await run_full_review(
-            owner=owner,
-            repo=repo_name,
-            pr_number=pr_number,
-            uid=uid or "",
-            review_type=review_type.value,
-            comment_id=comment_id,
-        )
+    if not task_name:
+        raise RuntimeError("Failed to dispatch review to Cloud Tasks")
 
 
 async def _handle_pull_request_event(payload: dict) -> dict:
