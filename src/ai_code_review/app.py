@@ -23,20 +23,25 @@ app = FastAPI(title="BugViper Code Review Worker", version="0.1.0")
 async def handle_review(payload: PRReviewPayload):
     """Run a sandboxed DeepAgent review, called by Cloud Tasks."""
     logger.info(
-        "Review task received: %s/%s#%d type=%s",
+        "Review task received: %s/%s#%d type=%s uid=%s",
         payload.owner,
         payload.repo,
         payload.pr_number,
         payload.review_type,
+        payload.uid,
     )
     if payload.review_type == "lint":
+        if not payload.uid:
+            logger.error("Lint requires uid but it is missing")
+            return {"status": "error", "reason": "uid is required for lint"}
+
         from static_code_review.lint import run_lint_only
 
         await run_lint_only(
             owner=payload.owner,
             repo=payload.repo,
             pr_number=payload.pr_number,
-            uid=payload.uid or "",
+            uid=payload.uid,
         )
         return {"status": "ok"}
 

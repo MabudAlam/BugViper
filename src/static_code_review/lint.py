@@ -47,8 +47,14 @@ async def run_linters_in_sandbox(
     logger.info("run_linters_in_sandbox: uid=%s, %d changed files", uid, len(changed_files))
     for f in changed_files:
         logger.info("  changed: %s", f)
+
     from common.firebase_service import firebase_service
+    from common.firebase_models import ToolsConfig
+
+    from common.firebase_service import firebase_service
+
     tools_config = firebase_service.get_tools_config(uid)
+
     repo_dir = "/home/user/workspace/repo"
     all_findings: list[dict] = []
 

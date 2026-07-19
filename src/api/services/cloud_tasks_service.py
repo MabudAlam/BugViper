@@ -134,6 +134,7 @@ class CloudTasksService:
             pr_number=payload.pr_number,
             review_type="lint",
             comment_id=payload.comment_id,
+            uid=payload.uid,
         )
         return self._dispatch(
             "/tasks/review",
