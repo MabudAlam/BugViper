@@ -49,9 +49,6 @@ async def run_linters_in_sandbox(
         logger.info("  changed: %s", f)
 
     from common.firebase_service import firebase_service
-    from common.firebase_models import ToolsConfig
-
-    from common.firebase_service import firebase_service
 
     tools_config = firebase_service.get_tools_config(uid)
 
