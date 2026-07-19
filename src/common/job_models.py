@@ -85,6 +85,7 @@ class PRReviewPayload(BaseModel):
     pr_number: int
     review_type: str = "incremental_review"
     comment_id: int | None = None  # For reactions on the triggering comment
+    uid: str | None = None  # Firebase UID for the project owner
 
 
 class GraphUploadPayload(BaseModel):

@@ -266,6 +266,7 @@ async def _route_review(
         pr_number=pr_number,
         review_type=review_type.value,
         comment_id=comment_id,
+        uid=uid,
     )
     service = CloudTasksService()
     if review_type == ReviewType.RUN_LINT:

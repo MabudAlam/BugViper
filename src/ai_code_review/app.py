@@ -29,6 +29,17 @@ async def handle_review(payload: PRReviewPayload):
         payload.pr_number,
         payload.review_type,
     )
+    if payload.review_type == "lint":
+        from static_code_review.lint import run_lint_only
+
+        await run_lint_only(
+            owner=payload.owner,
+            repo=payload.repo,
+            pr_number=payload.pr_number,
+            uid=payload.uid or "",
+        )
+        return {"status": "ok"}
+
     from ai_code_review import config, run_review_pipeline, run_deep_review_pipeline
 
     if config.DEEPAGENT_REVIEW_MODE == 'deep':
