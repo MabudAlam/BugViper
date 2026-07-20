@@ -9,7 +9,7 @@ from firebase_admin import credentials, firestore
 
 logger = logging.getLogger(__name__)
 
-isLocal = False
+isLocal = os.environ.get("FIREBASE_LOCAL", "false").lower() == "true"
 _storage_bucket: str | None = None
 
 

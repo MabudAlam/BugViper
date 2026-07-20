@@ -198,8 +198,8 @@ class BugViperFirebaseService:
             sum(merge_times) / max(len(merge_times), 1), 1
         ) if merge_times else 0.0
 
-        # ── Daily breakdown: aggregate issues caught/resolved by day ──────
-        daily: dict[str, dict[str, int]] = {}
+        # ── Daily breakdown: aggregate issues caught/resolved/reviews/prs by day ──────
+        daily: dict[str, dict[str, int | set[int]]] = {}
         for p in prs.values():
             pr_num = p.get("prNumber") if isinstance(p, dict) else getattr(p, "pr_number", None)
             if not pr_num:
@@ -221,10 +221,15 @@ class BugViperFirebaseService:
                 if not date_key:
                     continue
                 if date_key not in daily:
-                    daily[date_key] = {"caught": 0, "resolved": 0, "reviews": 0}
-                daily[date_key]["caught"] += run_data.get("issuesCount", 0) if isinstance(run_data, dict) else 0
-                daily[date_key]["resolved"] += self._count_resolved(run_data.get("issues", []))
-                daily[date_key]["reviews"] += 1
+                    daily[date_key] = {"caught": 0, "resolved": 0, "reviews": 0, "prsReviewed": set()}
+                daily[date_key]["caught"] += run_data.get("issuesCount", 0) if isinstance(run_data, dict) else 0  # type: ignore[operator]
+                daily[date_key]["resolved"] += self._count_resolved(run_data.get("issues", []))  # type: ignore[operator]
+                daily[date_key]["reviews"] += 1  # type: ignore[operator]
+                daily[date_key]["prsReviewed"].add(pr_num)  # type: ignore[union-attr]
+        analytics["dailyBreakdown"] = [
+            {"date": d, "caught": v["caught"], "resolved": v["resolved"], "reviews": v["reviews"], "prsReviewed": len(v["prsReviewed"])}
+            for d, v in sorted(daily.items())
+        ]
         analytics["dailyBreakdown"] = [
             {"date": d, **v} for d, v in sorted(daily.items())
         ]
