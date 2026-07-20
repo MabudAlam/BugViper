@@ -694,29 +694,6 @@ function AnalyticsCharts({ prs, dailyData, analytics }: {
         </div>
       </div>
 
-      {dailyData.length > 0 && (
-        <>
-          <StackedBarChart
-            data={dailyData}
-            label="Bugs Caught / Resolved per Day"
-            bar1="caught"
-            bar2="resolved"
-            color1="var(--main)"
-            color2="var(--border)"
-            label1="Caught"
-            label2="Resolved"
-          />
-
-          <BarChart
-            data={dailyData}
-            labelKey="date"
-            valueKey="caught"
-            color="var(--main)"
-            label="Bugs Caught per Day"
-            valueLabel="bugs"
-          />
-        </>
-      )}
     </div>
   );
 }
