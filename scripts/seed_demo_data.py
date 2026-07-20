@@ -25,6 +25,8 @@ REPOS = [
 
 SEVERITIES = ["low", "medium", "high", "critical"]
 CATEGORIES = ["bug", "security", "performance", "style", "best_practice"]
+ISSUE_FILES = ["src/main.py", "src/utils.ts", "src/handlers.go", "src/config.rs", "src/app.kt", "src/controllers/auth.py", "src/models/user.ts", "src/services/db.go", "src/middleware/auth.rs", "src/components/header.ktx"]
+ISSUE_TYPES = ["Bug", "Security", "Performance", "Style", "Best Practice"]
 
 now = datetime.now(timezone.utc)
 
@@ -37,9 +39,34 @@ def random_iso(days_back: int) -> str:
 def gen_issue() -> dict:
     return {
         "title": f"Demo issue #{random.randint(1, 1000)}",
-        "description": f"Demo issue for testing charts",
-        "suggestion": "Fix this by following best practices.",
-        "file": f"src/{random.choice(['main.py', 'utils.ts', 'handlers.go', 'config.rs', 'app.kt'])}",
+        "issue_type": random.choice(ISSUE_TYPES),
+        "description": random.choice([
+            "This could lead to unexpected behavior at runtime.",
+            "Consider refactoring for better maintainability.",
+            "This pattern may cause performance bottlenecks under load.",
+            "Input validation is missing on this code path.",
+            "Error handling is insufficient in this branch.",
+        ]),
+        "suggestion": random.choice([
+            "Wrap in a try-catch block and log the error.",
+            "Use a guard clause to handle the edge case early.",
+            "Extract this into a helper function.",
+            "Add input validation before processing the data.",
+            "Use async/await instead of raw promises.",
+        ]),
+        "impact": random.choice([
+            "Can cause application crashes when this code path is hit.",
+            "Leads to degraded performance under concurrent access.",
+            "Potential security vulnerability if input is user-controlled.",
+            "Code quality issue that compounds with additional changes.",
+            "Minor performance impact, negligible in most scenarios.",
+        ]),
+        "code_snippet": random.choice([
+            "```python\ndef process(data):\n    result = data['key']  # KeyError if missing\n    return result\n```",
+            "```typescript\nexport function fetch() {\n  return Promise.reject('fail'); // Unhandled rejection\n}\n```",
+            "```go\nfunc Handle(w http.ResponseWriter, r *http.Request) {\n\tfmt.Fprintf(w, r.URL.Query().Get(\"input\")) // XSS\n}\n```",
+        ]),
+        "file": f"{random.choice(ISSUE_FILES)}",
         "line_start": random.randint(1, 200),
         "line_end": random.randint(1, 200),
         "severity": random.choice(SEVERITIES),
@@ -98,6 +125,7 @@ def main():
             review_count = random.randint(1, 5)
 
             runs = []
+            changed_files = random.sample(ISSUE_FILES, random.randint(1, 5))
             for rn in range(1, review_count + 1):
                 review_start = random_iso(2)
                 dur = random.uniform(30, 300)
@@ -105,17 +133,22 @@ def main():
                 ic = random.randint(0, 10)
                 issues = [gen_issue() for _ in range(ic)]
                 runs.append({
+                    "runNumber": rn,
                     "issues": issues,
                     "positiveFindings": [f"Pattern #{i}" for i in range(random.randint(0, 4))],
-                    "summary": f"Reviewed {random.randint(1, 5)} files",
+                    "summary": f"Reviewed {len(changed_files)} files",
+                    "filesChanged": changed_files,
                     "repoId": repo_key,
                     "prNumber": pr_num,
                     "reviewType": random.choice(["full_review", "incremental_review"]),
                     "issuesCount": ic,
                     "positivesCount": random.randint(0, 5),
+                    "walkthroughCount": random.randint(0, 3),
                     "startedAt": review_start,
                     "endedAt": end.isoformat(),
                     "durationSeconds": dur,
+                    "headSha": "abc" + "".join(random.choices("0123456789abcdef", k=8)),
+                    "baseSha": "abc" + "".join(random.choices("0123456789abcdef", k=8)),
                 })
 
             pr_list.append({

@@ -107,23 +107,13 @@ flowchart LR
 | **Review** | 8100 | Executes the AI review pipeline — clones repo, builds call graph, runs agents, posts comments |
 | **Frontend** | 3000 | Next.js dashboard — analytics charts, repo management, tools config |
 
-### Data Flow
-
-1. **GitHub webhook** fires on PR event → hits API
-2. **DEBUG=true** → direct HTTP to Review service; **DEBUG=false** → Cloud Tasks queues the job
-3. **Review service** clones the PR head into an **E2B sandbox**, builds a **call graph** via tree-sitter, then runs **DeepAgent** (normal or deep mode)
-4. **Verifier pass** validates every finding against the actual diff, marking as `nitpick` / `valid` / `outside_diff`
-5. **Dedup** merges duplicate findings across batches
-6. **GitHub** receives inline comments + PR review body; **Firestore** stores issues and analytics; **Neo4j** updates the code graph
-
 ---
 
 ## Full Review
 
 > Comment `@bugviper full review` on any PR and get a complete AI-powered code review — inline comments, issue tracking, and a summary posted back to GitHub.
 
-**Demo Video:** [Full Review Walkthrough](./screenshots/video/Full%20Review.mp4)
-<video src="./screenshots/video/Full Review.mp4" width="100%" controls></video>
+![Full Review](./screenshots/gif/Full%20Review.gif)
 
 ### How it works
 
@@ -141,10 +131,9 @@ flowchart LR
 
 ## Run Lint
 
-> Comment `@bugviper lint` on any PR for a fast static-analysis review using ESLint, Ruff, golangci-lint, and more — results posted back to GitHub in seconds.
+> Comment `@bugviper run lint` on any PR for a fast static-analysis review using ESLint, Ruff, golangci-lint, and more — results posted back to GitHub in seconds.
 
-**Demo Video:** [Run Lint Walkthrough](./screenshots/video/Run%20Lint.mp4)
-<video src="./screenshots/video/Run Lint.mp4" width="100%" controls></video>
+![Run Lint](./screenshots/gif/Run%20Lint.gif)
 
 ### How it works
 
@@ -155,3 +144,82 @@ flowchart LR
 5. **Post to GitHub** — Findings are posted as inline comments on the relevant lines, with a summary comment on the PR
 
 > **Note:** Run Lint is designed for speed — no call graph, no AI agents, no batching. It's the fastest way to catch style violations, unused imports, and standard lint errors before merging.
+
+---
+
+## Analytics
+
+> Track your team's code review activity across all repos — bugs caught, resolved, merge times, and PRs reviewed per day.
+
+![Analytics](./screenshots/gif/Analytics.gif)
+
+### What it shows
+
+The analytics dashboard aggregates data from all repos into a single view:
+
+- **Stat Cards** — At a glance: total repos, PRs reviewed, reviews run, bugs caught, addressed rate, PRs per week, and average merge time
+- **Total Reviews per Day** — Stacked bar chart with each repo as a colored segment, so you can see which repo generated the most review activity on any given day
+- **PRs Reviewed per Day** — Stacked bar chart showing how many unique PRs were reviewed per day, broken down by repo
+- **Repository Comparison** — Side-by-side bar charts comparing average merge time and addressed rate across all your repos
+- **Per-Repo Detail** — Click into any repo to see its full analytics: daily bug trends, issue lifecycle, and individual PR history with full review run details
+
+Every chart is interactive — hover for breakdowns and click to drill down.
+
+---
+
+## View and Manage Reviews
+
+> Browse all your repos, inspect individual PR reviews, and track what issues the agents found — right from the dashboard.
+
+![Repo](./screenshots/gif/Repo.gif)
+
+### How it works
+
+1. **Repos list** — The Repositories page shows every repo you've connected, with stats per repo: open issues, review count, fix rate percentage, and language badge
+2. **Repo detail sheet** — Click any repo to open a side panel with:
+   - **Stats bar** — total issues raised, resolved, PR count, fix rate, addressed rate, avg merge time, PRs per week, total reviews
+   - **PR list** — every reviewed PR with merge status, review count, open issues, and last review timestamp
+3. **PR drill-down** — Click a PR to expand its runs. Each run shows review type, duration, issue count, and a "View Details" button
+4. **Run detail view** — Opens a full breakdown of a single review run:
+   - **Walkthrough** — which files were modified
+   - **Issues** — each issue shows: severity (color-coded), category badge, issue type, confidence score, file location, description, impact, suggestion, and code snippet
+   - **Positive findings** — what the agent liked about your code
+   - **Resolve tracking** — if an issue was fixed in a later run, it shows as "Resolved" with a checkmark
+
+---
+
+## Static Analysis Tools
+
+> Configure which linters run on your PRs — enable or disable tools, set config files, and manage supported file extensions.
+
+![Tools](./screenshots/gif/Tools.gif)
+
+### Supported tools
+
+| Tool | Languages | Config file |
+|------|-----------|-------------|
+| **Ruff** | Python (`.py`, `.ipynb`) | `pyproject.toml`, `ruff.toml`, `.ruff.toml` |
+| **ESLint** | JS/TS (`.js`, `.ts`, `.jsx`, `.tsx`, and more) | `eslint.config.js`, `.eslintrc`, `.eslintrc.json` |
+| **golangci-lint** | Go (`.go`, `.go.mod`) | `.golangci.yml`, `.golangci.yaml`, `.golangci.toml` |
+
+### How it works
+
+From the **Dashboard → Tools** page:
+- **Toggle** each tool on or off — disabled tools are skipped during lint and full review
+- **Select config file** — choose between auto-detected config files or a specific path
+- **View extensions** — see which file extensions each tool covers
+- **Save** — changes take effect on the next review immediately
+
+> More tools coming soon: Hadolint (Dockerfile), ShellCheck, Terraform (HCL).
+
+---
+
+## What it does
+
+- **Review any PR** — Bot posts a structured review (inline comments + summary) on every pull request
+- **Two review modes** — `lint` (fast, static analysis via ESLint, Ruff, golangci-lint, and more) and `full_review` (deep AI analysis in an E2B sandbox)
+- **Tracks progress** — dashboards show bugs caught, resolved, merge times, and PRs reviewed per day across all repos
+- **Knowledge graph** — Neo4j call-graph understanding enables cross-file bug detection
+- **GitHub App + OAuth** — App for webhook events, Firebase GitHub OAuth for the dashboard
+
+---
