@@ -48,6 +48,7 @@ AI PR Reviews with codebase-aware DeepAgents + ESLint, Ruff, golangci-lint and m
 
 > Comment `@bugviper full review` on any PR and get a complete AI-powered code review — inline comments, issue tracking, and a summary posted back to GitHub.
 
+
 https://github.com/user-attachments/assets/e2fca695-1828-4b97-9c7e-1ec68b804aa6
 
 ### How it works
@@ -68,7 +69,7 @@ https://github.com/user-attachments/assets/e2fca695-1828-4b97-9c7e-1ec68b804aa6
 
 > Comment `@bugviper run lint` on any PR for a fast static-analysis review using ESLint, Ruff, golangci-lint, and more — results posted back to GitHub in seconds.
 
-https://github.com/user-attachments/assets/aa27d26a-a768-4c1e-9d29-88d5563412a7
+<video src="./screenshots/video/Run%20Lint.mp4" width="100%" controls></video>
 
 ### How it works
 
@@ -86,7 +87,7 @@ https://github.com/user-attachments/assets/aa27d26a-a768-4c1e-9d29-88d5563412a7
 
 > Track your team's code review activity across all repos — bugs caught, resolved, merge times, and PRs reviewed per day.
 
-https://github.com/user-attachments/assets/ca987cfc-a23d-4db2-a1a1-e028b82d98ae
+<video src="./screenshots/video/analytics.mp4" width="100%" controls></video>
 
 ### What it shows
 
@@ -106,7 +107,10 @@ Every chart is interactive — hover for breakdowns and click to drill down.
 
 > Browse all your repos, inspect individual PR reviews, and track what issues the agents found — right from the dashboard.
 
+
+
 https://github.com/user-attachments/assets/ba778881-1ec2-42b8-9cb3-9354ba14483b
+
 
 ### How it works
 
@@ -127,7 +131,10 @@ https://github.com/user-attachments/assets/ba778881-1ec2-42b8-9cb3-9354ba14483b
 
 > Configure which linters run on your PRs — enable or disable tools, set config files, and manage supported file extensions.
 
+
+
 https://github.com/user-attachments/assets/887356c5-d823-4164-9470-fba8da96fdd3
+
 
 ### Supported tools
 
