@@ -331,12 +331,15 @@ async def repo_overview(
     stats_repo_count = 0
     results: list[RepoSummary] = []
 
-    for i, repo_doc in enumerate(repo_docs):
-        if i >= limit:
-            break
+    limit_docs = repo_docs[:limit]
+    analytics_refs = [
+        d.reference.collection("analytics").document("summary") for d in limit_docs
+    ]
+    analytics_snaps = list(db.get_all(analytics_refs))
+
+    for repo_doc, analytics_doc in zip(limit_docs, analytics_snaps):
         summary = _repo_doc_to_summary(repo_doc.id, repo_doc.to_dict())
-        analytics_doc = repo_doc.reference.collection("analytics").document("summary").get()
-        if analytics_doc.exists:
+        if analytics_doc and analytics_doc.exists:
             a = analytics_doc.to_dict()
             summary.openIssueCount = a.get("totalIssuesGenerated", 0) - a.get("totalIssuesResolved", 0)
             summary.totalIssuesRaised = a.get("totalIssuesGenerated", 0)
@@ -359,7 +362,7 @@ async def repo_overview(
             total_issues_raised=total_issues_raised,
             total_issues_resolved=total_issues_resolved,
             total_positives=total_positives,
-            prs_per_week=round(weighted_prs_per_week / max(stats_repo_count, 1), 1),
+            prs_per_week=round(weighted_prs_per_week, 1),
             addressed_rate=round(total_issues_resolved / max(total_issues_raised, 1), 3),
             avg_merge_time_hours=round(weighted_merge_time / max(stats_repo_count, 1), 1),
         ),
@@ -463,7 +466,7 @@ async def dashboard_stats(uid: str = Depends(get_current_uid)) -> DashboardStats
 
 @router.get("/dashboard/analytics")
 async def dashboard_analytics(uid: str = Depends(get_current_uid)) -> dict:
-    """Aggregate daily analytics across all repos."""
+    """Per-repo analytics for dashboard: daily breakdowns + aggregate stats."""
     db = firebase_service.db
     try:
         repos_ref = db.collection("users").document(uid).collection("repos")
@@ -472,24 +475,23 @@ async def dashboard_analytics(uid: str = Depends(get_current_uid)) -> dict:
         logger.exception("Failed to fetch repos for dashboard analytics: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to load analytics")
 
-    merged: dict[str, dict] = {}
+    repos_data = []
     for repo_doc in repo_docs:
         analytics_doc = repo_doc.reference.collection("analytics").document("summary").get()
         if not analytics_doc.exists:
             continue
         a = analytics_doc.to_dict()
-        for entry in a.get("dailyBreakdown", []):
-            date = entry.get("date", "")
-            if not date:
-                continue
-            if date not in merged:
-                merged[date] = {"caught": 0, "resolved": 0, "reviews": 0}
-            merged[date]["caught"] += entry.get("caught", 0)
-            merged[date]["resolved"] += entry.get("resolved", 0)
-            merged[date]["reviews"] += entry.get("reviews", 0)
+        repo_name = a.get("repoName", repo_doc.id.split("_", 1)[-1])
+        repos_data.append({
+            "repoName": repo_name,
+            "totalPrs": a.get("totalPrs", 0),
+            "totalReviews": a.get("totalReviews", 0),
+            "totalIssuesGenerated": a.get("totalIssuesGenerated", 0),
+            "totalIssuesResolved": a.get("totalIssuesResolved", 0),
+            "addressedRate": a.get("addressedRate", 0),
+            "avgMergeTimeHours": a.get("avgMergeTimeHours", 0),
+            "prsPerWeek": a.get("prsPerWeek", 0),
+            "dailyBreakdown": a.get("dailyBreakdown", []),
+        })
 
-    return {
-        "dailyBreakdown": [
-            {"date": d, **v} for d, v in sorted(merged.items())
-        ]
-    }
+    return {"repos": repos_data}
