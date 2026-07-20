@@ -34,86 +34,11 @@ AI PR Reviews with codebase-aware DeepAgents + ESLint, Ruff, golangci-lint and m
 | 🌍 **Repo Knowledgebase** | Per-repo memory so agents remember past issues and don't re-report the same things |
 | 🛠️ **More Static Analysis** | Adding more third-party tools: Hadolint, ShellCheck, Terraform (HCL), and more |
 
----
-
-## Architecture
-
-```mermaid
-flowchart LR
-    GH["GitHub<br/>Webhooks & PRs"]
-
-    subgraph API["API Service (FastAPI) — Port 8000"]
-        WH[Webhook Router] --> RT[Review Tasks]
-        WH --> IT[Ingestion Tasks]
-        CT[Cloud Tasks<br/>Dispatcher]
-    end
-
-    subgraph Queue["Cloud Tasks Queue"]
-        Q1["codeReview<br/>Queue"]
-        Q2["ingestion-queue"]
-    end
-
-    subgraph Review["Review Service (Cloud Run) — Port 8100"]
-        E2B[E2B Sandbox]
-        CG[Call Graph<br/>tree-sitter]
-        NORM[Normalize<br/>+ Dedup]
-        VERT[Verifier Pass]
-        SUB3[3 Sub-Agents<br/>Correctness·Security·Performance]
-    end
-
-    subgraph Lint["Lint Service"]
-        LINT[ESLint · Ruff<br/>golangci-lint]
-    end
-
-    GH --> WH
-    RT -->|DEBUG=true| E2B
-    RT -->|DEBUG=false| CT
-    CT --> Q1
-    Q1 --> E2B
-    IT -->|DEBUG=false| CT
-    CT --> Q2
-
-    E2B --> CG
-    CG --> SUB3
-    SUB3 --> VERT
-    VERT --> NORM
-    NORM --> GH
-
-    RT --> LINT
-    LINT --> GH
-
-    subgraph Data["Data Layer"]
-        FS[Firestore<br/>Users · PRs · Reviews<br/>Analytics]
-        N4J[Neo4j<br/>Code Graph<br/>Call Graph]
-    end
-
-    E2B --> N4J
-    NORM --> FS
-
-    subgraph Dashboard["Frontend (Next.js) — Port 3000"]
-        REPO[Repositories]
-        ANAL[Analytics<br/>Charts]
-    end
-
-    FS --> ANAL
-    FS --> REPO
-```
-
-### Service Overview
-
-| Service | Port | Role |
-|---------|------|------|
-| **API** | 8000 | Receives GitHub webhooks, dispatches review & ingestion tasks, serves REST endpoints |
-| **Review** | 8100 | Executes the AI review pipeline — clones repo, builds call graph, runs agents, posts comments |
-| **Frontend** | 3000 | Next.js dashboard — analytics charts, repo management, tools config |
-
----
-
 ## Full Review
 
 > Comment `@bugviper full review` on any PR and get a complete AI-powered code review — inline comments, issue tracking, and a summary posted back to GitHub.
 
-![Full Review](./screenshots/gif/Full%20Review.gif)
+<video src="./screenshots/video/Full%20Review.mp4" width="100%" controls></video>
 
 ### How it works
 
@@ -133,7 +58,7 @@ flowchart LR
 
 > Comment `@bugviper run lint` on any PR for a fast static-analysis review using ESLint, Ruff, golangci-lint, and more — results posted back to GitHub in seconds.
 
-![Run Lint](./screenshots/gif/Run%20Lint.gif)
+<video src="./screenshots/video/Run%20Lint.mp4" width="100%" controls></video>
 
 ### How it works
 
@@ -151,7 +76,7 @@ flowchart LR
 
 > Track your team's code review activity across all repos — bugs caught, resolved, merge times, and PRs reviewed per day.
 
-![Analytics](./screenshots/gif/Analytics.gif)
+<video src="./screenshots/video/analytics.mp4" width="100%" controls></video>
 
 ### What it shows
 
@@ -171,7 +96,7 @@ Every chart is interactive — hover for breakdowns and click to drill down.
 
 > Browse all your repos, inspect individual PR reviews, and track what issues the agents found — right from the dashboard.
 
-![Repo](./screenshots/gif/Repo.gif)
+<video src="./screenshots/video/Repo.mp4" width="100%" controls></video>
 
 ### How it works
 
@@ -192,7 +117,7 @@ Every chart is interactive — hover for breakdowns and click to drill down.
 
 > Configure which linters run on your PRs — enable or disable tools, set config files, and manage supported file extensions.
 
-![Tools](./screenshots/gif/Tools.gif)
+<video src="./screenshots/video/Tools.mp4" width="100%" controls></video>
 
 ### Supported tools
 
@@ -219,7 +144,56 @@ From the **Dashboard → Tools** page:
 - **Review any PR** — Bot posts a structured review (inline comments + summary) on every pull request
 - **Two review modes** — `lint` (fast, static analysis via ESLint, Ruff, golangci-lint, and more) and `full_review` (deep AI analysis in an E2B sandbox)
 - **Tracks progress** — dashboards show bugs caught, resolved, merge times, and PRs reviewed per day across all repos
-- **Knowledge graph** — Neo4j call-graph understanding enables cross-file bug detection
 - **GitHub App + OAuth** — App for webhook events, Firebase GitHub OAuth for the dashboard
 
 ---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    USER["👤 User comments @bugviper<br/>on a GitHub PR"]
+    GH["GitHub<br/>Webhook Event"]
+    API["API Service (FastAPI)<br/>Port 8000"]
+    DECIDE{"DEBUG?"}
+    CT["Cloud Tasks<br/>codeReview Queue"]
+    DIRECT["Direct HTTP"]
+    RS["Review Service (Cloud Run)<br/>Port 8100"]
+    SANDBOX["E2B Sandbox<br/>Secure isolated environment"]
+    CLONE["Clone Repo<br/>at PR head SHA"]
+    CALLGRAPH["Call Graph<br/>via tree-sitter"]
+    SCORE["Score Files<br/>by blast radius"]
+    BATCH["Batch Files<br/>Louvain community detection"]
+    AGENTS{"Review Mode?"}
+    NORMAL["Normal Mode<br/>4 batches · 1 generalist agent"]
+    DEEP["Deep Mode<br/>2 batches · 3 agents (Bug · Security · Performance)<br/>running in parallel"]
+    LINT["Lint<br/>ESLint · Ruff · golangci-lint"]
+    VERIFIER["Verifier Pass<br/>Validates findings vs diff<br/>→ valid · nitpick · outside_diff"]
+    DEDUP["Dedup + Normalize<br/>Merges duplicates across batches"]
+    GITHUB["GitHub PR<br/>Inline comments + review body"]
+    FIRESTORE["Firestore<br/>Users · PRs · Reviews · Analytics"]
+    DASHBOARD["Frontend (Next.js)<br/>Port 3000"]
+
+    USER --> GH
+    GH --> API
+    API --> DECIDE
+    DECIDE -->|"DEBUG=false"| CT
+    DECIDE -->|"DEBUG=true"| DIRECT
+    CT --> RS
+    DIRECT --> RS
+    RS --> SANDBOX
+    SANDBOX --> CLONE
+    CLONE --> CALLGRAPH
+    CALLGRAPH --> SCORE
+    SCORE --> BATCH
+    BATCH --> AGENTS
+    AGENTS -->|normal| NORMAL
+    AGENTS -->|deep| DEEP
+    NORMAL --> LINT
+    DEEP --> LINT
+    LINT --> VERIFIER
+    VERIFIER --> DEDUP
+    DEDUP --> GITHUB
+    DEDUP --> FIRESTORE
+    FIRESTORE --> DASHBOARD
+```
