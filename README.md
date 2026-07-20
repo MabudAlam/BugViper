@@ -113,7 +113,7 @@ flowchart LR
 
 > Comment `@bugviper full review` on any PR and get a complete AI-powered code review — inline comments, issue tracking, and a summary posted back to GitHub.
 
-![Full Review](./screenshots/gif/Full-Review.gif)
+![Full Review](./screenshots/gif/Full%20Review.gif)
 
 ### How it works
 
@@ -133,7 +133,7 @@ flowchart LR
 
 > Comment `@bugviper run lint` on any PR for a fast static-analysis review using ESLint, Ruff, golangci-lint, and more — results posted back to GitHub in seconds.
 
-![Run Lint](./screenshots/gif/Run-Lint.gif)
+![Run Lint](./screenshots/gif/Run%20Lint.gif)
 
 ### How it works
 
