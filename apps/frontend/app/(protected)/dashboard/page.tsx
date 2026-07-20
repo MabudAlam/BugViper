@@ -1,12 +1,52 @@
 "use client";
 
+import { Info, TrendingUp } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  ChartConfig,
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
 import {
   getRepoOverview,
   getDashboardAnalytics,
   type DashboardStats,
+  type RepoAnalyticsSummary,
 } from "@/lib/api";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+const REPO_COLORS = [
+  "#FFF3E0",
+  "#FFE0B2",
+  "#FFCC80",
+  "#FFB74D",
+  "#FFA726",
+  "#FF9800",
+  "#FB8C00",
+  "#F57C00",
+  "#EF6C00",
+  "#E65100",
+];
+
+function repoColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++)
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return REPO_COLORS[Math.abs(hash) % REPO_COLORS.length];
+}
 
 function fmt(n: number | string | undefined | null) {
   if (n == null) return "0";
@@ -93,130 +133,9 @@ function StatsIcon({ icon }: { icon: string }) {
   }
 }
 
-function BarChart({ data, labelKey, valueKey, color, label, valueLabel }: {
-  data: { date: string; [key: string]: any }[];
-  labelKey: string;
-  valueKey: string;
-  color: string;
-  label: string;
-  valueLabel: string;
-}) {
-  const max = Math.max(...data.map((d) => d[valueKey] ?? 0), 1);
-  return (
-    <div className="bg-background border-2 border-border rounded-base p-4">
-      <h4 className="text-sm font-semibold text-foreground mb-3">{label}</h4>
-      <div className="flex items-end gap-2 h-24">
-        {data.map((d) => {
-          const val = d[valueKey] ?? 0;
-          const h = (val / max) * 96;
-          return (
-            <div key={d[labelKey]} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-              <div className="w-full flex items-end justify-center" style={{ height: 96 }}>
-                <div
-                  className="w-full rounded-sm transition-all duration-200"
-                  style={{ height: `${Math.max(h, val > 0 ? 4 : 0)}px`, backgroundColor: color }}
-                  title={`${val} ${valueLabel}`}
-                />
-              </div>
-              <span className="text-[10px] text-muted-foreground">{d[labelKey].slice(5)}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function StackedBarChart({ data, label, bar1, bar2, color1, color2, label1, label2 }: {
-  data: { date: string; [key: string]: any }[];
-  label: string;
-  bar1: string;
-  bar2: string;
-  color1: string;
-  color2: string;
-  label1: string;
-  label2: string;
-}) {
-  const max = Math.max(...data.map((d) => (d[bar1] ?? 0) + (d[bar2] ?? 0)), 1);
-  return (
-    <div className="bg-background border-2 border-border rounded-base p-4">
-      <h4 className="text-sm font-semibold text-foreground mb-3">{label}</h4>
-      <div className="flex items-end gap-2 h-24">
-        {data.map((d) => {
-          const v1 = d[bar1] ?? 0;
-          const v2 = d[bar2] ?? 0;
-          return (
-            <div key={d.date} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-              <div className="relative w-full flex flex-col items-center justify-end" style={{ height: 96 }}>
-                <div
-                  className="w-full rounded-t-sm transition-all duration-200"
-                  style={{ height: `${(v1 / max) * 96}px`, backgroundColor: color1 }}
-                  title={`${v1} ${label1}`}
-                />
-                <div
-                  className="w-full rounded-b-sm transition-all duration-200"
-                  style={{ height: `${(v2 / max) * 96}px`, backgroundColor: color2 }}
-                  title={`${v2} ${label2}`}
-                />
-              </div>
-              <span className="text-[10px] text-muted-foreground">{d.date.slice(5)}</span>
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm" style={{ backgroundColor: color1 }} /> {label1}</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm" style={{ backgroundColor: color2 }} /> {label2}</span>
-      </div>
-    </div>
-  );
-}
-
-function AnalyticsCharts({ dailyData }: { dailyData: { date: string; caught: number; resolved: number; reviews: number }[] }) {
-  return (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold text-foreground">Analytics</h3>
-      {dailyData.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No analytics data yet. Run a review to see charts.</p>
-      ) : (
-        <>
-          <StackedBarChart
-            data={dailyData}
-            label="Bugs Caught / Resolved per Day"
-            bar1="caught"
-            bar2="resolved"
-            color1="var(--main)"
-            color2="var(--border)"
-            label1="Caught"
-            label2="Resolved"
-          />
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <BarChart
-              data={dailyData}
-              labelKey="date"
-              valueKey="reviews"
-              color="var(--main)"
-              label="Reviews per Day"
-              valueLabel="reviews"
-            />
-            <BarChart
-              data={dailyData}
-              labelKey="date"
-              valueKey="caught"
-              color="var(--main)"
-              label="Bugs Caught per Day"
-              valueLabel="bugs"
-            />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [dailyData, setDailyData] = useState<{ date: string; caught: number; resolved: number; reviews: number }[]>([]);
+  const [repos, setRepos] = useState<RepoAnalyticsSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -226,13 +145,47 @@ export default function DashboardPage() {
     ])
       .then(([overview, analytics]) => {
         setStats(overview.stats);
-        setDailyData(analytics.dailyBreakdown ?? []);
+        setRepos(analytics.repos ?? []);
       })
       .catch(() => {
         setStats(null);
       })
       .finally(() => setLoading(false));
   }, []);
+
+  const { reviewData, prData, reviewTotal, prTotal, chartConfig } = useMemo(() => {
+    if (!repos.length) return { reviewData: [], prData: [], reviewTotal: [], prTotal: [], chartConfig: {} as ChartConfig };
+
+    const config: ChartConfig = {};
+    const revMap: Record<string, Record<string, number>> = {};
+    const prMap: Record<string, Record<string, number>> = {};
+    let allDates = new Set<string>();
+
+    repos.forEach((r) => {
+      const color = repoColor(r.repoName);
+      config[r.repoName] = { label: r.repoName, color };
+      (r.dailyBreakdown || []).forEach((d) => {
+        allDates.add(d.date);
+        if (!revMap[d.date]) revMap[d.date] = {};
+        if (!prMap[d.date]) prMap[d.date] = {};
+        revMap[d.date][r.repoName] = (revMap[d.date][r.repoName] || 0) + (d.reviews || 0);
+        prMap[d.date][r.repoName] = (prMap[d.date][r.repoName] || 0) + (d.prsReviewed || 0);
+      });
+    });
+
+    const sorted = [...allDates].sort();
+    const reviewData = sorted.map((date) => ({ date, ...revMap[date] }));
+    const prData = sorted.map((date) => ({ date, ...prMap[date] }));
+    const reviewTotal = sorted.map((date) => {
+      const vals = Object.values(revMap[date] || {});
+      return { date, reviews: vals.reduce((s, v) => s + v, 0) };
+    });
+    const prTotal = sorted.map((date) => {
+      const vals = Object.values(prMap[date] || {});
+      return { date, prs: vals.reduce((s, v) => s + v, 0) };
+    });
+    return { reviewData, prData, reviewTotal, prTotal, chartConfig: config satisfies ChartConfig };
+  }, [repos]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -256,7 +209,132 @@ export default function DashboardPage() {
             ))}
           </div>
 
-          <AnalyticsCharts dailyData={dailyData} />
+          <Card className="bg-secondary-background text-foreground">
+            <CardHeader className="relative">
+              <CardTitle>Total Reviews per Day</CardTitle>
+              <CardDescription>Daily review count broken down by repository for the last 30 days</CardDescription>
+              <div className="absolute right-4 top-4 group">
+                <Info className="h-4 w-4 text-muted-foreground cursor-pointer" />
+                <div className="absolute right-0 top-6 w-64 p-3 rounded-base bg-popover text-popover-foreground border border-border shadow-md text-xs opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                  Each bar represents a single day. Colored segments show how many reviews each repository had that day. Stacked bars show the total across all repos.
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ChartContainer config={chartConfig}>
+                <BarChart accessibilityLayer data={reviewData}>
+                  <CartesianGrid vertical={false} />
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    tickMargin={10}
+                    axisLine={false}
+                    tickFormatter={(v) => v.slice(5)}
+                  />
+                  <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+                  <ChartTooltip cursor={{ fill: "#8080804D" }} content={<ChartTooltipContent hideLabel />} />
+                  <ChartLegend content={<ChartLegendContent />} />
+                  {repos.map((r) => (
+                    <Bar
+                      key={r.repoName}
+                      dataKey={r.repoName}
+                      stackId="a"
+                      fill={`var(--color-${r.repoName})`}
+                      radius={4}
+                    />
+                  ))}
+                </BarChart>
+              </ChartContainer>
+            </CardContent>
+            <CardFooter className="flex-col items-start gap-2 text-sm">
+              <div className="flex gap-2 leading-none font-medium">
+                <TrendingUp className="h-4 w-4" /> {repos.length} repos tracked
+              </div>
+              <div className="text-muted-foreground leading-none">
+                Total reviews across all repositories per day
+              </div>
+            </CardFooter>
+          </Card>
+
+          <Card className="bg-secondary-background text-foreground">
+            <CardHeader className="relative">
+              <CardTitle>PRs Reviewed per Day</CardTitle>
+              <CardDescription>Daily PR review count broken down by repository for the last 30 days</CardDescription>
+              <div className="absolute right-4 top-4 group">
+                <Info className="h-4 w-4 text-muted-foreground cursor-pointer" />
+                <div className="absolute right-0 top-6 w-64 p-3 rounded-base bg-popover text-popover-foreground border border-border shadow-md text-xs opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                  Each bar represents a single day. Colored segments show how many unique PRs each repository had reviewed that day. Stacked bars show the total PRs reviewed across all repos.
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ChartContainer config={chartConfig}>
+                <BarChart accessibilityLayer data={prData}>
+                  <CartesianGrid vertical={false} />
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    tickMargin={10}
+                    axisLine={false}
+                    tickFormatter={(v) => v.slice(5)}
+                  />
+                  <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+                  <ChartTooltip cursor={{ fill: "#8080804D" }} content={<ChartTooltipContent hideLabel />} />
+                  <ChartLegend content={<ChartLegendContent />} />
+                  {repos.map((r) => (
+                    <Bar
+                      key={r.repoName}
+                      dataKey={r.repoName}
+                      stackId="a"
+                      fill={`var(--color-${r.repoName})`}
+                      radius={4}
+                    />
+                  ))}
+                </BarChart>
+              </ChartContainer>
+            </CardContent>
+            <CardFooter className="flex-col items-start gap-2 text-sm">
+              <div className="flex gap-2 leading-none font-medium">
+                <TrendingUp className="h-4 w-4" /> {repos.length} repos tracked
+              </div>
+              <div className="text-muted-foreground leading-none">
+                Total PRs reviewed across all repositories per day
+              </div>
+            </CardFooter>
+          </Card>
+
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold text-foreground">Repository Comparison</h3>
+
+            {[
+              { label: "Avg Merge Time (h)", dataKey: "avgMergeTimeHours" as const, desc: "Average time from PR creation to merge per repository" },
+              { label: "Addressed Rate", dataKey: "addressedRate" as const, desc: "Ratio of issues resolved vs total issues raised per repository" },
+            ].map(({ label, dataKey, desc }) => (
+              <Card key={dataKey} className="bg-secondary-background text-foreground">
+                <CardHeader className="relative">
+                  <CardTitle>{label}</CardTitle>
+                  <CardDescription>{desc}</CardDescription>
+                  <div className="absolute right-4 top-4 group">
+                    <Info className="h-4 w-4 text-muted-foreground cursor-pointer" />
+                    <div className="absolute right-0 top-6 w-64 p-3 rounded-base bg-popover text-popover-foreground border border-border shadow-md text-xs opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                      {dataKey === "avgMergeTimeHours" ? "Average hours from PR creation to merge. For merged PRs uses actual merge time; for open PRs uses last review time as an estimate." : "Percentage of issues that have been resolved out of all issues generated by BugViper reviews for this repository."}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <ChartContainer config={chartConfig}>
+                    <BarChart accessibilityLayer data={repos.map((r) => ({ repo: r.repoName, value: Number(r[dataKey]) || 0 }))}>
+                      <CartesianGrid vertical={false} />
+                      <XAxis dataKey="repo" tickLine={false} tickMargin={10} axisLine={false} />
+                      <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+                      <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                      <Bar dataKey="value" fill="var(--main)" radius={4} />
+                    </BarChart>
+                  </ChartContainer>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </>
       ) : (
         <div className="text-center py-20 text-muted-foreground">Failed to load stats.</div>
