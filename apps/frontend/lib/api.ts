@@ -124,14 +124,30 @@ export interface RepoAnalyticsDetail {
   prsPerWeek: number;
   addressedRate: number;
   avgMergeTimeHours: number;
-  dailyBreakdown: { date: string; caught: number; resolved: number; reviews: number }[];
+  dailyBreakdown: { date: string; caught: number; resolved: number; reviews: number; prsReviewed?: number }[];
   prs: RepoAnalyticsPR[];
 }
 
 export const getRepoAnalytics = (owner: string, repo: string): Promise<RepoAnalyticsDetail> =>
   apiFetch(`/api/v1/repos/${owner}/${repo}/analytics`);
 
-export const getDashboardAnalytics = (): Promise<{ dailyBreakdown: { date: string; caught: number; resolved: number; reviews: number }[] }> =>
+export interface RepoAnalyticsSummary {
+  repoName: string;
+  totalPrs: number;
+  totalReviews: number;
+  totalIssuesGenerated: number;
+  totalIssuesResolved: number;
+  addressedRate: number;
+  avgMergeTimeHours: number;
+  prsPerWeek: number;
+  dailyBreakdown: { date: string; caught: number; resolved: number; reviews: number; prsReviewed?: number }[];
+}
+
+export interface DashboardAnalyticsResponse {
+  repos: RepoAnalyticsSummary[];
+}
+
+export const getDashboardAnalytics = (): Promise<DashboardAnalyticsResponse> =>
   apiFetch("/api/v1/repos/dashboard/analytics");
 
 export const listRepoPRs = (owner: string, repo: string): Promise<PRReviewSummary[]> =>
