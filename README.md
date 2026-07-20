@@ -1,5 +1,15 @@
 # BugViper
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.13+-blue.svg)]()
+[![Node](https://img.shields.io/badge/node-20+-green.svg)]()
+[![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)]()
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688.svg)]()
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)]()
+[![DeepAgent](https://img.shields.io/badge/DeepAgent-FF6F00.svg)]()
+[![LangChain](https://img.shields.io/badge/LangChain-1C3C3C.svg)]()
+[![E2B](https://img.shields.io/badge/E2B_Sandbox-6366F1.svg)]()
+
 AI PR Reviews with codebase-aware DeepAgents + ESLint, Ruff, golangci-lint and more. Install the GitHub App, open a PR, and BugViper clones the repo, builds a blast radius and call graph on the fly in an E2B sandbox, then posts a full review — inline comments, issue tracking, and a summary — with no friction.
 
 ---
@@ -38,7 +48,7 @@ AI PR Reviews with codebase-aware DeepAgents + ESLint, Ruff, golangci-lint and m
 
 > Comment `@bugviper full review` on any PR and get a complete AI-powered code review — inline comments, issue tracking, and a summary posted back to GitHub.
 
-<video src="./screenshots/video/Full%20Review.mp4" width="100%" controls></video>
+https://github.com/user-attachments/assets/e2fca695-1828-4b97-9c7e-1ec68b804aa6
 
 ### How it works
 
@@ -58,7 +68,7 @@ AI PR Reviews with codebase-aware DeepAgents + ESLint, Ruff, golangci-lint and m
 
 > Comment `@bugviper run lint` on any PR for a fast static-analysis review using ESLint, Ruff, golangci-lint, and more — results posted back to GitHub in seconds.
 
-<video src="./screenshots/video/Run%20Lint.mp4" width="100%" controls></video>
+https://github.com/user-attachments/assets/aa27d26a-a768-4c1e-9d29-88d5563412a7
 
 ### How it works
 
@@ -76,7 +86,7 @@ AI PR Reviews with codebase-aware DeepAgents + ESLint, Ruff, golangci-lint and m
 
 > Track your team's code review activity across all repos — bugs caught, resolved, merge times, and PRs reviewed per day.
 
-<video src="./screenshots/video/analytics.mp4" width="100%" controls></video>
+https://github.com/user-attachments/assets/ca987cfc-a23d-4db2-a1a1-e028b82d98ae
 
 ### What it shows
 
@@ -96,7 +106,7 @@ Every chart is interactive — hover for breakdowns and click to drill down.
 
 > Browse all your repos, inspect individual PR reviews, and track what issues the agents found — right from the dashboard.
 
-<video src="./screenshots/video/Repo.mp4" width="100%" controls></video>
+https://github.com/user-attachments/assets/ba778881-1ec2-42b8-9cb3-9354ba14483b
 
 ### How it works
 
@@ -117,7 +127,7 @@ Every chart is interactive — hover for breakdowns and click to drill down.
 
 > Configure which linters run on your PRs — enable or disable tools, set config files, and manage supported file extensions.
 
-<video src="./screenshots/video/Tools.mp4" width="100%" controls></video>
+https://github.com/user-attachments/assets/887356c5-d823-4164-9470-fba8da96fdd3
 
 ### Supported tools
 
@@ -197,3 +207,90 @@ flowchart TD
     DEDUP --> FIRESTORE
     FIRESTORE --> DASHBOARD
 ```
+
+---
+
+## Tech Stack
+
+**Backend:** Python 3.13 · FastAPI · firebase-admin · google-cloud-tasks · langchain · openai · e2b
+
+**Frontend:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS v4 · Recharts · Firebase Auth (GitHub OAuth) · shadcn/ui
+
+**AI:** DeepAgent with 3 specialized sub-agents (correctness, security, performance) running in E2B sandboxes; verifier pass validates findings; Louvain community detection for batch sizing
+
+**Deploy:** Docker · Cloud Build · Cloud Run · Cloud Tasks
+
+---
+
+## Project Structure
+
+```
+BugViper/
+├── apps/frontend/               Next.js dashboard
+│   ├── app/(protected)/         Auth-gated pages (dashboard, repos, tools)
+│   ├── components/              Sidebar, Header, UI primitives
+│   └── lib/                    API client, Firebase auth, utils
+├── src/
+│   ├── api/                    FastAPI backend
+│   │   ├── routers/           webhook, repos, analytics, auth, tools
+│   │   └── services/          Cloud Tasks, review orchestration
+│   ├── ai_code_review/         Review worker service
+│   │   ├── pipeline.py         Main review pipeline (normal mode)
+│   │   ├── deep_pipeline.py    Deep mode (3 sub-agents)
+│   │   ├── agent.py            Agent factory
+│   │   ├── sandbox.py          E2B sandbox lifecycle
+│   │   ├── batch.py            Louvain community batching
+│   │   ├── prompts.py          All system/user prompts
+│   │   ├── normalize.py        Finding validation
+│   │   └── tracking.py         Firebase state updates
+│   ├── common/                 Shared across all services
+│   │   ├── firebase_service.py Firestore operations
+│   │   └── github_client.py    GitHub API wrapper
+├── infra/
+│   ├── docker/                 Dockerfiles (api, review, frontend)
+│   └── cloudbuild/             Cloud Build + Cloud Run deploy configs
+├── scripts/
+│   ├── seed_demo_data.py       Demo analytics data generator
+│   └── migrate_analytics.py    Schema migration
+├── tests/                      pytest unit tests
+└── start.sh                    Local dev launcher
+```
+
+---
+
+## Quick Start
+
+```bash
+# Clone and install
+git clone https://github.com/MabudAlam/BugViper.git
+cd BugViper
+uv sync
+cd apps/frontend && npm install && cd ../..
+cp .env.example .env
+
+# Configure .env with your keys (see SETUP.md)
+# Then launch everything:
+./start.sh
+```
+
+This starts:
+- **API** on port 8000 (FastAPI — webhooks + REST)
+- **Review Service** on port 8100 (AI review pipeline)
+- **Frontend** on port 3000 (Next.js dashboard)
+- **Ngrok** tunnel (for local webhook testing)
+
+---
+
+## Key API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/v1/webhook` | GitHub webhook receiver (PR events, comments) |
+| `GET /api/v1/repos/overview` | List repos with aggregated stats |
+| `GET /api/v1/repos/{owner}/{repo}/analytics` | Per-repo analytics with daily breakdown |
+| `GET /api/v1/repos/{owner}/{repo}/prs` | List PRs for a repo |
+| `GET /api/v1/repos/{owner}/{repo}/prs/{pr}/reviews` | List review runs for a PR |
+| `GET /api/v1/repos/{owner}/{repo}/prs/{pr}/reviews/{run}` | Full review run detail with issues |
+| `PUT /api/v1/tools/config` | Save linter tool configuration |
+| `POST /api/v1/auth/login` | Authenticate with GitHub OAuth token |
+| `GET /api/v1/dashboard/analytics` | Aggregated dashboard analytics |
