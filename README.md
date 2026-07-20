@@ -1,6 +1,6 @@
 # BugViper
 
-![BugViper](apps/frontend/public/full-logo.svg)
+![BugViper](/screenshots/full-logo.svg)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13+-blue.svg)]()
