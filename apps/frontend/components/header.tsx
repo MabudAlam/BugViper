@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 const pageMeta: Record<string, { title: string; subtitle: string }> = {
   "/dashboard": { title: "Dashboard", subtitle: "Your code review activity overview" },
   "/tools": { title: "Tools", subtitle: "Configure your linter tools" },
-  "/support": { title: "Support", subtitle: "Get help with BugViper" },
+  // "/support": { title: "Support", subtitle: "Get help with BugViper" },
 };
 
 export function Header() {
