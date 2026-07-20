@@ -54,10 +54,12 @@ async def run_linters_in_sandbox(
 
     repo_dir = "/home/user/workspace/repo"
     all_findings: list[dict] = []
+    any_enabled = False
 
     for tool_key, runner_fn in RUNNER_REGISTRY.items():
         tool = getattr(tools_config, tool_key, None)
         if tool and tool.enabled:
+            any_enabled = True
             try:
                 cfg = _resolve_config_file(sbx, tool, repo_dir)
                 findings = runner_fn(sbx, repo_dir, cfg, changed_files, debug_dir=debug_dir)
@@ -65,6 +67,9 @@ async def run_linters_in_sandbox(
                 all_findings.extend(findings)
             except Exception as exc:
                 logger.warning("%s failed in sandbox: %s", tool_key, exc)
+
+    if not any_enabled:
+        logger.info("No linter tools enabled for uid=%s", uid)
 
     return all_findings
 
@@ -77,6 +82,7 @@ async def run_lint_only(
 ) -> None:
     from datetime import datetime, timezone
 
+    from common.firebase_service import firebase_service
     from common.github_client import get_github_client
     from ai_code_review.config import config, ensure_env
     from ai_code_review.diff import get_changed_files
@@ -84,6 +90,22 @@ async def run_lint_only(
 
     ensure_env()
     os.environ["E2B_API_KEY"] = config.E2B_API_KEY
+
+    # Check if any linter tools are enabled before creating sandbox
+    tools_config = firebase_service.get_tools_config(uid)
+    has_enabled = any(
+        getattr(tools_config, k, None) and getattr(tools_config, k).enabled
+        for k in ("ruff", "eslint", "golangci_lint")
+    )
+    if not has_enabled:
+        logger.warning("No linter tools enabled for uid=%s — skipping lint", uid)
+        gh = get_github_client()
+        body = (
+            "## 🔬 BugViper Static Analysis\n\n"
+            "No linter tools are enabled. Configure them in the **Dashboard → Tools**."
+        )
+        await gh.post_comment(owner, repo, pr_number, body)
+        return
 
     github = get_github_client()
     pr_data = await github.fetch_pr_data(owner, repo, pr_number)
